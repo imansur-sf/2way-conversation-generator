@@ -128,7 +128,7 @@ async function callGemini(prompt) {
   if (!geminiApiKey) throw Object.assign(new Error('llm_not_configured'), { code:'llm_not_configured' });
   const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 60_000);
   try {
-    const upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${geminiApiKey}`, { method:'POST', headers:{ 'Content-Type':'application/json' }, signal:controller.signal, body:JSON.stringify({ contents:[{ parts:[{ text:prompt }] }], generationConfig:{ responseMimeType:'application/json', maxOutputTokens:5000 } }) });
+    const upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${geminiApiKey}`, { method:'POST', headers:{ 'Content-Type':'application/json' }, signal:controller.signal, body:JSON.stringify({ contents:[{ parts:[{ text:prompt }] }], generationConfig:{ responseMimeType:'application/json', maxOutputTokens:2600 } }) });
     if (!upstream.ok) {
       const detail = (await upstream.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 300);
       const code = upstream.status === 400 ? 'gemini_bad_request' : upstream.status === 401 || upstream.status === 403 ? 'gemini_auth_failed' : upstream.status === 404 ? 'gemini_model_not_found' : upstream.status === 429 ? 'gemini_rate_limited' : 'gemini_failed';
@@ -137,11 +137,14 @@ async function callGemini(prompt) {
     }
     const payload = await upstream.json();
     return parseJson(payload?.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('') || '');
+  } catch (error) {
+    if (error?.name === 'AbortError') throw Object.assign(new Error('gemini_timeout'), { code:'gemini_timeout' });
+    throw error;
   } finally { clearTimeout(timeout); }
 }
 function draftPrompt({ companyName, website, useCase, channels, evidence }) {
   const images = evidence.candidates.map((item,index) => `${index + 1}. ${item.role}: ${item.url}`).join('\n') || '(none)';
-  return `Create concise, realistic Salesforce two-way messaging demo content. Return JSON only.\nCompany supplied: ${companyName || '(not supplied)'}\nWebsite: ${website}\nUse case: ${useCase}\nChannels: ${channels.join(', ')}\n\nWebsite evidence:\nTitle: ${evidence.title}\nDescription: ${evidence.description}\nHeadings: ${evidence.headings.join(' | ')}\nText: ${evidence.text}\nImage candidates (only use these URLs or empty strings):\n${images}\n\nReturn: {"companyName":"","initials":"","emailAddress":"","logoUrl":"","heroImageUrl":"","scenarios":{"sms":{"title":"","sender":"","initialMessage":"","keywords":[{"terms":"","response":""}],"fallbackResponse":""},"rcs":{"title":"","initialMessage":"","keywords":[{"terms":"","response":""}],"fallbackResponse":"","cards":[{"title":"","description":"","cta":"","url":"","imageUrl":""}]},"email":{"title":"","subject":"","initialBody":"","prefilledReply":"","keywords":[{"terms":"","response":""}],"fallbackResponse":""}}}. Include only requested channel keys. Generate 2-3 keyword responses per requested channel. Do not invent URLs or facts not supported by the evidence.`;
+  return `Create concise, realistic Salesforce two-way messaging demo content. Return JSON only.\nCompany supplied: ${companyName || '(not supplied)'}\nWebsite: ${website}\nUse case: ${useCase}\nChannels: ${channels.join(', ')}\n\nWebsite evidence:\nTitle: ${evidence.title}\nDescription: ${evidence.description}\nHeadings: ${evidence.headings.slice(0,10).join(' | ')}\nText: ${evidence.text.slice(0,3500)}\nImage candidates (only use these URLs or empty strings):\n${images}\n\nReturn: {"companyName":"","initials":"","emailAddress":"","logoUrl":"","heroImageUrl":"","scenarios":{"sms":{"title":"","sender":"","initialMessage":"","keywords":[{"terms":"","response":""}],"fallbackResponse":""},"rcs":{"title":"","initialMessage":"","keywords":[{"terms":"","response":""}],"fallbackResponse":"","cards":[{"title":"","description":"","cta":"","url":"","imageUrl":""}]},"email":{"title":"","subject":"","initialBody":"","prefilledReply":"","keywords":[{"terms":"","response":""}],"fallbackResponse":""}}}. Include only requested channel keys. Use exactly 2 keyword responses and one fallback per requested channel; include at most 2 RCS cards. Keep every text field under 240 characters. Do not invent URLs or facts not supported by the evidence.`;
 }
 function clean(value, fallback = '') { return typeof value === 'string' ? value.trim().slice(0,1800) : fallback; }
 function responses(value) { return Array.isArray(value) ? value.slice(0,3).map(item => ({ terms:clean(item?.terms,'').slice(0,140), response:clean(item?.response,'') })).filter(item => item.response) : []; }
