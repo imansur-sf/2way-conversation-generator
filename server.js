@@ -54,6 +54,7 @@ async function fetchRemote(value, maxBytes, allowPartial = false) {
   let remote = await safeUrl(value);
   for (let redirects = 0; redirects < 4; redirects += 1) {
     const controller = new AbortController();
+    const deadline = Date.now() + requestTimeoutMs;
     const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
     try {
       const upstream = await fetch(remote, { redirect:'manual', headers:{ 'User-Agent':'SaaSy-TwoWay-Experience-Studio/1.0', 'Accept':'text/html,application/xhtml+xml,image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8' }, signal:controller.signal });
@@ -69,7 +70,14 @@ async function fetchRemote(value, maxBytes, allowPartial = false) {
       if (!reader) throw Object.assign(new Error('empty_body'), { code:'empty_body' });
       const chunks = []; let total = 0;
       while (true) {
-        const { done, value:chunk } = await reader.read();
+        const remainingMs = Math.max(1, deadline - Date.now());
+        const { done, value:chunk } = await new Promise((resolve,reject) => {
+          const readTimeout = setTimeout(() => {
+            controller.abort();
+            reject(Object.assign(new Error('request_timeout'), { code:'request_timeout' }));
+          }, remainingMs);
+          reader.read().then(value => { clearTimeout(readTimeout); resolve(value); }, error => { clearTimeout(readTimeout); reject(error); });
+        });
         if (done) break;
         const remaining = maxBytes - total;
         if (chunk.length > remaining) {
