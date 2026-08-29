@@ -7,7 +7,7 @@ const path = require('node:path');
 const port = Number(process.env.PORT) || 3000;
 const root = __dirname;
 const geminiApiKey = process.env.GEMINI_API_KEY || '';
-const geminiModel = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const geminiModel = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
 const scrapeLimitBytes = 1_500_000;
 const imageLimitBytes = 2_000_000;
 const requestLimitBytes = 200_000;
@@ -37,9 +37,14 @@ function blockedHost(hostname) {
   const host = String(hostname || '').toLowerCase();
   return !host || host === 'localhost' || host === 'metadata.google.internal' || host.endsWith('.local') || host.endsWith('.internal') || privateIp(host);
 }
+function normalizedWebsiteUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  return /^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : `https://${raw.replace(/^\/+/, '')}`;
+}
 async function safeUrl(value) {
   let parsed;
-  try { parsed = new URL(value); } catch { throw Object.assign(new Error('invalid_url'), { code:'invalid_url' }); }
+  try { parsed = new URL(normalizedWebsiteUrl(value)); } catch { throw Object.assign(new Error('invalid_url'), { code:'invalid_url' }); }
   if (!['http:','https:'].includes(parsed.protocol) || parsed.username || parsed.password || blockedHost(parsed.hostname)) throw Object.assign(new Error('blocked_url'), { code:'blocked_url' });
   const addresses = await lookup(parsed.hostname, { all:true, verbatim:true });
   if (!addresses.length || addresses.some(item => privateIp(item.address))) throw Object.assign(new Error('blocked_host'), { code:'blocked_host' });
@@ -108,7 +113,12 @@ async function callGemini(prompt) {
   const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 60_000);
   try {
     const upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${geminiApiKey}`, { method:'POST', headers:{ 'Content-Type':'application/json' }, signal:controller.signal, body:JSON.stringify({ contents:[{ parts:[{ text:prompt }] }], generationConfig:{ responseMimeType:'application/json', maxOutputTokens:5000 } }) });
-    if (!upstream.ok) throw Object.assign(new Error('gemini_failed'), { code:'gemini_failed', status:upstream.status });
+    if (!upstream.ok) {
+      const detail = (await upstream.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 300);
+      const code = upstream.status === 400 ? 'gemini_bad_request' : upstream.status === 401 || upstream.status === 403 ? 'gemini_auth_failed' : upstream.status === 404 ? 'gemini_model_not_found' : upstream.status === 429 ? 'gemini_rate_limited' : 'gemini_failed';
+      console.error(JSON.stringify({ event:'gemini_request_failed', status:upstream.status, model:geminiModel, detail }));
+      throw Object.assign(new Error(code), { code, status:upstream.status });
+    }
     const payload = await upstream.json();
     return parseJson(payload?.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('') || '');
   } finally { clearTimeout(timeout); }
@@ -155,7 +165,7 @@ async function handleApi(request,response,url) {
   if (request.method === 'POST' && url.pathname === '/api/scenario-draft') {
     if (!withinRateLimit(request)) { sendJson(response,429,{ error:'rate_limited' }); return true; }
     try {
-      const body = await readJson(request), website = clean(body.website), useCase = clean(body.useCase), channels = Array.isArray(body.channels) ? body.channels.filter(channel => ['sms','rcs','email'].includes(channel)) : [];
+      const body = await readJson(request), website = normalizedWebsiteUrl(clean(body.website)), useCase = clean(body.useCase), channels = Array.isArray(body.channels) ? body.channels.filter(channel => ['sms','rcs','email'].includes(channel)) : [];
       if (!website || !useCase || !channels.length) { sendJson(response,400,{ error:'missing_required_fields' }); return true; }
       const remote = await fetchRemote(website,scrapeLimitBytes);
       if (!/html|xml|text\//i.test(remote.contentType)) throw Object.assign(new Error('not_html'),{ code:'not_html' });
