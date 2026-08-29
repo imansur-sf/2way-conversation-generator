@@ -8,7 +8,7 @@ const port = Number(process.env.PORT) || 3000;
 const root = __dirname;
 const geminiApiKey = process.env.GEMINI_API_KEY || '';
 const geminiModel = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
-const scrapeLimitBytes = 1_500_000;
+const scrapeLimitBytes = 500_000;
 const imageLimitBytes = 2_000_000;
 const requestLimitBytes = 200_000;
 const requestTimeoutMs = 15_000;
@@ -50,34 +50,42 @@ async function safeUrl(value) {
   if (!addresses.length || addresses.some(item => privateIp(item.address))) throw Object.assign(new Error('blocked_host'), { code:'blocked_host' });
   return parsed;
 }
-async function fetchRemote(value, maxBytes) {
+async function fetchRemote(value, maxBytes, allowPartial = false) {
   let remote = await safeUrl(value);
   for (let redirects = 0; redirects < 4; redirects += 1) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
-    let upstream;
     try {
-      upstream = await fetch(remote, { redirect:'manual', headers:{ 'User-Agent':'SaaSy-TwoWay-Experience-Studio/1.0', 'Accept':'text/html,application/xhtml+xml,image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8' }, signal:controller.signal });
+      const upstream = await fetch(remote, { redirect:'manual', headers:{ 'User-Agent':'SaaSy-TwoWay-Experience-Studio/1.0', 'Accept':'text/html,application/xhtml+xml,image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8' }, signal:controller.signal });
+      if (upstream.status >= 300 && upstream.status < 400) {
+        const location = upstream.headers.get('location');
+        if (!location) throw Object.assign(new Error('bad_redirect'), { code:'bad_redirect' });
+        remote = await safeUrl(new URL(location, remote).toString());
+        continue;
+      }
+      if (!upstream.ok) throw Object.assign(new Error('upstream_status'), { code:'upstream_status', status:upstream.status });
+      if (!allowPartial && Number(upstream.headers.get('content-length') || 0) > maxBytes) throw Object.assign(new Error('too_large'), { code:'too_large' });
+      const reader = upstream.body?.getReader();
+      if (!reader) throw Object.assign(new Error('empty_body'), { code:'empty_body' });
+      const chunks = []; let total = 0;
+      while (true) {
+        const { done, value:chunk } = await reader.read();
+        if (done) break;
+        const remaining = maxBytes - total;
+        if (chunk.length > remaining) {
+          if (!allowPartial) { try { await reader.cancel(); } catch {} throw Object.assign(new Error('too_large'), { code:'too_large' }); }
+          if (remaining > 0) chunks.push(chunk.subarray(0, remaining));
+          try { await reader.cancel(); } catch {}
+          return { url:remote.toString(), contentType:upstream.headers.get('content-type') || '', body:Buffer.concat(chunks), partial:true };
+        }
+        chunks.push(chunk); total += chunk.length;
+      }
+      return { url:remote.toString(), contentType:upstream.headers.get('content-type') || '', body:Buffer.concat(chunks), partial:false };
+    } catch (error) {
+      if (error?.name === 'AbortError') throw Object.assign(new Error('request_timeout'), { code:'request_timeout' });
+      if (!error?.code) throw Object.assign(new Error('website_fetch_failed'), { code:'website_fetch_failed' });
+      throw error;
     } finally { clearTimeout(timeout); }
-    if (upstream.status >= 300 && upstream.status < 400) {
-      const location = upstream.headers.get('location');
-      if (!location) throw Object.assign(new Error('bad_redirect'), { code:'bad_redirect' });
-      remote = await safeUrl(new URL(location, remote).toString());
-      continue;
-    }
-    if (!upstream.ok) throw Object.assign(new Error('upstream_status'), { code:'upstream_status', status:upstream.status });
-    if (Number(upstream.headers.get('content-length') || 0) > maxBytes) throw Object.assign(new Error('too_large'), { code:'too_large' });
-    const reader = upstream.body?.getReader();
-    if (!reader) throw Object.assign(new Error('empty_body'), { code:'empty_body' });
-    const chunks = []; let total = 0;
-    while (true) {
-      const { done, value:chunk } = await reader.read();
-      if (done) break;
-      total += chunk.length;
-      if (total > maxBytes) { try { await reader.cancel(); } catch {} throw Object.assign(new Error('too_large'), { code:'too_large' }); }
-      chunks.push(chunk);
-    }
-    return { url:remote.toString(), contentType:upstream.headers.get('content-type') || '', body:Buffer.concat(chunks) };
   }
   throw Object.assign(new Error('too_many_redirects'), { code:'too_many_redirects' });
 }
@@ -167,12 +175,12 @@ async function handleApi(request,response,url) {
     try {
       const body = await readJson(request), website = normalizedWebsiteUrl(clean(body.website)), useCase = clean(body.useCase), channels = Array.isArray(body.channels) ? body.channels.filter(channel => ['sms','rcs','email'].includes(channel)) : [];
       if (!website || !useCase || !channels.length) { sendJson(response,400,{ error:'missing_required_fields' }); return true; }
-      const remote = await fetchRemote(website,scrapeLimitBytes);
+      const remote = await fetchRemote(website,scrapeLimitBytes,true);
       if (!/html|xml|text\//i.test(remote.contentType)) throw Object.assign(new Error('not_html'),{ code:'not_html' });
       const evidence = extractWebsite(remote.body.toString('utf8'),remote.url);
       const ai = await callGemini(draftPrompt({ companyName:clean(body.companyName), website:remote.url, useCase, channels, evidence }));
       sendJson(response,200,{ draft:normalizeDraft(ai,channels,remote.url), source:{ url:remote.url, title:evidence.title, imageCandidates:evidence.candidates } });
-    } catch (error) { const status = error.code === 'llm_not_configured' ? 503 : ['invalid_url','blocked_url','blocked_host'].includes(error.code) ? 400 : 502; sendJson(response,status,{ error:error.code || 'scenario_generation_failed' }); }
+    } catch (error) { const code=error?.code || 'scenario_generation_failed'; console.error(JSON.stringify({ event:'scenario_draft_failed', code, status:error?.status || null })); const status = code === 'llm_not_configured' ? 503 : ['invalid_url','blocked_url','blocked_host','missing_required_fields'].includes(code) ? 400 : 502; sendJson(response,status,{ error:code }); }
     return true;
   }
   return false;
