@@ -1,0 +1,12 @@
+{
+  "name": "two-way-conversation-generator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Interactive Salesforce two-way messaging demo generator",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
