@@ -187,10 +187,15 @@ async function handleApi(request,response,url) {
     try {
       const body = await readJson(request), website = normalizedWebsiteUrl(clean(body.website)), useCase = clean(body.useCase), channels = Array.isArray(body.channels) ? body.channels.filter(channel => ['sms','rcs','email'].includes(channel)) : [];
       if (!website || !useCase || !channels.length) { sendJson(response,400,{ error:'missing_required_fields' }); return true; }
+      const startedAt = Date.now();
+      console.log(JSON.stringify({ event:'scenario_draft_started', channels, website:new URL(website).hostname }));
       const remote = await fetchRemote(website,scrapeLimitBytes,true);
+      console.log(JSON.stringify({ event:'scenario_draft_website_ready', elapsedMs:Date.now()-startedAt, bytes:remote.body.length, partial:Boolean(remote.partial) }));
       if (!/html|xml|text\//i.test(remote.contentType)) throw Object.assign(new Error('not_html'),{ code:'not_html' });
       const evidence = extractWebsite(remote.body.toString('utf8'),remote.url);
+      console.log(JSON.stringify({ event:'scenario_draft_gemini_started', elapsedMs:Date.now()-startedAt }));
       const ai = await callGemini(draftPrompt({ companyName:clean(body.companyName), website:remote.url, useCase, channels, evidence }));
+      console.log(JSON.stringify({ event:'scenario_draft_completed', elapsedMs:Date.now()-startedAt }));
       sendJson(response,200,{ draft:normalizeDraft(ai,channels,remote.url), source:{ url:remote.url, title:evidence.title, imageCandidates:evidence.candidates } });
     } catch (error) { const code=error?.code || 'scenario_generation_failed'; console.error(JSON.stringify({ event:'scenario_draft_failed', code, status:error?.status || null })); const status = code === 'llm_not_configured' ? 503 : ['invalid_url','blocked_url','blocked_host','missing_required_fields'].includes(code) ? 400 : 502; sendJson(response,status,{ error:code }); }
     return true;
