@@ -129,7 +129,7 @@ async function callGemini(prompt) {
   if (!geminiApiKey) throw Object.assign(new Error('llm_not_configured'), { code:'llm_not_configured' });
   const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 60_000);
   try {
-    const upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${geminiApiKey}`, { method:'POST', headers:{ 'Content-Type':'application/json' }, signal:controller.signal, body:JSON.stringify({ contents:[{ parts:[{ text:prompt }] }], generationConfig:{ responseMimeType:'application/json', maxOutputTokens:3600 } }) });
+    const upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${geminiApiKey}`, { method:'POST', headers:{ 'Content-Type':'application/json' }, signal:controller.signal, body:JSON.stringify({ contents:[{ parts:[{ text:prompt }] }], generationConfig:{ responseMimeType:'application/json', maxOutputTokens:2200 } }) });
     if (!upstream.ok) {
       const detail = (await upstream.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 300);
       const code = upstream.status === 400 ? 'gemini_bad_request' : upstream.status === 401 || upstream.status === 403 ? 'gemini_auth_failed' : upstream.status === 404 ? 'gemini_model_not_found' : upstream.status === 429 ? 'gemini_rate_limited' : 'gemini_failed';
@@ -193,8 +193,9 @@ async function handleApi(request,response,url) {
       console.log(JSON.stringify({ event:'scenario_draft_website_ready', elapsedMs:Date.now()-startedAt, bytes:remote.body.length, partial:Boolean(remote.partial) }));
       if (!/html|xml|text\//i.test(remote.contentType)) throw Object.assign(new Error('not_html'),{ code:'not_html' });
       const evidence = extractWebsite(remote.body.toString('utf8'),remote.url);
-      console.log(JSON.stringify({ event:'scenario_draft_gemini_started', elapsedMs:Date.now()-startedAt }));
-      const ai = await callGemini(draftPrompt({ companyName:clean(body.companyName), website:remote.url, useCase, channels, evidence }));
+      console.log(JSON.stringify({ event:'scenario_draft_gemini_started', elapsedMs:Date.now()-startedAt, model:geminiModel, requests:channels.length }));
+      const channelDrafts = await Promise.all(channels.map(channel => callGemini(draftPrompt({ companyName:clean(body.companyName), website:remote.url, useCase, channels:[channel], evidence }))));
+      const ai = { ...channelDrafts[0], scenarios:Object.assign({}, ...channelDrafts.map(draft => draft?.scenarios || {})) };
       console.log(JSON.stringify({ event:'scenario_draft_completed', elapsedMs:Date.now()-startedAt }));
       sendJson(response,200,{ draft:normalizeDraft(ai,channels,remote.url), source:{ url:remote.url, title:evidence.title, imageCandidates:evidence.candidates } });
     } catch (error) { const code=error?.code || 'scenario_generation_failed'; console.error(JSON.stringify({ event:'scenario_draft_failed', code, status:error?.status || null })); const status = code === 'llm_not_configured' ? 503 : ['invalid_url','blocked_url','blocked_host','missing_required_fields'].includes(code) ? 400 : 502; sendJson(response,status,{ error:code }); }
