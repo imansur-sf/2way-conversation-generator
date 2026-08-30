@@ -35,6 +35,11 @@ test('multi-channel scenarios preserve independent channel variants', () => {
   assert.ok(html.includes('Switching never overwrites another channel’s flow.'), 'the builder explains independent channel editing');
 });
 
+test('branded email omits a broken or missing logo instead of showing a placeholder', () => {
+  assert.ok(html.includes("logo=String(scenario.emailLogo||'').trim()"), 'only an explicitly configured email logo is rendered');
+  assert.ok(html.includes("this.closest('.scenario-email-mark')?.remove()"), 'a failed logo image removes its visual container');
+});
+
 test('server keeps request-size, timeout, and rate-limit safeguards enabled', () => {
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
   for (const marker of ['requestLimitBytes', 'requestTimeoutMs', 'withinRateLimit', 'safeUrl', 'privateIp']) {
