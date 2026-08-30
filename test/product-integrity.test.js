@@ -89,11 +89,25 @@ test('SMS, RCS, and WhatsApp use an in-phone keyboard with channel-specific send
   assert.ok(html.includes("isWhatsapp?keyboardIcons.whatsappSend:keyboardIcons.messageSend"), 'WhatsApp and Messages use distinct send icons');
 });
 
+test('the Messages microphone remains a single, centered trailing input control', () => {
+  for (const marker of ['.phone-screen .composer .send:not(.ready):before', 'display:none!important;content:none!important', 'width:17px!important;height:17px!important']) {
+    assert.ok(html.includes(marker), `expected corrected Messages microphone placement: ${marker}`);
+  }
+});
+
 test('conversation cards use one drag-and-drop reorderer across every channel', () => {
   for (const marker of ['conversation-drag-handle', 'decorateConversationDragDrop', 'reorderConversationSteps', 'data-conversation-drag', 'pointerdown', 'Conversation message reordered']) {
     assert.ok(html.includes(marker), `expected conversation drag-and-drop behavior: ${marker}`);
   }
   assert.ok(html.includes("tools.querySelectorAll('[data-move]').forEach(button=>button.remove())"), 'legacy arrow controls are removed when drag controls are added');
+});
+
+test('the bundled default user portrait is shared by WhatsApp and Gmail', () => {
+  const portrait = path.join(root, 'assets', 'avatars', 'imansur-profile.png');
+  assert.ok(fs.existsSync(portrait), 'the supplied default portrait is bundled with the demo');
+  for (const marker of ['defaultUserPortrait', "active().recipientAvatar||defaultUserPortrait", 'gmailShellWithDefaultUserPortrait', 'Default profile image']) {
+    assert.ok(html.includes(marker), `expected shared default-profile behavior: ${marker}`);
+  }
 });
 
 test('server keeps request-size, timeout, and rate-limit safeguards enabled', () => {
