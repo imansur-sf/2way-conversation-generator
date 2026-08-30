@@ -12,14 +12,10 @@ test('builder script parses without a JavaScript syntax error', () => {
   assert.doesNotThrow(() => new Function(script));
 });
 
-test('built-in scenarios retain their intended channel contracts', () => {
-  const source = html.match(/<script id="scenario-data" type="application\/json">([\s\S]*?)<\/script>/);
-  assert.ok(source, 'scenario data is embedded');
-  const { scenarios } = JSON.parse(source[1]);
-  const channelFor = id => scenarios.find(scenario => scenario.id === id)?.channel;
-  assert.equal(channelFor('recipient-initiated-sms'), 'sms');
-  assert.equal(channelFor('company-initiated-rcs'), 'rcs');
-  assert.equal(channelFor('email-marketing-agent-handoff'), 'email');
+test('starter scenarios consolidate into customer-first and company-first multi-channel journeys', () => {
+  for (const marker of ['customer-initiated-initial-message', 'company-initiated-initial-message', 'Customer Initiated Initial Message — Multi-Channel', 'Company Initiated Initial Message — Multi-Channel', 'variants:{sms,rcs,whatsapp,email}', 'retiredStarterIds']) {
+    assert.ok(html.includes(marker), `expected consolidated starter journey: ${marker}`);
+  }
 });
 
 test('quality guardrails are included in the standalone export source', () => {
@@ -92,6 +88,12 @@ test('SMS, RCS, and WhatsApp use an in-phone keyboard with channel-specific send
 test('the Messages microphone remains a single, centered trailing input control', () => {
   for (const marker of ['.phone-screen .composer .send:not(.ready):before', 'display:none!important;content:none!important', 'width:17px!important;height:17px!important']) {
     assert.ok(html.includes(marker), `expected corrected Messages microphone placement: ${marker}`);
+  }
+});
+
+test('WhatsApp guides customer-first journeys through New chat while email remains unchanged', () => {
+  for (const marker of ['whatsappCustomerStartHint', 'This conversation begins with the customer', 'Tap New chat.', 'renderWhatsappWithCustomerStartHint', 'Email remains intentionally unchanged']) {
+    assert.ok(html.includes(marker), `expected WhatsApp customer-first guidance: ${marker}`);
   }
 });
 
