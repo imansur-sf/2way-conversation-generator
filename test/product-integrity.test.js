@@ -70,6 +70,12 @@ test('AI setup separates the active company logo from campaign hero options', ()
   }
 });
 
+test('QA starts minimized and tests a recipient message without routing dropdown jargon', () => {
+  for (const marker of ['Testing &amp; Quality Assurance', 'data-qa-toggle', 'data-qa-turn', 'Test recipient message', 'Keyword match → company response', 'const isCollapsed=step.collapsed!==false']) {
+    assert.ok(html.includes(marker), `expected compact QA and collapsed flow controls: ${marker}`);
+  }
+});
+
 test('server keeps request-size, timeout, and rate-limit safeguards enabled', () => {
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
   for (const marker of ['requestLimitBytes', 'requestTimeoutMs', 'withinRateLimit', 'safeUrl', 'privateIp']) {
