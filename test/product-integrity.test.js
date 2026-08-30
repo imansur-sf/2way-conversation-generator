@@ -28,6 +28,13 @@ test('quality guardrails are included in the standalone export source', () => {
   }
 });
 
+test('multi-channel scenarios preserve independent channel variants', () => {
+  for (const marker of ['scenarioMode', 'variants', 'captureJourneyVariant', 'projectJourneyVariant', 'addJourneyChannel', 'Create multi-channel scenario']) {
+    assert.ok(html.includes(marker), `expected multi-channel scenario support: ${marker}`);
+  }
+  assert.ok(html.includes('Switching never overwrites another channel’s flow.'), 'the builder explains independent channel editing');
+});
+
 test('server keeps request-size, timeout, and rate-limit safeguards enabled', () => {
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
   for (const marker of ['requestLimitBytes', 'requestTimeoutMs', 'withinRateLimit', 'safeUrl', 'privateIp']) {
