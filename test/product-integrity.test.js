@@ -70,6 +70,12 @@ test('AI setup separates the active company logo from campaign hero options', ()
   }
 });
 
+test('AI logo choices remain stable after selecting a different option', () => {
+  for (const marker of ['logoOptionUrls', 'renderAiSetupWithStableLogoChoices', 'Original AI logo', 'generateAiDraftWithFreshLogoChoices']) {
+    assert.ok(html.includes(marker), `expected stable AI logo-choice state: ${marker}`);
+  }
+});
+
 test('QA starts minimized and tests a recipient message without routing dropdown jargon', () => {
   for (const marker of ['Testing &amp; Quality Assurance', 'data-qa-toggle', 'data-qa-turn', 'Test recipient message', 'Keyword match → company response', 'const isCollapsed=step.collapsed!==false']) {
     assert.ok(html.includes(marker), `expected compact QA and collapsed flow controls: ${marker}`);
