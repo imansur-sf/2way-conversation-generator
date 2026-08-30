@@ -46,6 +46,12 @@ test('builder stays vertically focused and conversation blocks can collapse', ()
   }
 });
 
+test('AI company identity uses one selected logo across sender and email surfaces', () => {
+  for (const marker of ['company-logo-avatar', "avatarKind='company-logo'", 'Use as logo & sender avatar', 'Proposed logo → company sender avatar and branded email header']) {
+    assert.ok(html.includes(marker), `expected unified AI identity behavior: ${marker}`);
+  }
+});
+
 test('server keeps request-size, timeout, and rate-limit safeguards enabled', () => {
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
   for (const marker of ['requestLimitBytes', 'requestTimeoutMs', 'withinRateLimit', 'safeUrl', 'privateIp']) {
