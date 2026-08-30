@@ -58,6 +58,12 @@ test('AI company identity uses one selected logo across sender and email surface
   }
 });
 
+test('every editable image uses the compact add, change, remove, or URL workflow', () => {
+  for (const marker of ['image-asset-control', 'data-image-upload', 'data-image-url-apply', 'normalizeImageSource', "label:'Company avatar'", "label:'Card image'", "label:'Hero image'"]) {
+    assert.ok(html.includes(marker), `expected unified image-control behavior: ${marker}`);
+  }
+});
+
 test('server keeps request-size, timeout, and rate-limit safeguards enabled', () => {
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
   for (const marker of ['requestLimitBytes', 'requestTimeoutMs', 'withinRateLimit', 'safeUrl', 'privateIp']) {
