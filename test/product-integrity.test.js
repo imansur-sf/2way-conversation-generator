@@ -40,6 +40,12 @@ test('branded email omits a broken or missing logo instead of showing a placehol
   assert.ok(html.includes("this.closest('.scenario-email-mark')?.remove()"), 'a failed logo image removes its visual container');
 });
 
+test('builder stays vertically focused and conversation blocks can collapse', () => {
+  for (const marker of ['overflow-x:hidden!important', 'decorateCollapsibleBlocks', 'data-collapse-step', 'Recipient input', 'Company response']) {
+    assert.ok(html.includes(marker), `expected builder-flow improvement: ${marker}`);
+  }
+});
+
 test('server keeps request-size, timeout, and rate-limit safeguards enabled', () => {
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
   for (const marker of ['requestLimitBytes', 'requestTimeoutMs', 'withinRateLimit', 'safeUrl', 'privateIp']) {
