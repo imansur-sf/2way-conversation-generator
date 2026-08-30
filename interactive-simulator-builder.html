@@ -332,6 +332,11 @@ function renderPreview(){if(active().channel==='email')renderEmail();else render
     renderAll();
     const avatarWithDefaultCompanyArtwork=avatar;avatar=function(s,cls='avatar'){if(!s.avatar&&!s.avatarSprite&&s.brandName&&s.channel!=='email'){return `<div class="${cls}"><span class="avatar-sprite" style="background-image:url('assets/avatars/company-avatar-sheet.png');background-position:100% 100%" aria-label="${esc(s.brandName)}"></span></div>`}return avatarWithDefaultCompanyArtwork(s,cls)};
     const renderSmsWithMainCompanyArtwork=renderSms;renderSms=function(){renderSmsWithMainCompanyArtwork();const s=active(),mainAvatar=$('#stage [data-thread="sms-main"] .avatar');if(mainAvatar&&!s.avatar&&s.avatarSprite){mainAvatar.innerHTML=`<span class="avatar-sprite" style="background-image:url('assets/avatars/company-avatar-sheet.png');background-position:${esc(s.avatarPosition||'100% 100%')}"></span>`}};
+    // This shipped preset was previously saved locally as SMS by older builds. Keep
+    // the built-in marketing-to-agent handoff anchored to its intended Gmail view.
+    function repairEmailHandoffPreset(){const handoff=state.scenarios.find(item=>item.id==='email-marketing-agent-handoff');if(handoff&&handoff.channel!=='email'){handoff.channel='email';persist()}}
+    repairEmailHandoffPreset();
+    const renderPreviewWithEmailHandoffGuarantee=renderPreview;renderPreview=function(){repairEmailHandoffPreset();renderPreviewWithEmailHandoffGuarantee()};
     renderAll();
     })();
 </script>
