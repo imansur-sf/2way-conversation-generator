@@ -64,6 +64,12 @@ test('every editable image uses the compact add, change, remove, or URL workflow
   }
 });
 
+test('AI setup separates the active company logo from campaign hero options', () => {
+  for (const marker of ['Company logo</strong>', 'Email hero options</strong>', 'data-ai-logo-select', 'data-ai-hero-select', 'The blue outline marks the logo currently used', 'The blue outline marks the hero currently used']) {
+    assert.ok(html.includes(marker), `expected separate AI visual selection: ${marker}`);
+  }
+});
+
 test('server keeps request-size, timeout, and rate-limit safeguards enabled', () => {
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
   for (const marker of ['requestLimitBytes', 'requestTimeoutMs', 'withinRateLimit', 'safeUrl', 'privateIp']) {
