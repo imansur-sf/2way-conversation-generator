@@ -82,6 +82,13 @@ test('QA starts minimized and tests a recipient message without routing dropdown
   }
 });
 
+test('SMS, RCS, and WhatsApp use an in-phone keyboard with channel-specific send controls', () => {
+  for (const marker of ['phone-keyboard', 'keyboard-open', 'keyboardIcons', 'messageSend', 'whatsappSend', 'addPhoneKeyboard', 'cubic-bezier(.22,1,.36,1)']) {
+    assert.ok(html.includes(marker), `expected animated phone-keyboard behavior: ${marker}`);
+  }
+  assert.ok(html.includes("isWhatsapp?keyboardIcons.whatsappSend:keyboardIcons.messageSend"), 'WhatsApp and Messages use distinct send icons');
+});
+
 test('server keeps request-size, timeout, and rate-limit safeguards enabled', () => {
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
   for (const marker of ['requestLimitBytes', 'requestTimeoutMs', 'withinRateLimit', 'safeUrl', 'privateIp']) {
