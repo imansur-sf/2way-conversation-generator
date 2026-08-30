@@ -40,6 +40,12 @@ test('branded email omits a broken or missing logo instead of showing a placehol
   assert.ok(html.includes("this.closest('.scenario-email-mark')?.remove()"), 'a failed logo image removes its visual container');
 });
 
+test('branded email treats the logo and company name as one centered identity lockup', () => {
+  for (const marker of ['scenario-email-identity', 'scenario-email-preheader', 'width:48px', 'height:48px']) {
+    assert.ok(html.includes(marker), `expected centered branded-email identity treatment: ${marker}`);
+  }
+});
+
 test('builder stays vertically focused and conversation blocks can collapse', () => {
   for (const marker of ['overflow-x:hidden!important', 'decorateCollapsibleBlocks', 'data-collapse-step', 'Recipient input', 'Company response']) {
     assert.ok(html.includes(marker), `expected builder-flow improvement: ${marker}`);
