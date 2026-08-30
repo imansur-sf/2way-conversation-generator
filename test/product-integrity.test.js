@@ -89,6 +89,13 @@ test('SMS, RCS, and WhatsApp use an in-phone keyboard with channel-specific send
   assert.ok(html.includes("isWhatsapp?keyboardIcons.whatsappSend:keyboardIcons.messageSend"), 'WhatsApp and Messages use distinct send icons');
 });
 
+test('conversation cards use one drag-and-drop reorderer across every channel', () => {
+  for (const marker of ['conversation-drag-handle', 'decorateConversationDragDrop', 'reorderConversationSteps', 'data-conversation-drag', 'pointerdown', 'Conversation message reordered']) {
+    assert.ok(html.includes(marker), `expected conversation drag-and-drop behavior: ${marker}`);
+  }
+  assert.ok(html.includes("tools.querySelectorAll('[data-move]').forEach(button=>button.remove())"), 'legacy arrow controls are removed when drag controls are added');
+});
+
 test('server keeps request-size, timeout, and rate-limit safeguards enabled', () => {
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
   for (const marker of ['requestLimitBytes', 'requestTimeoutMs', 'withinRateLimit', 'safeUrl', 'privateIp']) {
