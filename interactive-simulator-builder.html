@@ -110,6 +110,9 @@
   <style id="recipient-start-guidance">
     .phone-screen .phone-start-hint{z-index:50;background:#fff;box-shadow:0 14px 34px rgba(29,42,58,.28)}
   </style>
+  <style id="generated-avatar-sprites">
+    .avatar-sprite{display:block;width:100%;height:100%;background-repeat:no-repeat;background-size:300% 300%;background-color:#dfe5e7}
+  </style>
   <style id="whatsapp-source-inbox">
     /* Dimensions and controls reproduced from the supplied WhatsApp Chats source. */
     .stage:has(.wa-app) .phone{transform:none}
@@ -315,6 +318,20 @@ function renderPreview(){if(active().channel==='email')renderEmail();else render
     const finalRenderSmsWithRecipientStartHint=renderSms;renderSms=function(){finalRenderSmsWithRecipientStartHint();const s=active();if(!isRecipientInitiated(s)||state.visible.length||state.view==='thread'||state.view==='passive-sms'||!state.recipientStartHint)return;const list=$('#stage .message-list');if(!list||list.querySelector('.phone-start-hint'))return;list.insertAdjacentHTML('beforeend',recipientStartHint());const dismiss=$('[data-dismiss-recipient-start]');if(dismiss)dismiss.onclick=()=>{state.recipientStartHint=false;renderPreview()}};
     const finalRenderWhatsappWithEditableYou=renderWhatsapp;renderWhatsapp=function(){finalRenderWhatsappWithEditableYou();const you=$('#stage .wa-you-icon');if(you)you.src=active().recipientAvatar||'assets/avatars/whatsapp-you.png'};
     const finalRenderBuilderWithEditableWhatsappYou=renderBuilder;renderBuilder=function(){finalRenderBuilderWithEditableWhatsappYou();const s=active();if(s.channel!=='whatsapp')return;const identity=$('#identityFields .identity-preview');if(!identity||$('#whatsappYouUpload'))return;identity.insertAdjacentHTML('afterend',`<div class="grid2 whatsapp-you-editor"><div><label class="label">Your WhatsApp profile image</label><div class="upload"><input id="whatsappYouUpload" type="file" accept="image/*"><button class="quiet" id="clearWhatsappYou">Reset</button></div></div><div class="identity-preview">${s.recipientAvatar?`<img src="${esc(s.recipientAvatar)}" alt="Your WhatsApp profile">`:`<img src="assets/avatars/whatsapp-you.png" alt="Your WhatsApp profile">`}<span>This appears in the bottom <b>You</b> tab.</span></div></div>`);const upload=$('#whatsappYouUpload'),clear=$('#clearWhatsappYou');if(upload)upload.onchange=e=>{const file=e.target.files[0];if(!file)return;const reader=new FileReader();reader.onload=()=>{active().recipientAvatar=reader.result;persist();renderAll()};reader.readAsDataURL(file)};if(clear)clear.onclick=()=>{active().recipientAvatar='';persist();renderAll()}};
+    const avatarWithGeneratedSprites=avatar;avatar=function(s,cls='avatar'){if(!s.avatar&&s.avatarSprite){const sheet=s.avatarSprite==='company'?'assets/avatars/company-avatar-sheet.png':'assets/avatars/contact-avatar-sheet.png';return `<div class="${cls}"><span class="avatar-sprite" style="background-image:url('${sheet}');background-position:${esc(s.avatarPosition||'0 0')}" aria-label="${esc(s.name||s.brandName||'avatar')}"></span></div>`}return avatarWithGeneratedSprites(s,cls)};
+    const setGeneratedAvatar=(row,sprite,position)=>{if(!row.avatar){row.avatarSprite=sprite;row.avatarPosition=position}};
+    const portraitPositions=['0 0','50% 0','100% 0','0 50%','50% 50%','100% 50%','0 100%','50% 100%','100% 100%'];
+    const companyPositions=['0 0','50% 0','100% 0','0 50%','50% 50%','100% 50%','0 100%','50% 100%','100% 100%'];
+    const smsPortraits={Sofia:portraitPositions[1],'Priya — Product':portraitPositions[2],Ethan:portraitPositions[3],'Morgan — Work':portraitPositions[4],Sam:portraitPositions[5],Emma:portraitPositions[6],'Miles — Design':portraitPositions[7]};
+    const smsCompanies={'The City Desk':companyPositions[2],'Atlas Fitness':companyPositions[3]};
+    smsBackground.forEach(row=>{if(smsPortraits[row.name])setGeneratedAvatar(row,'contact',smsPortraits[row.name]);if(smsCompanies[row.name])setGeneratedAvatar(row,'company',smsCompanies[row.name])});
+    const whatsappPortraits={'Sofia':portraitPositions[1],'Ethan':portraitPositions[3],'Morgan — Work':portraitPositions[4],'Sam':portraitPositions[5],'Emma':portraitPositions[6],'Miles — Design':portraitPositions[7]};
+    const whatsappCompanies={'The City Desk':companyPositions[2],'Atlas Fitness':companyPositions[3]};
+    whatsappBackground.forEach(row=>{if(whatsappPortraits[row.name])setGeneratedAvatar(row,'contact',whatsappPortraits[row.name]);if(whatsappCompanies[row.name])setGeneratedAvatar(row,'company',whatsappCompanies[row.name])});
+    state.scenarios.forEach(scenario=>{if(!scenario.avatar&&scenario.channel!=='email'){scenario.avatarSprite='company';scenario.avatarPosition=companyPositions[8]}});
+    renderAll();
+    const avatarWithDefaultCompanyArtwork=avatar;avatar=function(s,cls='avatar'){if(!s.avatar&&!s.avatarSprite&&s.brandName&&s.channel!=='email'){return `<div class="${cls}"><span class="avatar-sprite" style="background-image:url('assets/avatars/company-avatar-sheet.png');background-position:100% 100%" aria-label="${esc(s.brandName)}"></span></div>`}return avatarWithDefaultCompanyArtwork(s,cls)};
+    const renderSmsWithMainCompanyArtwork=renderSms;renderSms=function(){renderSmsWithMainCompanyArtwork();const s=active(),mainAvatar=$('#stage [data-thread="sms-main"] .avatar');if(mainAvatar&&!s.avatar&&s.avatarSprite){mainAvatar.innerHTML=`<span class="avatar-sprite" style="background-image:url('assets/avatars/company-avatar-sheet.png');background-position:${esc(s.avatarPosition||'100% 100%')}"></span>`}};
     renderAll();
     })();
 </script>
