@@ -127,25 +127,35 @@ function parseJson(text) {
 }
 async function callGemini(prompt) {
   if (!geminiApiKey) throw Object.assign(new Error('llm_not_configured'), { code:'llm_not_configured' });
-  const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 60_000);
-  try {
-    const upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${geminiApiKey}`, { method:'POST', headers:{ 'Content-Type':'application/json' }, signal:controller.signal, body:JSON.stringify({ contents:[{ parts:[{ text:prompt }] }], generationConfig:{ responseMimeType:'application/json', maxOutputTokens:3500 } }) });
-    if (!upstream.ok) {
-      const detail = (await upstream.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 300);
-      const code = upstream.status === 400 ? 'gemini_bad_request' : upstream.status === 401 || upstream.status === 403 ? 'gemini_auth_failed' : upstream.status === 404 ? 'gemini_model_not_found' : upstream.status === 429 ? 'gemini_rate_limited' : 'gemini_failed';
-      console.error(JSON.stringify({ event:'gemini_request_failed', status:upstream.status, model:geminiModel, detail }));
-      throw Object.assign(new Error(code), { code, status:upstream.status });
-    }
-    const payload = await upstream.json();
-    return parseJson(payload?.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('') || '');
-  } catch (error) {
-    if (error?.name === 'AbortError') throw Object.assign(new Error('gemini_timeout'), { code:'gemini_timeout' });
-    throw error;
-  } finally { clearTimeout(timeout); }
+  const request = async (attempt = 0) => {
+    const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 60_000);
+    try {
+      const retryInstruction = attempt ? '\nReturn the compact JSON object now. Do not explain it, use Markdown, or add fields that were not requested.' : '';
+      const upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${geminiApiKey}`, { method:'POST', headers:{ 'Content-Type':'application/json' }, signal:controller.signal, body:JSON.stringify({ contents:[{ parts:[{ text:prompt + retryInstruction }] }], generationConfig:{ responseMimeType:'application/json', maxOutputTokens:attempt ? 2200 : 2800 } }) });
+      if (!upstream.ok) {
+        const detail = (await upstream.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 300);
+        const code = upstream.status === 400 ? 'gemini_bad_request' : upstream.status === 401 || upstream.status === 403 ? 'gemini_auth_failed' : upstream.status === 404 ? 'gemini_model_not_found' : upstream.status === 429 ? 'gemini_rate_limited' : 'gemini_failed';
+        console.error(JSON.stringify({ event:'gemini_request_failed', status:upstream.status, model:geminiModel, detail }));
+        throw Object.assign(new Error(code), { code, status:upstream.status });
+      }
+      const payload = await upstream.json(), raw=payload?.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('') || '';
+      try { return parseJson(raw); }
+      catch (error) { console.error(JSON.stringify({ event:'gemini_invalid_json', model:geminiModel, attempt, finishReason:payload?.candidates?.[0]?.finishReason || null, characters:raw.length })); throw error; }
+    } catch (error) {
+      if (error?.name === 'AbortError') throw Object.assign(new Error('gemini_timeout'), { code:'gemini_timeout' });
+      throw error;
+    } finally { clearTimeout(timeout); }
+  };
+  try { return await request(); }
+  catch (error) { if (error?.code !== 'gemini_bad_json') throw error; return request(1); }
 }
 function draftPrompt({ companyName, website, useCase, channels, evidence }) {
   const images = evidence.candidates.map((item,index) => `${index + 1}. ${item.role}: ${item.url}`).join('\n') || '(none)';
-  return `Create concise, realistic Salesforce two-way messaging demo content. Return JSON only.\nCompany supplied: ${companyName || '(not supplied)'}\nWebsite: ${website}\nUse case: ${useCase}\nChannels: ${channels.join(', ')}\n\nWebsite evidence:\nTitle: ${evidence.title}\nDescription: ${evidence.description}\nHeadings: ${evidence.headings.slice(0,10).join(' | ')}\nText: ${evidence.text.slice(0,3500)}\nImage candidates (only use these URLs or empty strings):\n${images}\n\nFirst determine one initialSender for the entire journey: use "company" when the company opens with an outreach, campaign, reminder, or invitation; use "customer" only when the customer explicitly starts the conversation. Every requested channel must honor this same sender order.\n\nEach requested scenario must include an ordered "turns" array. This is the canonical conversation. Preserve every explicitly described line and its order from the use case—especially every customer/prospect reply. A turn is {"speaker":"company"|"customer","text":"","mode":"prefill"|"free"|"choices","options":[]}. Customer turns with supplied wording must use mode "prefill" so the exact wording appears in the channel composer; use "choices" only when the use case asks for selectable alternatives, and use "free" only when the use case explicitly requests open-ended customer typing. Never reduce a multi-turn script to one customer turn.\n\nReturn: {"companyName":"","initials":"","emailAddress":"","logoUrl":"","heroImageUrl":"","brandColor":"#0176D3","brandSecondaryColor":"#032D60","initialSender":"company","scenarios":{"sms":{"title":"","sender":"","initialMessage":"","customerMessage":"","prefilledReply":"","turns":[{"speaker":"company","text":""},{"speaker":"customer","text":"","mode":"prefill"}],"keywords":[{"terms":"","response":""}],"fallbackResponse":""},"rcs":{"title":"","initialMessage":"","customerMessage":"","prefilledReply":"","turns":[{"speaker":"company","text":""},{"speaker":"customer","text":"","mode":"prefill"}],"keywords":[{"terms":"","response":""}],"fallbackResponse":"","cards":[{"title":"","description":"","cta":"","url":"","imageUrl":""}]},"whatsapp":{"title":"","initialMessage":"","customerMessage":"","prefilledReply":"","turns":[{"speaker":"company","text":""},{"speaker":"customer","text":"","mode":"prefill"}],"keywords":[{"terms":"","response":""}],"fallbackResponse":"","cards":[{"title":"","description":"","cta":"","url":"","imageUrl":""}]},"email":{"title":"","subject":"","preheader":"","initialBody":"","customerMessage":"","ctaLabel":"","ctaUrl":"","layout":"hero","prefilledReply":"","turns":[{"speaker":"company","text":""},{"speaker":"customer","text":"","mode":"prefill"}],"keywords":[{"terms":"","response":""}],"fallbackResponse":""}}}. For brandColor and brandSecondaryColor, provide 6-digit hex colors inferred from the company logo or website; use #0176D3 and #032D60 only when the evidence provides no reliable palette. For email, use the logo and hero image candidates when relevant, write a realistic preheader and CTA, and choose layout "hero" or "simple". Include only requested channel keys. Use exactly 2 keyword responses and one fallback per requested channel when the use case is not an explicit scripted sequence; include at most 2 rich cards for RCS or WhatsApp. Keep every text field under 240 characters. Do not invent URLs or facts not supported by the evidence.`;
+  const channel = channels[0] || 'sms';
+  const channelSchema = channel === 'email'
+    ? '{"title":"","subject":"","preheader":"","initialBody":"","customerMessage":"","prefilledReply":"","turns":[{"speaker":"company","text":""},{"speaker":"customer","text":"","mode":"prefill"}],"keywords":[{"terms":"","response":""}],"fallbackResponse":"","ctaLabel":"","ctaUrl":"","layout":"hero"}'
+    : '{"title":"","sender":"","initialMessage":"","customerMessage":"","prefilledReply":"","turns":[{"speaker":"company","text":""},{"speaker":"customer","text":"","mode":"prefill"}],"keywords":[{"terms":"","response":""}],"fallbackResponse":""}';
+  return `Create one concise, realistic ${channel.toUpperCase()} two-way messaging demo. Return JSON only.\nCompany: ${companyName || '(not supplied)'}\nWebsite: ${website}\nUse case: ${useCase}\n\nEvidence: ${evidence.title}. ${evidence.description}. ${evidence.headings.slice(0,6).join(' | ')}\nWebsite text: ${evidence.text.slice(0,2000)}\nImage candidates (only use these URLs or empty strings):\n${images}\n\nUse "company" as initialSender when the company opens with outreach, a campaign, reminder, or invitation; use "customer" only when the customer explicitly begins. Preserve every explicitly provided line and its order in turns. A turn is {"speaker":"company"|"customer","text":"","mode":"prefill"|"free"|"choices","options":[]}. Any supplied customer wording must use mode "prefill". Use "choices" only for requested selectable options and "free" only for explicitly open-ended typing.\n\nReturn exactly this compact JSON shape, with only the ${channel} scenario key: {"companyName":"","initials":"","emailAddress":"","logoUrl":"","heroImageUrl":"","brandColor":"#0176D3","brandSecondaryColor":"#032D60","initialSender":"company","scenarios":{"${channel}":${channelSchema}}}. Keep text under 240 characters. Do not invent facts or URLs.`;
 }
 function clean(value, fallback = '') { return typeof value === 'string' ? value.trim().slice(0,1800) : fallback; }
 function color(value, fallback = '#0176D3') { const candidate = clean(value); return /^#[0-9a-f]{6}$/i.test(candidate) ? candidate.toUpperCase() : fallback; }
