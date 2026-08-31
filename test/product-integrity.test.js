@@ -38,6 +38,23 @@ test('AI applies to the active named scenario by default, with a separate-scenar
   assert.ok(html.includes('Choose Create separately to keep this scenario unchanged.'), 'the review explains that the secondary action preserves the current scenario');
 });
 
+test('AI uses one explicit initial sender across every channel, including email', () => {
+  const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+  for (const marker of ['"initialSender":"company"', 'Every requested channel must honor this same sender order.', 'customerMessage:clean(scenario.customerMessage)', "initialSender:clean(raw?.initialSender).toLowerCase()==='customer'?'customer':'company'"]) {
+    assert.ok(server.includes(marker), `expected AI draft sender contract: ${marker}`);
+  }
+  for (const marker of ["customerFirst=draft.initialSender==='customer'", "author:'brand',kind:'text',text:config.initialBody||config.initialMessage||config.fallbackResponse", "emailBody:customerFirst?'':config.initialBody", 'aiCustomerStep(config,true)', 'aiBrandResponseSteps(config)']) {
+    assert.ok(html.includes(marker), `expected shared sender behavior in the channel converter: ${marker}`);
+  }
+});
+
+test('email response styling is controlled per company response with compact shared assets', () => {
+  for (const marker of ['email-identity-assets', 'Company email assets', 'emailAssetCard', 'data-email-asset-url-apply', 'email-response-toggle', 'data-response-mode', 'response-rich-editor', 'renderBuilderWithPerResponseEmailDesign', "$('#emailDesigner')?.remove()", 'bubbleWithPerResponseEmailDesign']) {
+    assert.ok(html.includes(marker), `expected per-response email design behavior: ${marker}`);
+  }
+  assert.ok(html.includes('Customer replies remain plain Gmail text.'), 'customer responses are deliberately kept as plain-text email');
+});
+
 test('branded email omits a broken or missing logo instead of showing a placeholder', () => {
   assert.ok(html.includes("logo=String(scenario.emailLogo||'').trim()"), 'only an explicitly configured email logo is rendered');
   assert.ok(html.includes("this.closest('.scenario-email-mark')?.remove()"), 'a failed logo image removes its visual container');
