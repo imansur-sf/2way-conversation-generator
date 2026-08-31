@@ -110,6 +110,13 @@ test('opened Gmail messages retain read state after returning to the inbox', () 
   }
 });
 
+test('saved scenario data is versioned, validated, and automatically recoverable', () => {
+  for (const marker of ['scenarioStoreVersion=4', "scenarioStoreKey='two-way-studio-v4'", 'Array.isArray(parsed?.scenarios)', 'savedScenarioRecoveryNeeded', '!normalizedScenarios.length', 'Restore starter scenarios', 'restoreStarterScenarios']) {
+    assert.ok(html.includes(marker), 'expected saved-scenario recovery behavior: ' + marker);
+  }
+  assert.ok(html.includes('Your custom scenarios will be kept.'), 'manual starter restoration preserves custom scenarios');
+});
+
 test('conversation cards use one drag-and-drop reorderer across every channel', () => {
   for (const marker of ['conversation-drag-handle', 'decorateConversationDragDrop', 'reorderConversationSteps', 'data-conversation-drag', 'pointerdown', 'Conversation message reordered']) {
     assert.ok(html.includes(marker), `expected conversation drag-and-drop behavior: ${marker}`);
