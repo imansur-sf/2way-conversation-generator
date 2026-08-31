@@ -111,10 +111,18 @@ test('opened Gmail messages retain read state after returning to the inbox', () 
 });
 
 test('saved scenario data is versioned, validated, and automatically recoverable', () => {
-  for (const marker of ['scenarioStoreVersion=4', "scenarioStoreKey='two-way-studio-v4'", 'Array.isArray(parsed?.scenarios)', 'savedScenarioRecoveryNeeded', '!normalizedScenarios.length', 'Restore starter scenarios', 'restoreStarterScenarios']) {
+  for (const marker of ['scenarioStoreVersion=4', "scenarioStoreKey='two-way-studio-v4'", 'Array.isArray(parsed?.scenarios)', 'bootstrapScenario', 'supportedBootstrapChannels', 'savedScenarioRecoveryNeeded', '!normalizedScenarios.length', 'Restore starter scenarios', 'restoreStarterScenarios']) {
     assert.ok(html.includes(marker), 'expected saved-scenario recovery behavior: ' + marker);
   }
   assert.ok(html.includes('Your custom scenarios will be kept.'), 'manual starter restoration preserves custom scenarios');
+});
+
+test('startup validates saved scenarios before the first render and has a one-time reset fallback', () => {
+  for (const marker of ['bootstrapRecoveryFlag', 'recoverFromBootstrapFailure', "localStorage.removeItem('two-way-studio-v4')", "localStorage.removeItem('two-way-studio-v3')", "window.addEventListener('error'", 'bootstrapRendered=true']) {
+    assert.ok(html.includes(marker), 'expected refresh-time blank-state prevention: ' + marker);
+  }
+  assert.ok(html.indexOf('function bootstrapScenario') < html.indexOf('function renderBuilder()'), 'saved records are normalized before the first builder render');
+  assert.ok(html.indexOf('readThreads:new Set()') < html.indexOf('function renderSms(){const s=active()'), 'the initial phone renderer has its read-state dependency immediately available');
 });
 
 test('customer-first Gmail uses a floating Compose window and later delivers a new inbound email', () => {
