@@ -31,6 +31,12 @@ test('multi-channel scenarios preserve independent channel variants', () => {
   assert.ok(html.includes('Switching never overwrites another channel’s flow.'), 'the builder explains independent channel editing');
 });
 
+test('versioned saves capture the active multi-channel variant before rendering', () => {
+  const finalPersist = html.lastIndexOf('persist=function(){captureJourneyVariant();try{localStorage.setItem(scenarioStoreKey');
+  assert.ok(finalPersist > html.indexOf('function captureJourneyVariant'), 'the final persistence implementation captures the projected channel variant');
+  assert.ok(html.indexOf('captureJourneyVariant();try{localStorage.setItem', finalPersist) === finalPersist + 'persist=function(){'.length, 'capture happens before writing the versioned scenario record');
+});
+
 test('AI applies to the active named scenario by default, with a separate-scenario escape hatch', () => {
   for (const marker of ['Apply to ${scenario?.name||\'this scenario\'}', 'createAiScenarioSeparately', 'Create separately', 'applyAiDraft=async function({separate=false}={})', 'destination=separate?', 'Object.keys(target).forEach(key=>delete target[key])', 'state.scenarios.push(journey)']) {
     assert.ok(html.includes(marker), `expected clear AI scenario destination behavior: ${marker}`);
@@ -191,6 +197,25 @@ test('regenerating an AI draft returns to the editable prompt without auto-gener
   }
   const regenerate = html.slice(html.indexOf('function returnAiDraftToEditor'), html.indexOf('const generateAiDraftWithFreshLogoChoices'));
   assert.ok(!regenerate.includes('generateAiDraft()'), 'returning to the prompt must not immediately submit another generation request');
+});
+
+test('selected builder images show a contained visual thumbnail', () => {
+  for (const marker of ['image-asset-preview', 'image-asset-preview-fallback', 'Image unavailable', "onerror=\"this.parentElement.classList.add('is-unavailable')\""]) {
+    assert.ok(html.includes(marker), `expected visible selected-image preview: ${marker}`);
+  }
+});
+
+test('conversation card disclosures use a stable one-click Customer/Company handler', () => {
+  for (const marker of ['decorateCollapsibleBlocksWithStableLabels', "label=step.author==='brand'?'Company response':'Customer input'", 'previous.replaceWith(toggle)', 'event.stopPropagation()', "step.collapsed=!(step.collapsed!==false)"]) {
+    assert.ok(html.includes(marker), `expected stable conversation disclosure behavior: ${marker}`);
+  }
+});
+
+test('conversation reordering is self-contained and preserves open editors', () => {
+  for (const marker of ['conversationCards(container)', "card.dataset.stepBlock=scenario.steps[index].id", 'preserveConversationDisclosureState', "step.collapsed=block.classList.contains('is-collapsed')", "handle.addEventListener('pointerdown'", "document.addEventListener('pointermove'", 'conversation-drag-ghost', 'conversation-drop-indicator', 'showInsertion(target)', 'reorderConversationSteps(origin?.dataset.stepBlock,targetId,after)']) {
+    assert.ok(html.includes(marker), `expected reliable conversation drag behavior: ${marker}`);
+  }
+  assert.ok(html.includes('tools.querySelectorAll(\'[data-move]\').forEach(button=>button.remove())'), 'legacy reordering arrows are removed while collapse and delete controls stay on the right');
 });
 
 test('server keeps request-size, timeout, and rate-limit safeguards enabled', () => {
