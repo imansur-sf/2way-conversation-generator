@@ -91,9 +91,22 @@ test('the Messages microphone remains a single, centered trailing input control'
   }
 });
 
-test('WhatsApp guides customer-first journeys through New chat while email remains unchanged', () => {
-  for (const marker of ['whatsappCustomerStartHint', 'This conversation begins with the customer', 'Tap New chat.', 'renderWhatsappWithCustomerStartHint', 'Email remains intentionally unchanged']) {
+test('WhatsApp guides customer-first journeys through New chat', () => {
+  for (const marker of ['whatsappCustomerStartHint', 'This conversation begins with the customer', 'Tap New chat.', 'renderWhatsappWithCustomerStartHint']) {
     assert.ok(html.includes(marker), `expected WhatsApp customer-first guidance: ${marker}`);
+  }
+});
+
+test('Gmail uses Compose for a customer-first flow and retains company-first inbox behavior', () => {
+  for (const marker of ['isCustomerFirstEmail', 'customerFirstEmailHint', 'Select Compose.', 'email-first-compose', 'customerFirstEmailDraft', 'customerFirstEmailThread', 'emailFirstSend']) {
+    assert.ok(html.includes(marker), 'expected customer-first Gmail behavior: ' + marker);
+  }
+  assert.ok(html.includes("first?.author==='customer'"), 'the initial-sender decision is based on the first conversation step');
+});
+
+test('opened Gmail messages retain read state after returning to the inbox', () => {
+  for (const marker of ['state.readEmails', 'decorateEmailReadState', "state.readEmails.add(index)", "button.classList.remove('unread')"]) {
+    assert.ok(html.includes(marker), 'expected Gmail read-state behavior: ' + marker);
   }
 });
 
