@@ -177,6 +177,14 @@ test('the bundled default user portrait is shared by WhatsApp and Gmail', () => 
   }
 });
 
+test('interactive HTML downloads are standalone active-channel browser experiences', () => {
+  for (const marker of ['downloadStandaloneHtml', 'inlineStandaloneAssets', 'export-channel-${esc(channel)}', 'html.replace(/<body\\b[^>]*>/i', 'scenarios:[selected]', 'emailPresentationHint', 'Gmail preview', 'full-screen, browser-tab Gmail experience']) {
+    assert.ok(html.includes(marker), `expected standalone export behavior: ${marker}`);
+  }
+  assert.ok(html.includes(".export .builder,.export .appbar,.export .preview-info"), 'exports remove builder and presenter chrome');
+  assert.ok(html.includes("document.body.classList.remove('presentation','email-presentation')"), 'leaving presentation removes email-only presentation state');
+});
+
 test('server keeps request-size, timeout, and rate-limit safeguards enabled', () => {
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
   for (const marker of ['requestLimitBytes', 'requestTimeoutMs', 'withinRateLimit', 'safeUrl', 'privateIp']) {
