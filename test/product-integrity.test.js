@@ -185,6 +185,14 @@ test('interactive HTML downloads are standalone active-channel browser experienc
   assert.ok(html.includes("document.body.classList.remove('presentation','email-presentation')"), 'leaving presentation removes email-only presentation state');
 });
 
+test('regenerating an AI draft returns to the editable prompt without auto-generating', () => {
+  for (const marker of ['returnAiDraftToEditor', 'Draft cleared. Update the prompt', "state.setupMode='ai'", "ai.draft=null", 'regenerateAiDraft']) {
+    assert.ok(html.includes(marker), `expected editable AI regeneration behavior: ${marker}`);
+  }
+  const regenerate = html.slice(html.indexOf('function returnAiDraftToEditor'), html.indexOf('const generateAiDraftWithFreshLogoChoices'));
+  assert.ok(!regenerate.includes('generateAiDraft()'), 'returning to the prompt must not immediately submit another generation request');
+});
+
 test('server keeps request-size, timeout, and rate-limit safeguards enabled', () => {
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
   for (const marker of ['requestLimitBytes', 'requestTimeoutMs', 'withinRateLimit', 'safeUrl', 'privateIp']) {
