@@ -117,6 +117,19 @@ test('saved scenario data is versioned, validated, and automatically recoverable
   assert.ok(html.includes('Your custom scenarios will be kept.'), 'manual starter restoration preserves custom scenarios');
 });
 
+test('customer-first Gmail uses a floating Compose window and later delivers a new inbound email', () => {
+  for (const marker of ['g-email-popout', 'addCustomerFirstComposePopout', 'customerInboundEmailRow', 'addCustomerInboundEmail', 'data-customer-inbound', 'state.customerFirstInboundRead']) {
+    assert.ok(html.includes(marker), 'expected Gmail compose-first inbox behavior: ' + marker);
+  }
+  assert.ok(html.includes("state.view='list';state.passive=null;state.emailCompose=false;state.customerFirstInboundRead=false;submit(message)"), 'sending the first email returns the customer to the inbox before the reply arrives');
+});
+
+test('Gmail source-style light chrome uses an app rail, Ask Gmail, and SVG navigation icons', () => {
+  for (const marker of ['g-source-gmail', 'g-app-rail', 'Ask Gmail', 'gmailReferenceIcon', 'gmailGeminiMark', 'g-search-filter', 'gmail-reference-svg']) {
+    assert.ok(html.includes(marker), 'expected Gmail reference chrome: ' + marker);
+  }
+});
+
 test('conversation cards use one drag-and-drop reorderer across every channel', () => {
   for (const marker of ['conversation-drag-handle', 'decorateConversationDragDrop', 'reorderConversationSteps', 'data-conversation-drag', 'pointerdown', 'Conversation message reordered']) {
     assert.ok(html.includes(marker), `expected conversation drag-and-drop behavior: ${marker}`);
