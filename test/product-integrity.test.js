@@ -54,6 +54,29 @@ test('AI uses one explicit initial sender across every channel, including email'
   }
 });
 
+test('AI preserves ordered scripted customer turns and defaults their supplied copy to composer prefills', () => {
+  const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+  for (const marker of ['Each requested scenario must include an ordered "turns" array.', 'Never reduce a multi-turn script to one customer turn.', 'function turns(value)', 'turns:turns(scenario.turns)']) {
+    assert.ok(server.includes(marker), `expected scripted AI-turn contract: ${marker}`);
+  }
+  for (const marker of ['scriptedStepsFromAi', "turn.mode==='free'?'free':turn.mode==='choices'?'prefilled':'prefill'", 'scenario.steps=turns', 'reusableSet:mode===\'free\'']) {
+    assert.ok(html.includes(marker), `expected scripted AI-turn mapping: ${marker}`);
+  }
+});
+
+test('customer response modes distinguish typing, composer prefills, and intentional choice bubbles', () => {
+  for (const marker of ['customerResponseModeEditor', 'Type in phone', 'Prefill message', 'Reply choices', 'Message to prefill', 'Scripted sequence', "['prefill','prefilled'].includes(step.kind)", 'state.composerPrefillToken']) {
+    assert.ok(html.includes(marker), `expected customer response mode: ${marker}`);
+  }
+  assert.ok(html.includes("pending.kind==='prefill')state.composer=pending.text||''"), 'a message prefill is placed into the live composer');
+});
+
+test('help content is mounted in a viewport-safe document popover instead of being clipped by cards', () => {
+  for (const marker of ['ruleHelpPopover', 'placeRuleHelpPopover', 'wireRuleHelpPopovers', "copy.hidden=true", "ruleHelpPopover.hidden=true", "role','tooltip'"]) {
+    assert.ok(html.includes(marker), `expected safe help popover behavior: ${marker}`);
+  }
+});
+
 test('email response styling is controlled per company response with compact shared assets', () => {
   for (const marker of ['email-identity-assets', 'Company email assets', 'emailAssetCard', 'data-email-asset-url-apply', 'email-response-toggle', 'data-response-mode', 'response-rich-editor', 'renderBuilderWithPerResponseEmailDesign', "$('#emailDesigner')?.remove()", 'bubbleWithPerResponseEmailDesign']) {
     assert.ok(html.includes(marker), `expected per-response email design behavior: ${marker}`);
