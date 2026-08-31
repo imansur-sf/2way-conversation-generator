@@ -25,10 +25,17 @@ test('quality guardrails are included in the standalone export source', () => {
 });
 
 test('multi-channel scenarios preserve independent channel variants', () => {
-  for (const marker of ['scenarioMode', 'variants', 'captureJourneyVariant', 'projectJourneyVariant', 'addJourneyChannel', 'Create multi-channel scenario']) {
+  for (const marker of ['scenarioMode', 'variants', 'captureJourneyVariant', 'projectJourneyVariant', 'addJourneyChannel', 'Apply to ${scenario?.name||\'this scenario\'}']) {
     assert.ok(html.includes(marker), `expected multi-channel scenario support: ${marker}`);
   }
   assert.ok(html.includes('Switching never overwrites another channel’s flow.'), 'the builder explains independent channel editing');
+});
+
+test('AI applies to the active named scenario by default, with a separate-scenario escape hatch', () => {
+  for (const marker of ['Apply to ${scenario?.name||\'this scenario\'}', 'createAiScenarioSeparately', 'Create separately', 'applyAiDraft=async function({separate=false}={})', 'destination=separate?', 'Object.keys(target).forEach(key=>delete target[key])', 'state.scenarios.push(journey)']) {
+    assert.ok(html.includes(marker), `expected clear AI scenario destination behavior: ${marker}`);
+  }
+  assert.ok(html.includes('Choose Create separately to keep this scenario unchanged.'), 'the review explains that the secondary action preserves the current scenario');
 });
 
 test('branded email omits a broken or missing logo instead of showing a placeholder', () => {
