@@ -46,7 +46,7 @@ test('AI applies to the active named scenario by default, with a separate-scenar
 
 test('AI uses one explicit initial sender across every channel, including email', () => {
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
-  for (const marker of ['"initialSender":"company"', 'Every requested channel must honor this same sender order.', 'customerMessage:clean(scenario.customerMessage)', "initialSender:clean(raw?.initialSender).toLowerCase()==='customer'?'customer':'company'"]) {
+  for (const marker of ['"initialSender":"company"', 'Use "company" as initialSender when the company opens with outreach', 'customerMessage:clean(scenario.customerMessage)', "initialSender:clean(raw?.initialSender).toLowerCase()==='customer'?'customer':'company'"]) {
     assert.ok(server.includes(marker), `expected AI draft sender contract: ${marker}`);
   }
   for (const marker of ["customerFirst=draft.initialSender==='customer'", "author:'brand',kind:'text',text:config.initialBody||config.initialMessage||config.fallbackResponse", "emailBody:customerFirst?'':config.initialBody", 'aiCustomerStep(config,true)', 'aiBrandResponseSteps(config)']) {
@@ -56,11 +56,18 @@ test('AI uses one explicit initial sender across every channel, including email'
 
 test('AI preserves ordered scripted customer turns and defaults their supplied copy to composer prefills', () => {
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
-  for (const marker of ['Each requested scenario must include an ordered "turns" array.', 'Never reduce a multi-turn script to one customer turn.', 'function turns(value)', 'turns:turns(scenario.turns)']) {
+  for (const marker of ['Preserve every explicitly provided line and its order in turns.', 'Any supplied customer wording must use mode "prefill".', 'function turns(value)', 'turns:turns(scenario.turns)']) {
     assert.ok(server.includes(marker), `expected scripted AI-turn contract: ${marker}`);
   }
   for (const marker of ['scriptedStepsFromAi', "turn.mode==='free'?'free':turn.mode==='choices'?'prefilled':'prefill'", 'scenario.steps=turns', 'reusableSet:mode===\'free\'']) {
     assert.ok(html.includes(marker), `expected scripted AI-turn mapping: ${marker}`);
+  }
+});
+
+test('AI generation uses a compact per-channel contract and retries malformed JSON once', () => {
+  const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+  for (const marker of ["const channel = channels[0] || 'sms'", 'Return exactly this compact JSON shape', 'maxOutputTokens:attempt ? 2200 : 2800', "if (error?.code !== 'gemini_bad_json') throw error; return request(1);", "event:'gemini_invalid_json'"]) {
+    assert.ok(server.includes(marker), `expected resilient AI generation: ${marker}`);
   }
 });
 
