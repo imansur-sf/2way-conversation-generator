@@ -298,7 +298,12 @@ test('the email company-avatar control reuses the selected email logo when no se
 });
 
 test('the final builder render applies Customer terminology after channel-specific markup is rebuilt', () => {
-  for (const marker of ['renderBuilderWithFinalCustomerTerminology', 'applyCustomerTerminology()']) {
+  for (const marker of [
+    'renderBuilderWithFinalCustomerTerminology',
+    'applyCustomerTerminology()',
+    "if(addCustomer)addCustomer.textContent='+ Customer'",
+    "if(addEmailCustomer)addEmailCustomer.textContent='+ Customer'"
+  ]) {
     assert.ok(html.includes(marker), `expected final customer terminology normalization: ${marker}`);
   }
 });
