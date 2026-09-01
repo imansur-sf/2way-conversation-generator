@@ -64,9 +64,9 @@ test('AI preserves ordered scripted customer turns and defaults their supplied c
   }
 });
 
-test('AI generation uses a compact per-channel contract and retries malformed JSON once', () => {
+test('AI generation uses one compact canonical request within the hosted timeout budget', () => {
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
-  for (const marker of ["const channel = channels[0] || 'sms'", 'Return exactly this compact JSON shape', 'maxOutputTokens:attempt ? 2200 : 2800', "['gemini_bad_json','gemini_failed'].includes(error?.code)", "event:'gemini_invalid_json'", "error?.name === 'TypeError'"]) {
+  for (const marker of ["const channel = channels[0] || 'sms'", 'Return exactly this compact JSON shape', 'requestTimeoutMs = 8_000', 'geminiRequestTimeoutMs = 16_000', 'function adaptCanonicalDraft', "requests:1, channels", "channels:['sms']", "event:'gemini_invalid_json'", "error?.name === 'TypeError'"]) {
     assert.ok(server.includes(marker), `expected resilient AI generation: ${marker}`);
   }
 });
