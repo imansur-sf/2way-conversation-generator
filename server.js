@@ -138,16 +138,20 @@ async function callGemini(prompt) {
         console.error(JSON.stringify({ event:'gemini_request_failed', status:upstream.status, model:geminiModel, detail }));
         throw Object.assign(new Error(code), { code, status:upstream.status });
       }
-      const payload = await upstream.json(), raw=payload?.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('') || '';
+      let payload;
+      try { payload = await upstream.json(); }
+      catch { throw Object.assign(new Error('gemini_bad_json'), { code:'gemini_bad_json' }); }
+      const raw=payload?.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('') || '';
       try { return parseJson(raw); }
       catch (error) { console.error(JSON.stringify({ event:'gemini_invalid_json', model:geminiModel, attempt, finishReason:payload?.candidates?.[0]?.finishReason || null, characters:raw.length })); throw error; }
     } catch (error) {
       if (error?.name === 'AbortError') throw Object.assign(new Error('gemini_timeout'), { code:'gemini_timeout' });
+      if (!error?.code && error?.name === 'TypeError') throw Object.assign(new Error('gemini_failed'), { code:'gemini_failed' });
       throw error;
     } finally { clearTimeout(timeout); }
   };
   try { return await request(); }
-  catch (error) { if (error?.code !== 'gemini_bad_json') throw error; return request(1); }
+  catch (error) { if (!['gemini_bad_json','gemini_failed'].includes(error?.code)) throw error; return request(1); }
 }
 function draftPrompt({ companyName, website, useCase, channels, evidence }) {
   const images = evidence.candidates.map((item,index) => `${index + 1}. ${item.role}: ${item.url}`).join('\n') || '(none)';
@@ -210,7 +214,7 @@ async function handleApi(request,response,url) {
       const ai = { ...channelDrafts[0], scenarios:Object.assign({}, ...channelDrafts.map(draft => draft?.scenarios || {})) };
       console.log(JSON.stringify({ event:'scenario_draft_completed', elapsedMs:Date.now()-startedAt }));
       sendJson(response,200,{ draft:normalizeDraft(ai,channels,remote.url), source:{ url:remote.url, title:evidence.title, imageCandidates:evidence.candidates } });
-    } catch (error) { const code=error?.code || 'scenario_generation_failed'; console.error(JSON.stringify({ event:'scenario_draft_failed', code, status:error?.status || null })); const status = code === 'llm_not_configured' ? 503 : ['invalid_url','blocked_url','blocked_host','missing_required_fields'].includes(code) ? 400 : 502; sendJson(response,status,{ error:code }); }
+    } catch (error) { const code=error?.code || 'scenario_generation_failed'; console.error(JSON.stringify({ event:'scenario_draft_failed', code, status:error?.status || null, name:error?.name || null, message:String(error?.message || '').slice(0,240) })); const status = code === 'llm_not_configured' ? 503 : ['invalid_url','blocked_url','blocked_host','missing_required_fields'].includes(code) ? 400 : 502; sendJson(response,status,{ error:code }); }
     return true;
   }
   return false;
