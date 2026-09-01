@@ -67,6 +67,19 @@ test('AI honors a named company as the stated opening sender, including fallback
   assert.equal(corrected.scenarios.sms.turns[0].speaker, 'company');
 });
 
+test('fallback drafts preserve natural-language customer, topic, question, and handoff details', () => {
+  const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+  const helpers = new Function(`${server.slice(server.indexOf('function fallbackTurns'), server.indexOf('function readJson'))};return { fallbackDraft, naturalLanguageFallbackTurns };`)();
+  const useCase = 'NCSA sends a marketing communication about an upcoming Baseball Recruiting event. A customer, Sean, responds to the message with questions around the cost and if there are any group tickets. After a few back and forth messages between them, when Sean wants to learn more about IMG Academy, he is connected to a Sales Rep named Jake in the same thread.';
+  const fallback = helpers.fallbackDraft({ companyName:'NCSA', website:'https://ncsasports.org', useCase, evidence:{ title:'NCSA', candidates:[] } });
+  const transcript = fallback.scenarios.sms.turns.map(turn => turn.text).join('\n');
+  assert.equal(fallback.scenarios.sms.turns.length, 6);
+  for (const detail of ['Sean', 'Baseball Recruiting event', 'cost', 'group tickets', 'IMG Academy', 'Jake']) {
+    assert.match(transcript, new RegExp(detail, 'i'), `fallback should retain ${detail}`);
+  }
+  assert.deepEqual(fallback.scenarios.sms.turns.map(turn => turn.speaker), ['company','customer','company','customer','company','company']);
+});
+
 test('AI preserves ordered scripted customer turns and defaults their supplied copy to composer prefills', () => {
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
   for (const marker of ['Preserve every explicitly provided line and its order in turns.', 'Include every supplied turn, up to 12 turns', 'Copy explicitly quoted dialogue verbatim; do not shorten it.', 'function cleanPrompt', 'slice(0,12_000)', 'useCase = cleanPrompt(body.useCase)', 'function preserveExplicitTurns', 'scenario_draft_explicit_turns_preserved', 'return turns.slice(0,16)', 'value.slice(0,16)', 'Any supplied customer wording must use mode "prefill".', 'function turns(value)', 'turns:turns(scenario.turns)']) {
