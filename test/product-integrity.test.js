@@ -266,7 +266,7 @@ test('regenerating an AI draft returns to the editable prompt without auto-gener
 });
 
 test('selected builder images show a contained visual thumbnail', () => {
-  for (const marker of ['image-asset-thumb', 'data-image-thumbnail', 'role="img"', "background-image:url('${esc(value)}')", 'background:#e6f1f9 center/cover no-repeat']) {
+  for (const marker of ['image-asset-thumb', 'data-image-thumbnail', 'role="img"', "background-image:url('${esc(value)}')", 'background:#e6f1f9 center/cover no-repeat', 'snapshotEmbeddedBuilderThumbnails', "canvas.dataset.imageThumbnail='rendered-preview'", 'renderAllWithEmbeddedBuilderThumbnails']) {
     assert.ok(html.includes(marker), `expected visible selected-image preview: ${marker}`);
   }
 });
