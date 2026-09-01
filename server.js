@@ -161,7 +161,7 @@ function adaptCanonicalDraft(raw, channels) {
 }
 function fallbackTurns(useCase) {
   const turns = [];
-  const pattern = /\b(company|customer|prospect|recipient)(?:\s*\([^)]*\))?\s+(?:says?|asks?|repl(?:y|ies)|responds?)\s*[:\-]?\s*["“]([^"”]{2,500})["”]/gi;
+  const pattern = /\b(company|customer|prospect|recipient)(?:\s*\([^)]*\))?\s+(?:says?|asks?|repl(?:y|ies)|responds?)\s*[:\-]?\s*["“]([^"”]{2,1800})["”]/gi;
   for (const match of useCase.matchAll(pattern)) turns.push({ speaker:/company/i.test(match[1]) ? 'company':'customer', text:clean(match[2]), mode:'prefill', options:[] });
   return turns.slice(0,16);
 }
@@ -195,6 +195,7 @@ function draftPrompt({ companyName, website, useCase, channels, evidence }) {
   return `Create one concise, realistic ${channel.toUpperCase()} two-way messaging demo. Return JSON only.\nCompany: ${companyName || '(not supplied)'}\nWebsite: ${website}\nUse case: ${useCase}\n\nEvidence: ${evidence.title}. ${evidence.description}. ${evidence.headings.slice(0,6).join(' | ')}\nWebsite text: ${evidence.text.slice(0,2000)}\nImage candidates (only use these URLs or empty strings):\n${images}\n\nUse "company" as initialSender when the company opens with outreach, a campaign, reminder, or invitation; use "customer" only when the customer explicitly begins. Preserve every explicitly provided line and its order in turns. Include every supplied turn, up to 12 turns; never merge or omit adjacent company turns, including a handoff to another company representative. A turn is {"speaker":"company"|"customer","text":"","mode":"prefill"|"free"|"choices","options":[]}. Any supplied customer wording must use mode "prefill". Use "choices" only for requested selectable options and "free" only for explicitly open-ended typing. Copy explicitly quoted dialogue verbatim; do not shorten it.\n\nReturn exactly this compact JSON shape, with only the ${channel} scenario key: {"companyName":"","initials":"","emailAddress":"","logoUrl":"","heroImageUrl":"","brandColor":"#0176D3","brandSecondaryColor":"#032D60","initialSender":"company","scenarios":{"${channel}":${channelSchema}}}. When dialogue is not supplied, keep each generated text under 240 characters. Do not invent facts or URLs.`;
 }
 function clean(value, fallback = '') { return typeof value === 'string' ? value.trim().slice(0,1800) : fallback; }
+function cleanPrompt(value) { return typeof value === 'string' ? value.trim().slice(0,12_000) : ''; }
 function color(value, fallback = '#0176D3') { const candidate = clean(value); return /^#[0-9a-f]{6}$/i.test(candidate) ? candidate.toUpperCase() : fallback; }
 function responses(value) { return Array.isArray(value) ? value.slice(0,3).map(item => ({ terms:clean(item?.terms,'').slice(0,140), response:clean(item?.response,'') })).filter(item => item.response) : []; }
 function turns(value) { return Array.isArray(value) ? value.slice(0,16).map(turn => { const speaker=clean(turn?.speaker).toLowerCase()==='customer'?'customer':'company'; const mode=['prefill','free','choices'].includes(clean(turn?.mode).toLowerCase())?clean(turn?.mode).toLowerCase():'prefill'; return { speaker, text:clean(turn?.text), mode:speaker==='customer'?mode:undefined, options:Array.isArray(turn?.options)?turn.options.map(option=>clean(option)).filter(Boolean).slice(0,6):[] }; }).filter(turn => turn.text) : []; }
@@ -227,14 +228,14 @@ async function handleApi(request,response,url) {
   if (request.method === 'GET' && url.pathname === '/api/asset') {
     const requested = url.searchParams.get('url');
     if (!requested) { sendJson(response,400,{ error:'missing_url' }); return true; }
-    try { const asset = await fetchRemote(requested,imageLimitBytes); if (!asset.contentType.toLowerCase().startsWith('image/')) throw Object.assign(new Error('not_an_image'),{ code:'not_an_image' }); sendJson(response,200,{ dataUrl:`data:${asset.contentType.split(';')[0]};base64,${asset.body.toString('base64')}` }); }
+    try { const asset = await fetchRemote(requested,imageLimitBytes); if (!asset.contentType.toLowerCase().startsWith('image/')) throw Object.assign(new Error('not_an_image'),{ code:'not_an_image' }); if (url.searchParams.get('raw') === '1') { response.writeHead(200,{ 'Content-Type':asset.contentType.split(';')[0], 'Cache-Control':'private, max-age=300', 'X-Content-Type-Options':'nosniff' }); response.end(asset.body); } else sendJson(response,200,{ dataUrl:`data:${asset.contentType.split(';')[0]};base64,${asset.body.toString('base64')}` }); }
     catch (error) { sendJson(response,502,{ error:error.code || 'asset_fetch_failed' }); }
     return true;
   }
   if (request.method === 'POST' && url.pathname === '/api/scenario-draft') {
     if (!withinRateLimit(request)) { sendJson(response,429,{ error:'rate_limited' }); return true; }
     try {
-      const body = await readJson(request), website = normalizedWebsiteUrl(clean(body.website)), useCase = clean(body.useCase), channels = Array.isArray(body.channels) ? body.channels.filter(channel => ['sms','rcs','whatsapp','email'].includes(channel)) : [];
+      const body = await readJson(request), website = normalizedWebsiteUrl(clean(body.website)), useCase = cleanPrompt(body.useCase), channels = Array.isArray(body.channels) ? body.channels.filter(channel => ['sms','rcs','whatsapp','email'].includes(channel)) : [];
       if (!website || !useCase || !channels.length) { sendJson(response,400,{ error:'missing_required_fields' }); return true; }
       const startedAt = Date.now();
       console.log(JSON.stringify({ event:'scenario_draft_started', channels, website:new URL(website).hostname }));
