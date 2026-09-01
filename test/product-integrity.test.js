@@ -138,6 +138,12 @@ test('QA starts minimized and tests a recipient message without routing dropdown
   }
 });
 
+test('QA summary counts every customer and company step, not only routing sets', () => {
+  for (const marker of ['routeLabMarkupWithFullFlowCounts', "step.author==='customer'||step.author==='recipient'", "step.author==='brand'||step.author==='company'", 'customerCount} customer', 'companyCount} company']) {
+    assert.ok(html.includes(marker), `expected full conversation counts in QA summary: ${marker}`);
+  }
+});
+
 test('SMS, RCS, and WhatsApp use an in-phone keyboard with channel-specific send controls', () => {
   for (const marker of ['phone-keyboard', 'keyboard-open', 'keyboardIcons', 'messageSend', 'whatsappSend', 'addPhoneKeyboard', 'cubic-bezier(.22,1,.36,1)']) {
     assert.ok(html.includes(marker), `expected animated phone-keyboard behavior: ${marker}`);
