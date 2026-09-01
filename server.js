@@ -165,32 +165,35 @@ function fallbackTurns(useCase) {
   for (const match of useCase.matchAll(pattern)) turns.push({ speaker:/company/i.test(match[1]) ? 'company':'customer', text:clean(match[2]), mode:'prefill', options:[] });
   return turns.slice(0,16);
 }
-function naturalLanguageFallbackTurns(useCase, company) {
+function promptStory(useCase) {
   const copy = cleanPrompt(useCase);
   const customer = clean(copy.match(/\b(?:customer|prospect|recipient|lead)\s*,?\s*(?:named\s+)?([A-Z][a-z]{1,40})\b/i)?.[1]);
-  const representative = clean(copy.match(/\b(?:sales\s+rep(?:resentative)?|representative|advisor|agent|specialist)\s+(?:named|called)\s+([A-Z][a-z]{1,40})\b/i)?.[1]);
-  const event = clean(copy.match(/\b(?:about|for)\s+(?:an?\s+)?(?:upcoming\s+)?([^.!?]{2,100}?\b(?:event|webinar|session|workshop|campaign)\b)/i)?.[1]);
-  const academy = clean(copy.match(/\b([A-Z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*)*\s+Academy)\b/)?.[1]);
-  const asksCost = /\b(?:cost|price|pricing|fee|fees|rate|rates)\b/i.test(copy);
-  const asksGroupTickets = /\b(?:group|team)\s+tickets?\b/i.test(copy);
-  if (!customer && !representative && !event && !academy && !asksCost && !asksGroupTickets) return [];
-  const customerGreeting = customer ? `Hi ${customer}! ` : 'Hi! ';
-  const eventCopy = event ? `an upcoming ${event}` : 'an upcoming opportunity';
-  const questionParts = [];
-  if (asksCost) questionParts.push('What does it cost');
-  if (asksGroupTickets) questionParts.push('are group tickets available');
-  const question = questionParts.length ? `${questionParts.join(', and ')}?` : `Could you share more details about ${eventCopy}?`;
+  const representativeMatch = copy.match(/\b((?:(?:sales|account|customer success|admissions|program)?\s*(?:rep(?:resentative)?|advisor|agent|specialist|manager|director|consultant|executive)))\s+(?:named|called)?\s*([A-Z][a-z]{1,40})\b/i);
+  const representativeRole = clean(representativeMatch?.[1]);
+  const representative = clean(representativeMatch?.[2]);
+  const openingTopic = clean(copy.match(/\b(?:sends?|shares?|announces?|promotes?|invites?|markets?|launches?)[^.?!]{0,160}?\b(?:about|for)\s+(?:an?\s+)?([^.!?]+)/i)?.[1] || copy.match(/\b(?:about|for)\s+(?:an?\s+)?([^.!?]+)/i)?.[1]);
+  const questionTopic = clean(copy.match(/\b(?:questions?\s+(?:around|about|regarding)|asks?\s+(?:about|whether)|inquires?\s+(?:about|whether)|wants?\s+to\s+know\s+(?:about\s+)?)\s*([^.!?]+)/i)?.[1]);
+  const handoffTopic = clean(copy.match(/\b(?:wants?\s+to\s+learn\s+more\s+about|is\s+interested\s+in|asks?\s+to\s+learn\s+about)\s+([^,.!?]+)/i)?.[1]);
+  return { customer, representative, representativeRole, openingTopic, questionTopic, handoffTopic };
+}
+function promptStoryAnchors(story) { return [story.customer, story.representative, story.openingTopic, story.questionTopic, story.handoffTopic].filter(value => value && value.length >= 3); }
+function naturalLanguageFallbackTurns(useCase, company) {
+  const story = promptStory(useCase), hasStory = promptStoryAnchors(story).length || story.questionTopic;
+  if (!hasStory) return [];
+  const greeting = story.customer ? `Hi ${story.customer}! ` : 'Hi! ';
+  const opening = story.openingTopic ? `about ${story.openingTopic}` : 'with an update tailored to your interests';
+  const question = story.questionTopic ? `Could you tell me more about ${story.questionTopic}?` : `Could you share more details ${story.openingTopic ? `about ${story.openingTopic}` : ''}?`.replace(/\s+\?/,'?');
   const turns = [
-    { speaker:'company', text:`${customerGreeting}${company} is reaching out about ${eventCopy}. We’d be glad to help you explore the details.`, mode:'prefill', options:[] },
+    { speaker:'company', text:`${greeting}${company} is reaching out ${opening}. We’d be glad to help you explore the details.`, mode:'prefill', options:[] },
     { speaker:'customer', text:question, mode:'prefill', options:[] },
-    { speaker:'company', text:`${customerGreeting}I can help with ${asksCost || asksGroupTickets ? 'the event details and available options' : 'the event details'}. I don’t want to guess at pricing or availability, so I’ll make sure you get the right information.`, mode:'prefill', options:[] }
+    { speaker:'company', text:`${greeting}I can help clarify ${story.questionTopic || story.openingTopic || 'the details'} without guessing at information that is not in the brief.`, mode:'prefill', options:[] }
   ];
-  if (academy) {
-    turns.push({ speaker:'customer', text:`Thanks. I’d also like to learn more about ${academy}.`, mode:'prefill', options:[] });
-    if (representative) {
-      turns.push({ speaker:'company', text:`Absolutely${customer ? `, ${customer}` : ''}. I’m connecting you with ${representative}, a Sales Rep, in this same thread to help with ${academy}.`, mode:'prefill', options:[] });
-      turns.push({ speaker:'company', text:`Hi${customer ? ` ${customer}` : ''}, ${representative} here. I’d be happy to share more about ${academy} and help with the event options.`, mode:'prefill', options:[] });
-    }
+  if (story.handoffTopic) {
+    turns.push({ speaker:'customer', text:`Thanks. I’d also like to learn more about ${story.handoffTopic}.`, mode:'prefill', options:[] });
+    const role = story.representativeRole || 'specialist';
+    const person = story.representative || `a ${role}`;
+    turns.push({ speaker:'company', text:`Absolutely${story.customer ? `, ${story.customer}` : ''}. I’m connecting you with ${person} in this same thread to help with ${story.handoffTopic}.`, mode:'prefill', options:[] });
+    if (story.representative) turns.push({ speaker:'company', text:`Hi${story.customer ? ` ${story.customer}` : ''}, ${story.representative} here. I’d be happy to share more about ${story.handoffTopic} and help with next steps.`, mode:'prefill', options:[] });
   }
   return turns;
 }
@@ -231,6 +234,18 @@ function preserveExplicitTurns(raw, useCase) {
   console.log(JSON.stringify({ event:'scenario_draft_explicit_turns_preserved', supplied:supplied.length, generated:generated.length }));
   return { ...raw, initialSender:supplied[0]?.speaker === 'customer' ? 'customer':'company', scenarios:{ ...raw.scenarios, [scenarioKey]:{ ...raw.scenarios[scenarioKey], initialMessage:firstCompany || raw.scenarios[scenarioKey]?.initialMessage, initialBody:firstCompany || raw.scenarios[scenarioKey]?.initialBody, customerMessage:firstCustomer || raw.scenarios[scenarioKey]?.customerMessage, prefilledReply:firstCustomer || raw.scenarios[scenarioKey]?.prefilledReply, turns:supplied } } };
 }
+function enforcePromptStory(raw, useCase, companyName = '') {
+  const story = promptStory(useCase), required = promptStoryAnchors(story), contextualTurns = naturalLanguageFallbackTurns(useCase,clean(companyName,clean(raw?.companyName,'Our team')));
+  const scenarioKey = raw?.scenarios?.sms ? 'sms' : Object.keys(raw?.scenarios || {})[0];
+  const scenario = scenarioKey ? raw.scenarios[scenarioKey] : null;
+  const generated = turns(scenario?.turns), transcript = generated.map(turn => turn.text).join('\n').toLowerCase();
+  const missing = required.filter(value => !transcript.includes(value.toLowerCase()));
+  if (!scenario || !contextualTurns.length || (!missing.length && generated.length >= contextualTurns.length)) return raw;
+  const firstCompany = contextualTurns.find(turn => turn.speaker === 'company')?.text || '';
+  const firstCustomer = contextualTurns.find(turn => turn.speaker === 'customer')?.text || '';
+  console.log(JSON.stringify({ event:'scenario_draft_prompt_story_enforced', missing, generatedTurns:generated.length, replacementTurns:contextualTurns.length }));
+  return { ...raw, initialSender:contextualTurns[0]?.speaker === 'customer' ? 'customer':'company', scenarios:{ ...raw.scenarios, [scenarioKey]:{ ...scenario, initialMessage:firstCompany, initialBody:firstCompany, customerMessage:firstCustomer, prefilledReply:firstCustomer, turns:contextualTurns, fallbackResponse:contextualTurns.filter(turn => turn.speaker === 'company').at(-1)?.text || scenario.fallbackResponse } } };
+}
 function fallbackDraft({ companyName, website, useCase, evidence }) {
   const hostname = new URL(website).hostname.replace(/^www\./,''), company=clean(companyName,evidence.title || hostname), turns=fallbackTurns(useCase);
   if (!turns.length) turns.push(...naturalLanguageFallbackTurns(useCase,company));
@@ -246,10 +261,11 @@ function fallbackDraft({ companyName, website, useCase, evidence }) {
 function draftPrompt({ companyName, website, useCase, channels, evidence }) {
   const images = evidence.candidates.map((item,index) => `${index + 1}. ${item.role}: ${item.url}`).join('\n') || '(none)';
   const channel = channels[0] || 'sms';
+  const story = promptStory(useCase);
   const channelSchema = channel === 'email'
     ? '{"title":"","subject":"","preheader":"","initialBody":"","customerMessage":"","prefilledReply":"","turns":[{"speaker":"company","text":""},{"speaker":"customer","text":"","mode":"prefill"}],"keywords":[{"terms":"","response":""}],"fallbackResponse":"","ctaLabel":"","ctaUrl":"","layout":"hero"}'
     : '{"title":"","sender":"","initialMessage":"","customerMessage":"","prefilledReply":"","turns":[{"speaker":"company","text":""},{"speaker":"customer","text":"","mode":"prefill"}],"keywords":[{"terms":"","response":""}],"fallbackResponse":""}';
-  return `Create one concise, realistic ${channel.toUpperCase()} two-way messaging demo. Return JSON only.\nCompany: ${companyName || '(not supplied)'}\nWebsite: ${website}\nUse case: ${useCase}\n\nEvidence: ${evidence.title}. ${evidence.description}. ${evidence.headings.slice(0,6).join(' | ')}\nWebsite text: ${evidence.text.slice(0,2000)}\nImage candidates (only use these URLs or empty strings):\n${images}\n\nUse "company" as initialSender when the company opens with outreach, a campaign, reminder, or invitation; use "customer" only when the customer explicitly begins. Preserve every explicitly provided line and its order in turns. Include every supplied turn, up to 12 turns; never merge or omit adjacent company turns, including a handoff to another company representative. A turn is {"speaker":"company"|"customer","text":"","mode":"prefill"|"free"|"choices","options":[]}. Any supplied customer wording must use mode "prefill". Use "choices" only for requested selectable options and "free" only for explicitly open-ended typing. Copy explicitly quoted dialogue verbatim; do not shorten it.\n\nReturn exactly this compact JSON shape, with only the ${channel} scenario key: {"companyName":"","initials":"","emailAddress":"","logoUrl":"","heroImageUrl":"","brandColor":"#0176D3","brandSecondaryColor":"#032D60","initialSender":"company","scenarios":{"${channel}":${channelSchema}}}. When dialogue is not supplied, keep each generated text under 240 characters. Do not invent facts or URLs.`;
+  return `Create one concise, realistic ${channel.toUpperCase()} two-way messaging demo. Return JSON only.\nCompany: ${companyName || '(not supplied)'}\nWebsite: ${website}\nUse case: ${useCase}\nStory requirements parsed from the use case: ${JSON.stringify(story)}. Include every non-empty named person, topic, question, and handoff in the turns; never replace them with generic placeholders.\n\nEvidence: ${evidence.title}. ${evidence.description}. ${evidence.headings.slice(0,6).join(' | ')}\nWebsite text: ${evidence.text.slice(0,2000)}\nImage candidates (only use these URLs or empty strings):\n${images}\n\nUse "company" as initialSender when the company opens with outreach, a campaign, reminder, or invitation; use "customer" only when the customer explicitly begins. Preserve every explicitly provided line and its order in turns. Include every supplied turn, up to 12 turns; never merge or omit adjacent company turns, including a handoff to another company representative. A turn is {"speaker":"company"|"customer","text":"","mode":"prefill"|"free"|"choices","options":[]}. Any supplied customer wording must use mode "prefill". Use "choices" only for requested selectable options and "free" only for explicitly open-ended typing. Copy explicitly quoted dialogue verbatim; do not shorten it.\n\nReturn exactly this compact JSON shape, with only the ${channel} scenario key: {"companyName":"","initials":"","emailAddress":"","logoUrl":"","heroImageUrl":"","brandColor":"#0176D3","brandSecondaryColor":"#032D60","initialSender":"company","scenarios":{"${channel}":${channelSchema}}}. When dialogue is not supplied, keep each generated text under 240 characters. Do not invent facts or URLs.`;
 }
 function clean(value, fallback = '') { return typeof value === 'string' ? value.trim().slice(0,1800) : fallback; }
 function cleanPrompt(value) { return typeof value === 'string' ? value.trim().slice(0,12_000) : ''; }
@@ -309,7 +325,8 @@ async function handleApi(request,response,url) {
         canonical=fallbackDraft({ companyName:clean(body.companyName), website:remote.url, useCase, evidence });
         console.log(JSON.stringify({ event:'scenario_draft_fallback', reason:fallbackReason, elapsedMs:Date.now()-startedAt }));
       }
-      const ai = adaptCanonicalDraft(enforceRequestedInitialSender(preserveExplicitTurns(canonical,useCase),useCase,clean(body.companyName)),channels);
+      const promptComplete = enforcePromptStory(preserveExplicitTurns(canonical,useCase),useCase,clean(body.companyName));
+      const ai = adaptCanonicalDraft(enforceRequestedInitialSender(promptComplete,useCase,clean(body.companyName)),channels);
       console.log(JSON.stringify({ event:'scenario_draft_completed', elapsedMs:Date.now()-startedAt }));
       sendJson(response,200,{ draft:normalizeDraft(ai,channels,remote.url), source:{ url:remote.url, title:evidence.title, imageCandidates:evidence.candidates, fallbackReason } });
     } catch (error) { const code=error?.code || 'scenario_generation_failed'; console.error(JSON.stringify({ event:'scenario_draft_failed', code, status:error?.status || null, name:error?.name || null, message:String(error?.message || '').slice(0,240) })); const status = code === 'llm_not_configured' ? 503 : ['invalid_url','blocked_url','blocked_host','missing_required_fields'].includes(code) ? 400 : 502; sendJson(response,status,{ error:code }); }
