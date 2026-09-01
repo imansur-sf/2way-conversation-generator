@@ -266,7 +266,7 @@ test('regenerating an AI draft returns to the editable prompt without auto-gener
 });
 
 test('selected builder images show a contained visual thumbnail', () => {
-  for (const marker of ['image-asset-thumb', 'data-image-thumbnail', 'src="${esc(value)}"', 'onerror="this.remove()"']) {
+  for (const marker of ['image-asset-thumb', 'data-image-thumbnail', 'role="img"', "background-image:url('${esc(value)}')", 'background:#e6f1f9 center/cover no-repeat']) {
     assert.ok(html.includes(marker), `expected visible selected-image preview: ${marker}`);
   }
 });
