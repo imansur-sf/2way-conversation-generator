@@ -32,9 +32,9 @@ test('multi-channel scenarios preserve independent channel variants', () => {
 });
 
 test('versioned saves capture the active multi-channel variant before rendering', () => {
-  const finalPersist = html.lastIndexOf('persist=function(){captureJourneyVariant();try{localStorage.setItem(scenarioStoreKey');
+  const finalPersist = html.lastIndexOf('persist=function(){captureJourneyVariant();if(isStandaloneExport)');
   assert.ok(finalPersist > html.indexOf('function captureJourneyVariant'), 'the final persistence implementation captures the projected channel variant');
-  assert.ok(html.indexOf('captureJourneyVariant();try{localStorage.setItem', finalPersist) === finalPersist + 'persist=function(){'.length, 'capture happens before writing the versioned scenario record');
+  assert.ok(html.indexOf('captureJourneyVariant();if(isStandaloneExport)', finalPersist) === finalPersist + 'persist=function(){'.length, 'capture happens before export handling or writing the versioned scenario record');
 });
 
 test('AI applies to the active named scenario by default, with a separate-scenario escape hatch', () => {
@@ -220,11 +220,17 @@ test('the bundled default user portrait is shared by WhatsApp and Gmail', () => 
 });
 
 test('interactive HTML downloads are standalone active-channel browser experiences', () => {
-  for (const marker of ['downloadStandaloneHtml', 'inlineStandaloneAssets', 'export-booting', 'releaseStandaloneExportBoot', 'export-channel-${esc(channel)}', 'html.replace(/<body\\b[^>]*>/i', 'scenarios:[selected]', 'emailPresentationHint', 'Gmail preview', 'full-screen, browser-tab Gmail experience']) {
+  for (const marker of ['downloadStandaloneHtml', 'inlineStandaloneAssets', 'export-booting', 'releaseStandaloneExportBoot', 'export-channel-${esc(channel)}', 'html.replace(/<body\\b[^>]*>/i', 'scenarios:[selected]', 'emailPresentationHint', 'Gmail preview', 'full-screen, browser-tab Gmail experience', 'isStandaloneExport=document.body.classList.contains(\'export\')', 'if(!isStandaloneExport)try{saved=localStorage.getItem', 'if(isStandaloneExport){const saveState=$(\'#saveState\')', 'standalone-export-lock']) {
     assert.ok(html.includes(marker), `expected standalone export behavior: ${marker}`);
   }
   assert.ok(html.includes(".export .builder,.export .appbar,.export .preview-info"), 'exports remove builder and presenter chrome');
   assert.ok(html.includes("document.body.classList.remove('presentation','email-presentation')"), 'leaving presentation removes email-only presentation state');
+});
+
+test('standalone downloads use only their embedded scenario, not shared file storage', () => {
+  const exportBootstrap = html.slice(html.indexOf("isStandaloneExport=document.body.classList.contains('export')"), html.indexOf('function bootstrapScenario'));
+  assert.ok(!exportBootstrap.includes('saved=localStorage.getItem') || exportBootstrap.includes('if(!isStandaloneExport)try{saved=localStorage.getItem'), 'exports must skip shared localStorage during startup');
+  assert.ok(html.includes('if(isStandaloneExport){const saveState=$(\'#saveState\')'), 'exports must not overwrite shared localStorage when interactions occur');
 });
 
 test('regenerating an AI draft returns to the editable prompt without auto-generating', () => {
