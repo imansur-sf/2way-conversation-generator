@@ -165,6 +165,35 @@ function fallbackTurns(useCase) {
   for (const match of useCase.matchAll(pattern)) turns.push({ speaker:/company/i.test(match[1]) ? 'company':'customer', text:clean(match[2]), mode:'prefill', options:[] });
   return turns.slice(0,16);
 }
+function naturalLanguageFallbackTurns(useCase, company) {
+  const copy = cleanPrompt(useCase);
+  const customer = clean(copy.match(/\b(?:customer|prospect|recipient|lead)\s*,?\s*(?:named\s+)?([A-Z][a-z]{1,40})\b/i)?.[1]);
+  const representative = clean(copy.match(/\b(?:sales\s+rep(?:resentative)?|representative|advisor|agent|specialist)\s+(?:named|called)\s+([A-Z][a-z]{1,40})\b/i)?.[1]);
+  const event = clean(copy.match(/\b(?:about|for)\s+(?:an?\s+)?(?:upcoming\s+)?([^.!?]{2,100}?\b(?:event|webinar|session|workshop|campaign)\b)/i)?.[1]);
+  const academy = clean(copy.match(/\b([A-Z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*)*\s+Academy)\b/)?.[1]);
+  const asksCost = /\b(?:cost|price|pricing|fee|fees|rate|rates)\b/i.test(copy);
+  const asksGroupTickets = /\b(?:group|team)\s+tickets?\b/i.test(copy);
+  if (!customer && !representative && !event && !academy && !asksCost && !asksGroupTickets) return [];
+  const customerGreeting = customer ? `Hi ${customer}! ` : 'Hi! ';
+  const eventCopy = event ? `an upcoming ${event}` : 'an upcoming opportunity';
+  const questionParts = [];
+  if (asksCost) questionParts.push('What does it cost');
+  if (asksGroupTickets) questionParts.push('are group tickets available');
+  const question = questionParts.length ? `${questionParts.join(', and ')}?` : `Could you share more details about ${eventCopy}?`;
+  const turns = [
+    { speaker:'company', text:`${customerGreeting}${company} is reaching out about ${eventCopy}. We’d be glad to help you explore the details.`, mode:'prefill', options:[] },
+    { speaker:'customer', text:question, mode:'prefill', options:[] },
+    { speaker:'company', text:`${customerGreeting}I can help with ${asksCost || asksGroupTickets ? 'the event details and available options' : 'the event details'}. I don’t want to guess at pricing or availability, so I’ll make sure you get the right information.`, mode:'prefill', options:[] }
+  ];
+  if (academy) {
+    turns.push({ speaker:'customer', text:`Thanks. I’d also like to learn more about ${academy}.`, mode:'prefill', options:[] });
+    if (representative) {
+      turns.push({ speaker:'company', text:`Absolutely${customer ? `, ${customer}` : ''}. I’m connecting you with ${representative}, a Sales Rep, in this same thread to help with ${academy}.`, mode:'prefill', options:[] });
+      turns.push({ speaker:'company', text:`Hi${customer ? ` ${customer}` : ''}, ${representative} here. I’d be happy to share more about ${academy} and help with the event options.`, mode:'prefill', options:[] });
+    }
+  }
+  return turns;
+}
 function escapedPattern(value) { return String(value || '').replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }
 function requestedInitialSender(useCase, companyName = '') {
   const copy = String(useCase || ''), company = escapedPattern(companyName.trim());
@@ -204,6 +233,7 @@ function preserveExplicitTurns(raw, useCase) {
 }
 function fallbackDraft({ companyName, website, useCase, evidence }) {
   const hostname = new URL(website).hostname.replace(/^www\./,''), company=clean(companyName,evidence.title || hostname), turns=fallbackTurns(useCase);
+  if (!turns.length) turns.push(...naturalLanguageFallbackTurns(useCase,company));
   const companyFirst = turns[0]?.speaker === 'company' || (!turns.length && requestedInitialSender(useCase,company) === 'company');
   if (!turns.length) {
     const opening = companyFirst ? `Hi! ${company} is reaching out with an update.` : 'Hi! I have a question about your offering.';
