@@ -54,6 +54,19 @@ test('AI uses one explicit initial sender across every channel, including email'
   }
 });
 
+test('AI honors a named company as the stated opening sender, including fallback drafts', () => {
+  const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+  const helpers = new Function(`${server.slice(server.indexOf('function fallbackTurns'), server.indexOf('function readJson'))};return { requestedInitialSender, fallbackDraft, enforceRequestedInitialSender };`)();
+  const useCase = 'NCSA sends a marketing communication about an upcoming Baseball Recruiting event. A customer, Sean, responds with questions about cost and group tickets.';
+  assert.equal(helpers.requestedInitialSender(useCase, 'NCSA'), 'company');
+  const fallback = helpers.fallbackDraft({ companyName:'NCSA', website:'https://ncsasports.org', useCase, evidence:{ title:'NCSA', candidates:[] } });
+  assert.equal(fallback.initialSender, 'company');
+  assert.equal(fallback.scenarios.sms.turns[0].speaker, 'company');
+  const corrected = helpers.enforceRequestedInitialSender({ companyName:'NCSA', initialSender:'customer', scenarios:{ sms:{ initialMessage:'Join the NCSA Baseball Recruiting event.', turns:[{ speaker:'customer', text:'What does it cost?' },{ speaker:'company', text:'We can help with tickets.' }] } } }, useCase, 'NCSA');
+  assert.equal(corrected.initialSender, 'company');
+  assert.equal(corrected.scenarios.sms.turns[0].speaker, 'company');
+});
+
 test('AI preserves ordered scripted customer turns and defaults their supplied copy to composer prefills', () => {
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
   for (const marker of ['Preserve every explicitly provided line and its order in turns.', 'Include every supplied turn, up to 12 turns', 'Copy explicitly quoted dialogue verbatim; do not shorten it.', 'function cleanPrompt', 'slice(0,12_000)', 'useCase = cleanPrompt(body.useCase)', 'function preserveExplicitTurns', 'scenario_draft_explicit_turns_preserved', 'return turns.slice(0,16)', 'value.slice(0,16)', 'Any supplied customer wording must use mode "prefill".', 'function turns(value)', 'turns:turns(scenario.turns)']) {
@@ -115,7 +128,7 @@ test('AI company identity uses one selected logo across sender and email surface
 });
 
 test('every editable image uses the direct upload, remove, or URL workflow', () => {
-  for (const marker of ['image-asset-control', 'data-image-upload>Upload', 'data-image-url-apply', 'normalizeImageSource', 'loadImageFromUrl', "label:'Company avatar'", "label:'Card image'", "label:'Hero image'"]) {
+  for (const marker of ['image-asset-control', 'data-image-upload>Upload', 'data-image-url-apply', 'normalizeImageSource', 'loadImageFromUrl', 'identity-image-cell', "label:'Company avatar'", "label:'Card image'", "label:'Hero image'"]) {
     assert.ok(html.includes(marker), `expected unified image-control behavior: ${marker}`);
   }
   assert.ok(!html.includes('<div class="image-asset-sources"'), 'image URL controls must not reveal a redundant source menu');
