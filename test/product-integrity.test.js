@@ -66,7 +66,7 @@ test('AI preserves ordered scripted customer turns and defaults their supplied c
 
 test('AI generation uses one compact canonical request within the hosted timeout budget', () => {
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
-  for (const marker of ["const channel = channels[0] || 'sms'", 'Return exactly this compact JSON shape', 'requestTimeoutMs = 8_000', 'geminiRequestTimeoutMs = 16_000', 'function adaptCanonicalDraft', "requests:1, channels", "channels:['sms']", "event:'gemini_invalid_json'", "error?.name === 'TypeError'"]) {
+  for (const marker of ["const channel = channels[0] || 'sms'", 'Return exactly this compact JSON shape', 'requestTimeoutMs = 7_000', 'geminiRequestTimeoutMs = 20_000', 'maxOutputTokens:1200', 'function adaptCanonicalDraft', 'function fallbackDraft', "event:'scenario_draft_fallback'", "requests:1, channels", "channels:['sms']", "error?.name === 'TypeError'"]) {
     assert.ok(server.includes(marker), `expected resilient AI generation: ${marker}`);
   }
 });
