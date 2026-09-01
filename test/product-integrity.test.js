@@ -66,7 +66,7 @@ test('AI preserves ordered scripted customer turns and defaults their supplied c
 
 test('AI generation uses a compact per-channel contract and retries malformed JSON once', () => {
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
-  for (const marker of ["const channel = channels[0] || 'sms'", 'Return exactly this compact JSON shape', 'maxOutputTokens:attempt ? 2200 : 2800', "if (error?.code !== 'gemini_bad_json') throw error; return request(1);", "event:'gemini_invalid_json'"]) {
+  for (const marker of ["const channel = channels[0] || 'sms'", 'Return exactly this compact JSON shape', 'maxOutputTokens:attempt ? 2200 : 2800', "['gemini_bad_json','gemini_failed'].includes(error?.code)", "event:'gemini_invalid_json'", "error?.name === 'TypeError'"]) {
     assert.ok(server.includes(marker), `expected resilient AI generation: ${marker}`);
   }
 });
