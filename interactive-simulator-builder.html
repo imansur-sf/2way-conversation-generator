@@ -726,6 +726,9 @@ function renderPreview(){if(active().channel==='email')renderEmail();else render
     function proxyAiReviewImages(){document.querySelectorAll('.ai-review img[src]').forEach(image=>{const source=image.getAttribute('src')||'';if(/^https?:\/\//i.test(source))image.src=aiPreviewImageUrl(source);if(image.dataset.aiPreviewBound)return;image.dataset.aiPreviewBound='true';image.addEventListener('error',()=>{image.classList.add('ai-preview-unavailable');image.closest('.ai-asset-choice')?.classList.add('is-unavailable')})})}
     const renderAiSetupWithProxiedImages=renderAiSetup;renderAiSetup=function(){renderAiSetupWithProxiedImages();proxyAiReviewImages()};
     embeddedAsset=async function(url){return embeddedAssetWithRemoteFallback(url)};
+    /* QA's routing sets can contain multiple messages, so they are not a
+       conversation total. The summary always reports the actual flow steps. */
+    const routeLabMarkupWithFullFlowCounts=routeLabMarkup;routeLabMarkup=function(s){const markup=routeLabMarkupWithFullFlowCounts(s),steps=Array.isArray(s?.steps)?s.steps:[],customerCount=steps.filter(step=>step.author==='customer'||step.author==='recipient').length,companyCount=steps.filter(step=>step.author==='brand'||step.author==='company').length,summary=`<span>${customerCount} customer ${customerCount===1?'message':'messages'}</span><span>${companyCount} company ${companyCount===1?'message':'messages'}</span>`;return markup.replace(/<span>\d+ recipient messages?<\/span><span>\d+ company messages?<\/span>/,summary)};
     /* The exported document starts with the live builder DOM serialized into it.
        Hide that snapshot until its selected scenario has rendered exactly once. */
     function releaseStandaloneExportBoot(){if(document.body.classList.contains('export-booting'))requestAnimationFrame(()=>document.body.classList.remove('export-booting'))}
