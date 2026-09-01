@@ -266,9 +266,11 @@ test('regenerating an AI draft returns to the editable prompt without auto-gener
 });
 
 test('selected builder images show a contained visual thumbnail', () => {
-  for (const marker of ['image-asset-thumb', 'data-image-thumbnail', 'role="img"', "background-image:url('${esc(value)}')", 'background:#e6f1f9 center/cover no-repeat', 'svgBlobUrl', 'hydrateEmbeddedSvgBuilderThumbnails', "image.dataset.imageThumbnail='embedded-svg'", 'URL.createObjectURL(new Blob([bytes]']) {
+  for (const marker of ['image-asset-thumb', 'data-image-thumbnail', 'thumbnail=hasImage?`<img', 'src="${esc(value)}"', 'Company SVGs and photo uploads share the same <img> source path as the channel previews.']) {
     assert.ok(html.includes(marker), `expected visible selected-image preview: ${marker}`);
   }
+  assert.ok(!html.includes('URL.createObjectURL(new Blob([bytes]'), 'builder thumbnails must not transform AI SVGs into a separate image source');
+  assert.ok(html.includes('.builder .image-asset-thumb.logo{display:block!important}'), 'the header-logo hide rule must not hide company image thumbnails');
 });
 
 test('AI review image candidates use a same-origin proxy and fail gracefully', () => {
