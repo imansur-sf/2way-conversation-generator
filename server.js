@@ -13,8 +13,8 @@ const imageLimitBytes = 2_000_000;
 const requestLimitBytes = 200_000;
 /* Keep the full scrape + generation request safely below Heroku's router
    timeout. A browser retry starts a fresh request when an upstream is slow. */
-const requestTimeoutMs = 8_000;
-const geminiRequestTimeoutMs = 16_000;
+const requestTimeoutMs = 7_000;
+const geminiRequestTimeoutMs = 20_000;
 const rateWindowMs = 60_000;
 const perMinuteLimit = 12;
 const rateBuckets = new Map();
@@ -134,7 +134,7 @@ async function callGemini(prompt) {
     const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), geminiRequestTimeoutMs);
     try {
       const retryInstruction = attempt ? '\nReturn the compact JSON object now. Do not explain it, use Markdown, or add fields that were not requested.' : '';
-      const upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${geminiApiKey}`, { method:'POST', headers:{ 'Content-Type':'application/json' }, signal:controller.signal, body:JSON.stringify({ contents:[{ parts:[{ text:prompt + retryInstruction }] }], generationConfig:{ responseMimeType:'application/json', maxOutputTokens:attempt ? 2200 : 2800 } }) });
+      const upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${geminiApiKey}`, { method:'POST', headers:{ 'Content-Type':'application/json' }, signal:controller.signal, body:JSON.stringify({ contents:[{ parts:[{ text:prompt + retryInstruction }] }], generationConfig:{ responseMimeType:'application/json', maxOutputTokens:1200 } }) });
       if (!upstream.ok) {
         const detail = (await upstream.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 300);
         const code = upstream.status === 400 ? 'gemini_bad_request' : upstream.status === 401 || upstream.status === 403 ? 'gemini_auth_failed' : upstream.status === 404 ? 'gemini_model_not_found' : upstream.status === 429 ? 'gemini_rate_limited' : 'gemini_failed';
@@ -158,6 +158,23 @@ async function callGemini(prompt) {
 function adaptCanonicalDraft(raw, channels) {
   const source = raw?.scenarios?.sms || raw?.scenarios?.[Object.keys(raw?.scenarios || {})[0]] || {};
   return { ...raw, scenarios:Object.fromEntries(channels.map(channel => [channel,{ ...source }])) };
+}
+function fallbackTurns(useCase) {
+  const turns = [];
+  const pattern = /\b(company|customer|prospect|recipient)(?:\s*\([^)]*\))?\s+(?:says?|asks?|repl(?:y|ies)|responds?)\s*[:\-]?\s*["“]([^"”]{2,500})["”]/gi;
+  for (const match of useCase.matchAll(pattern)) turns.push({ speaker:/company/i.test(match[1]) ? 'company':'customer', text:clean(match[2]), mode:'prefill', options:[] });
+  return turns.slice(0,8);
+}
+function fallbackDraft({ companyName, website, useCase, evidence }) {
+  const hostname = new URL(website).hostname.replace(/^www\./,''), company=clean(companyName,evidence.title || hostname), turns=fallbackTurns(useCase);
+  const companyFirst = turns[0]?.speaker === 'company' || (!turns.length && /\b(company|brand)\b.*\b(says?|sends?|invites?|announces?)/i.test(useCase));
+  if (!turns.length) {
+    const opening = companyFirst ? `Hi! ${company} is reaching out with an update.` : 'Hi! I have a question about your offering.';
+    turns.push({ speaker:companyFirst?'company':'customer', text:opening, mode:'prefill', options:[] });
+    turns.push({ speaker:companyFirst?'customer':'company', text:companyFirst?'Could you share more details?':`Thanks for reaching out to ${company}. How can we help?`, mode:'prefill', options:[] });
+  }
+  const firstCompany=turns.find(turn=>turn.speaker==='company')?.text || '',firstCustomer=turns.find(turn=>turn.speaker==='customer')?.text || '';
+  return { companyName:company, initials:company.split(/\s+/).map(word=>word[0]).join('').slice(0,3).toUpperCase(), emailAddress:`hello@${hostname}`, logoUrl:evidence.candidates.find(item=>item.role==='logo')?.url || '', heroImageUrl:evidence.candidates.find(item=>item.role==='hero')?.url || evidence.candidates.find(item=>item.role==='image')?.url || '', brandColor:'#0176D3', brandSecondaryColor:'#032D60', initialSender:companyFirst?'company':'customer', scenarios:{sms:{title:`${company} conversation`,sender:company,initialMessage:firstCompany,customerMessage:firstCustomer,prefilledReply:firstCustomer,turns,keywords:[],fallbackResponse:turns.filter(turn=>turn.speaker==='company').at(-1)?.text || `Thanks for reaching out to ${company}.`}} };
 }
 function draftPrompt({ companyName, website, useCase, channels, evidence }) {
   const images = evidence.candidates.map((item,index) => `${index + 1}. ${item.role}: ${item.url}`).join('\n') || '(none)';
@@ -216,10 +233,17 @@ async function handleApi(request,response,url) {
       if (!/html|xml|text\//i.test(remote.contentType)) throw Object.assign(new Error('not_html'),{ code:'not_html' });
       const evidence = extractWebsite(remote.body.toString('utf8'),remote.url);
       console.log(JSON.stringify({ event:'scenario_draft_gemini_started', elapsedMs:Date.now()-startedAt, model:geminiModel, requests:1, channels }));
-      const canonical = await callGemini(draftPrompt({ companyName:clean(body.companyName), website:remote.url, useCase, channels:['sms'], evidence }));
+      let canonical, fallbackReason='';
+      try { canonical = await callGemini(draftPrompt({ companyName:clean(body.companyName), website:remote.url, useCase, channels:['sms'], evidence })); }
+      catch (error) {
+        if (!['gemini_timeout','gemini_failed','gemini_bad_json'].includes(error?.code)) throw error;
+        fallbackReason=error.code;
+        canonical=fallbackDraft({ companyName:clean(body.companyName), website:remote.url, useCase, evidence });
+        console.log(JSON.stringify({ event:'scenario_draft_fallback', reason:fallbackReason, elapsedMs:Date.now()-startedAt }));
+      }
       const ai = adaptCanonicalDraft(canonical,channels);
       console.log(JSON.stringify({ event:'scenario_draft_completed', elapsedMs:Date.now()-startedAt }));
-      sendJson(response,200,{ draft:normalizeDraft(ai,channels,remote.url), source:{ url:remote.url, title:evidence.title, imageCandidates:evidence.candidates } });
+      sendJson(response,200,{ draft:normalizeDraft(ai,channels,remote.url), source:{ url:remote.url, title:evidence.title, imageCandidates:evidence.candidates, fallbackReason } });
     } catch (error) { const code=error?.code || 'scenario_generation_failed'; console.error(JSON.stringify({ event:'scenario_draft_failed', code, status:error?.status || null, name:error?.name || null, message:String(error?.message || '').slice(0,240) })); const status = code === 'llm_not_configured' ? 503 : ['invalid_url','blocked_url','blocked_host','missing_required_fields'].includes(code) ? 400 : 502; sendJson(response,status,{ error:code }); }
     return true;
   }
