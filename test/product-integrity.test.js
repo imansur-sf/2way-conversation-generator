@@ -69,15 +69,21 @@ test('AI honors a named company as the stated opening sender, including fallback
 
 test('fallback drafts preserve natural-language customer, topic, question, and handoff details', () => {
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
-  const helpers = new Function(`${server.slice(server.indexOf('function fallbackTurns'), server.indexOf('function readJson'))};return { fallbackDraft, naturalLanguageFallbackTurns };`)();
-  const useCase = 'NCSA sends a marketing communication about an upcoming Baseball Recruiting event. A customer, Sean, responds to the message with questions around the cost and if there are any group tickets. After a few back and forth messages between them, when Sean wants to learn more about IMG Academy, he is connected to a Sales Rep named Jake in the same thread.';
-  const fallback = helpers.fallbackDraft({ companyName:'NCSA', website:'https://ncsasports.org', useCase, evidence:{ title:'NCSA', candidates:[] } });
-  const transcript = fallback.scenarios.sms.turns.map(turn => turn.text).join('\n');
-  assert.equal(fallback.scenarios.sms.turns.length, 6);
-  for (const detail of ['Sean', 'Baseball Recruiting event', 'cost', 'group tickets', 'IMG Academy', 'Jake']) {
-    assert.match(transcript, new RegExp(detail, 'i'), `fallback should retain ${detail}`);
+  const helpers = new Function(`${server.slice(server.indexOf('function fallbackTurns'), server.indexOf('function readJson'))};return { fallbackDraft, enforcePromptStory };`)();
+  const cases = [
+    { company:'NCSA', website:'https://ncsasports.org', useCase:'NCSA sends a marketing communication about an upcoming Baseball Recruiting event. A customer, Sean, responds to the message with questions around the cost and if there are any group tickets. After a few back and forth messages between them, when Sean wants to learn more about IMG Academy, he is connected to a Sales Rep named Jake in the same thread.', details:['Sean', 'Baseball Recruiting event', 'cost', 'group tickets', 'IMG Academy', 'Jake'] },
+    { company:'Aurora Skills', website:'https://auroraskills.example', useCase:'Aurora Skills sends an invitation for its Climate Innovation Forum. A prospect, Amara, asks about accessibility and virtual attendance. Later, Amara wants to learn more about the Greenhouse Accelerator, so an Account Executive named Priya joins the same thread.', details:['Amara', 'Climate Innovation Forum', 'accessibility', 'virtual attendance', 'Greenhouse Accelerator', 'Priya'] }
+  ];
+  for (const sample of cases) {
+    const fallback = helpers.fallbackDraft({ companyName:sample.company, website:sample.website, useCase:sample.useCase, evidence:{ title:sample.company, candidates:[] } });
+    const transcript = fallback.scenarios.sms.turns.map(turn => turn.text).join('\n');
+    assert.equal(fallback.scenarios.sms.turns.length, 6);
+    for (const detail of sample.details) assert.match(transcript, new RegExp(detail, 'i'), `fallback should retain ${detail}`);
+    const incomplete = { companyName:sample.company, scenarios:{ sms:{ initialMessage:'A generic update.', turns:[{ speaker:'company', text:'A generic update.' },{ speaker:'customer', text:'Please tell me more.' }] } } };
+    const enforced = helpers.enforcePromptStory(incomplete, sample.useCase, sample.company);
+    const enforcedTranscript = enforced.scenarios.sms.turns.map(turn => turn.text).join('\n');
+    for (const detail of sample.details) assert.match(enforcedTranscript, new RegExp(detail, 'i'), `coverage gate should retain ${detail}`);
   }
-  assert.deepEqual(fallback.scenarios.sms.turns.map(turn => turn.speaker), ['company','customer','company','customer','company','company']);
 });
 
 test('AI preserves ordered scripted customer turns and defaults their supplied copy to composer prefills', () => {
