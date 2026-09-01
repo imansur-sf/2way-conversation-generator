@@ -165,6 +165,33 @@ function fallbackTurns(useCase) {
   for (const match of useCase.matchAll(pattern)) turns.push({ speaker:/company/i.test(match[1]) ? 'company':'customer', text:clean(match[2]), mode:'prefill', options:[] });
   return turns.slice(0,16);
 }
+function escapedPattern(value) { return String(value || '').replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }
+function requestedInitialSender(useCase, companyName = '') {
+  const copy = String(useCase || ''), company = escapedPattern(companyName.trim());
+  const companySubject = company ? `(?:company|brand|${company})` : '(?:company|brand)';
+  const customerSubject = '(?:customer|prospect|recipient|lead)';
+  const companyAction = '(?:says?|sends?|shares?|announces?|invites?|markets?|reaches?\\s+out|launches?)';
+  const customerAction = '(?:says?|sends?|asks?|repl(?:y|ies)|responds?|reaches?\\s+out|inquires?)';
+  const candidates = [
+    ...[...copy.matchAll(new RegExp(`\\b${companySubject}\\b[^.!?]{0,110}\\b${companyAction}\\b`, 'gi'))].map(match => ({ speaker:'company', index:match.index })),
+    ...[...copy.matchAll(new RegExp(`\\b${customerSubject}\\b[^.!?]{0,110}\\b${customerAction}\\b`, 'gi'))].map(match => ({ speaker:'customer', index:match.index }))
+  ].sort((left,right) => left.index-right.index);
+  return candidates[0]?.speaker || null;
+}
+function enforceRequestedInitialSender(raw, useCase, companyName = '') {
+  const requested = requestedInitialSender(useCase,companyName);
+  if (!requested) return raw;
+  const scenarioKey = raw?.scenarios?.sms ? 'sms' : Object.keys(raw?.scenarios || {})[0];
+  const scenario = scenarioKey ? raw.scenarios[scenarioKey] : null;
+  if (!scenario) return { ...raw, initialSender:requested };
+  const generated = turns(scenario.turns);
+  if (requested === 'company' && generated[0]?.speaker !== 'company') {
+    const opening = clean(scenario.initialMessage || scenario.initialBody || generated.find(turn => turn.speaker === 'company')?.text || `Hi! ${clean(companyName,clean(raw?.companyName,'Our team'))} is reaching out with an update.`);
+    console.log(JSON.stringify({ event:'scenario_draft_initial_sender_corrected', requested, generatedFirst:generated[0]?.speaker || null }));
+    return { ...raw, initialSender:'company', scenarios:{ ...raw.scenarios, [scenarioKey]:{ ...scenario, initialMessage:opening, initialBody:opening, turns:[{ speaker:'company', text:opening },...generated] } } };
+  }
+  return { ...raw, initialSender:requested };
+}
 function preserveExplicitTurns(raw, useCase) {
   const supplied = fallbackTurns(useCase);
   const scenarioKey = raw?.scenarios?.sms ? 'sms' : Object.keys(raw?.scenarios || {})[0];
@@ -177,7 +204,7 @@ function preserveExplicitTurns(raw, useCase) {
 }
 function fallbackDraft({ companyName, website, useCase, evidence }) {
   const hostname = new URL(website).hostname.replace(/^www\./,''), company=clean(companyName,evidence.title || hostname), turns=fallbackTurns(useCase);
-  const companyFirst = turns[0]?.speaker === 'company' || (!turns.length && /\b(company|brand)\b.*\b(says?|sends?|invites?|announces?)/i.test(useCase));
+  const companyFirst = turns[0]?.speaker === 'company' || (!turns.length && requestedInitialSender(useCase,company) === 'company');
   if (!turns.length) {
     const opening = companyFirst ? `Hi! ${company} is reaching out with an update.` : 'Hi! I have a question about your offering.';
     turns.push({ speaker:companyFirst?'company':'customer', text:opening, mode:'prefill', options:[] });
@@ -252,7 +279,7 @@ async function handleApi(request,response,url) {
         canonical=fallbackDraft({ companyName:clean(body.companyName), website:remote.url, useCase, evidence });
         console.log(JSON.stringify({ event:'scenario_draft_fallback', reason:fallbackReason, elapsedMs:Date.now()-startedAt }));
       }
-      const ai = adaptCanonicalDraft(preserveExplicitTurns(canonical,useCase),channels);
+      const ai = adaptCanonicalDraft(enforceRequestedInitialSender(preserveExplicitTurns(canonical,useCase),useCase,clean(body.companyName)),channels);
       console.log(JSON.stringify({ event:'scenario_draft_completed', elapsedMs:Date.now()-startedAt }));
       sendJson(response,200,{ draft:normalizeDraft(ai,channels,remote.url), source:{ url:remote.url, title:evidence.title, imageCandidates:evidence.candidates, fallbackReason } });
     } catch (error) { const code=error?.code || 'scenario_generation_failed'; console.error(JSON.stringify({ event:'scenario_draft_failed', code, status:error?.status || null, name:error?.name || null, message:String(error?.message || '').slice(0,240) })); const status = code === 'llm_not_configured' ? 503 : ['invalid_url','blocked_url','blocked_host','missing_required_fields'].includes(code) ? 400 : 502; sendJson(response,status,{ error:code }); }
