@@ -211,6 +211,16 @@ test('conversation cards use one drag-and-drop reorderer across every channel', 
   assert.ok(html.includes("tools.querySelectorAll('[data-move]').forEach(button=>button.remove())"), 'legacy arrow controls are removed when drag controls are added');
 });
 
+test('guided sequences deliver every consecutive company message, while keyword routes choose one', () => {
+  for (const marker of [
+    'answers=routeByKeywords?[chooseResponse(set,text)].filter(Boolean):set.responses.filter(available)',
+    'const deliver=(index=0)=>{state.visible.push(answers[index])',
+    'if(index+1<answers.length){renderPreview();setTimeout(()=>deliver(index+1),900);return}',
+    "Guided sequence: ${replies.length} company ${replies.length===1?'message will':'messages will'} appear in order.",
+    'every following company message appears in order'
+  ]) assert.ok(html.includes(marker), `expected guided multi-message behavior: ${marker}`);
+});
+
 test('the bundled default user portrait is shared by WhatsApp and Gmail', () => {
   const portrait = path.join(root, 'assets', 'avatars', 'imansur-profile.png');
   assert.ok(fs.existsSync(portrait), 'the supplied default portrait is bundled with the demo');
