@@ -260,6 +260,18 @@ test('the final builder render applies Customer terminology after channel-specif
   }
 });
 
+test('WhatsApp has one full-width editable You-profile control with no duplicate preview', () => {
+  for (const marker of ['normalizeIdentityAssetPresentation', 'whatsapp-you-editor--unified', 'recipientAvatarDismissed', "label:'Your WhatsApp profile image'", "editor?.querySelector('.identity-preview')?.remove()"]) {
+    assert.ok(html.includes(marker), `expected unified WhatsApp profile control: ${marker}`);
+  }
+});
+
+test('Email distinguishes the Gmail sender avatar from the branded-email header logo', () => {
+  for (const marker of ["heading.textContent='Sender avatar'", "copy.querySelector('span').textContent='Shown beside the sender in Gmail.'", 'emailLogo:scenario.emailLogo||scenario.avatar', 'Current logo is used in branded company emails.']) {
+    assert.ok(html.includes(marker), `expected distinct email identity roles: ${marker}`);
+  }
+});
+
 test('server keeps request-size, timeout, and rate-limit safeguards enabled', () => {
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
   for (const marker of ['requestLimitBytes', 'requestTimeoutMs', 'withinRateLimit', 'safeUrl', 'privateIp']) {
