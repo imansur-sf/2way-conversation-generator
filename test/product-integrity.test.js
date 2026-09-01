@@ -56,7 +56,7 @@ test('AI uses one explicit initial sender across every channel, including email'
 
 test('AI preserves ordered scripted customer turns and defaults their supplied copy to composer prefills', () => {
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
-  for (const marker of ['Preserve every explicitly provided line and its order in turns.', 'Include every supplied turn, up to 12 turns', 'Copy explicitly quoted dialogue verbatim; do not shorten it.', 'function preserveExplicitTurns', 'scenario_draft_explicit_turns_preserved', 'return turns.slice(0,16)', 'value.slice(0,16)', 'Any supplied customer wording must use mode "prefill".', 'function turns(value)', 'turns:turns(scenario.turns)']) {
+  for (const marker of ['Preserve every explicitly provided line and its order in turns.', 'Include every supplied turn, up to 12 turns', 'Copy explicitly quoted dialogue verbatim; do not shorten it.', 'function cleanPrompt', 'slice(0,12_000)', 'useCase = cleanPrompt(body.useCase)', 'function preserveExplicitTurns', 'scenario_draft_explicit_turns_preserved', 'return turns.slice(0,16)', 'value.slice(0,16)', 'Any supplied customer wording must use mode "prefill".', 'function turns(value)', 'turns:turns(scenario.turns)']) {
     assert.ok(server.includes(marker), `expected scripted AI-turn contract: ${marker}`);
   }
   for (const marker of ['scriptedStepsFromAi', "turn.mode==='free'?'free':turn.mode==='choices'?'prefilled':'prefill'", 'scenario.steps=turns', 'reusableSet:mode===\'free\'']) {
@@ -232,6 +232,13 @@ test('regenerating an AI draft returns to the editable prompt without auto-gener
 test('selected builder images show a contained visual thumbnail', () => {
   for (const marker of ['image-asset-preview', 'image-asset-preview-fallback', 'Image unavailable', "onerror=\"this.parentElement.classList.add('is-unavailable')\""]) {
     assert.ok(html.includes(marker), `expected visible selected-image preview: ${marker}`);
+  }
+});
+
+test('AI review image candidates use a same-origin proxy and fail gracefully', () => {
+  const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+  for (const marker of ["url.searchParams.get('raw') === '1'", "'X-Content-Type-Options':'nosniff'", 'aiPreviewImageUrl', '/api/asset?raw=1&url=', 'proxyAiReviewImages', 'Image unavailable', 'embeddedAsset=async function(url){return embeddedAssetWithRemoteFallback(url)}']) {
+    assert.ok(html.includes(marker) || server.includes(marker), `expected resilient AI image preview behavior: ${marker}`);
   }
 });
 
