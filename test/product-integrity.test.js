@@ -98,7 +98,7 @@ test('help content is mounted in a viewport-safe document popover instead of bei
 });
 
 test('email response styling is controlled per company response with compact shared assets', () => {
-  for (const marker of ['email-identity-assets', 'Company email assets', 'emailAssetCard', 'data-email-asset-url-apply', 'email-response-toggle', 'data-response-mode', 'response-rich-editor', 'renderBuilderWithPerResponseEmailDesign', "$('#emailDesigner')?.remove()", 'bubbleWithPerResponseEmailDesign']) {
+  for (const marker of ['email-identity-assets', 'Company email assets', 'emailAssetCard', 'data-image-url-apply', 'email-response-toggle', 'data-response-mode', 'response-rich-editor', 'renderBuilderWithPerResponseEmailDesign', "$('#emailDesigner')?.remove()", 'bubbleWithPerResponseEmailDesign']) {
     assert.ok(html.includes(marker), `expected per-response email design behavior: ${marker}`);
   }
   assert.ok(html.includes('Customer replies remain plain Gmail text.'), 'customer responses are deliberately kept as plain-text email');
@@ -127,8 +127,8 @@ test('AI company identity uses one selected logo across sender and email surface
   }
 });
 
-test('every editable image uses the direct upload, remove, or URL workflow', () => {
-  for (const marker of ['image-asset-control', 'data-image-upload>Upload', 'data-image-url-apply', 'normalizeImageSource', 'loadImageFromUrl', 'identity-image-cell', "label:'Company avatar'", "label:'Card image'", "label:'Hero image'"]) {
+test('every editable image uses the direct upload, visible thumbnail, remove, or URL workflow', () => {
+  for (const marker of ['image-asset-control', 'data-image-upload>Upload', 'data-image-thumbnail', 'data-image-url-apply', 'normalizeImageSource', 'loadImageFromUrl', 'identity-image-cell', "label:'Company avatar'", "label:'Card image'", "label:'Hero image'"]) {
     assert.ok(html.includes(marker), `expected unified image-control behavior: ${marker}`);
   }
   assert.ok(!html.includes('<div class="image-asset-sources"'), 'image URL controls must not reveal a redundant source menu');
@@ -266,7 +266,7 @@ test('regenerating an AI draft returns to the editable prompt without auto-gener
 });
 
 test('selected builder images show a contained visual thumbnail', () => {
-  for (const marker of ['image-asset-preview', 'image-asset-preview-fallback', 'Image unavailable', "onerror=\"this.parentElement.classList.add('is-unavailable')\""]) {
+  for (const marker of ['image-asset-thumb', 'data-image-thumbnail', 'src="${esc(value)}"', 'onerror="this.remove()"']) {
     assert.ok(html.includes(marker), `expected visible selected-image preview: ${marker}`);
   }
 });
@@ -315,13 +315,13 @@ test('WhatsApp has one full-width editable You-profile control with no duplicate
 });
 
 test('Email distinguishes the Gmail sender avatar from the branded-email header logo', () => {
-  for (const marker of ["heading.textContent='Sender avatar'", "copy.querySelector('span').textContent='Shown beside the sender in Gmail.'", 'function emailLogoAssetValue(s)', 'emailLogo:emailLogoAssetValue(scenario)', 'Current logo is used in branded company emails.']) {
+  for (const marker of ["heading.textContent='Sender avatar'", "copy.querySelector('span').textContent='Shown beside the sender in Gmail.'", 'function emailLogoAssetValue(s)', 'emailLogo:emailLogoAssetValue(scenario)', 'emailAssetCard(key,label,value,logo=false)']) {
     assert.ok(html.includes(marker), `expected distinct email identity roles: ${marker}`);
   }
 });
 
 test('email image assets show their current rendered image and use the same reliable URL loader', () => {
-  for (const marker of ["const emailLogo=emailLogoAssetValue(s)", "emailAssetCard('emailLogo','Company logo',emailLogo,true)", 'data-email-asset-file="${key}">Upload', 's[key]=await loadImageFromUrl(value)', 'emailLogoDismissed=true']) {
+  for (const marker of ["const emailLogo=emailLogoAssetValue(s)", "emailAssetCard('emailLogo','Company logo',emailLogo,true)", 'imageAssetControlMarkup({id:`email-${key}`,key,value,label', 'bindImageAssetControls()', 'scenario.emailLogoDismissed=!source']) {
     assert.ok(html.includes(marker), `expected reliable email image asset behavior: ${marker}`);
   }
 });
