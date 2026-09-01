@@ -134,7 +134,7 @@ async function callGemini(prompt) {
     const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), geminiRequestTimeoutMs);
     try {
       const retryInstruction = attempt ? '\nReturn the compact JSON object now. Do not explain it, use Markdown, or add fields that were not requested.' : '';
-      const upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${geminiApiKey}`, { method:'POST', headers:{ 'Content-Type':'application/json' }, signal:controller.signal, body:JSON.stringify({ contents:[{ parts:[{ text:prompt + retryInstruction }] }], generationConfig:{ responseMimeType:'application/json', maxOutputTokens:1200 } }) });
+      const upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${geminiApiKey}`, { method:'POST', headers:{ 'Content-Type':'application/json' }, signal:controller.signal, body:JSON.stringify({ contents:[{ parts:[{ text:prompt + retryInstruction }] }], generationConfig:{ responseMimeType:'application/json', maxOutputTokens:2400 } }) });
       if (!upstream.ok) {
         const detail = (await upstream.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 300);
         const code = upstream.status === 400 ? 'gemini_bad_request' : upstream.status === 401 || upstream.status === 403 ? 'gemini_auth_failed' : upstream.status === 404 ? 'gemini_model_not_found' : upstream.status === 429 ? 'gemini_rate_limited' : 'gemini_failed';
@@ -163,7 +163,17 @@ function fallbackTurns(useCase) {
   const turns = [];
   const pattern = /\b(company|customer|prospect|recipient)(?:\s*\([^)]*\))?\s+(?:says?|asks?|repl(?:y|ies)|responds?)\s*[:\-]?\s*["“]([^"”]{2,500})["”]/gi;
   for (const match of useCase.matchAll(pattern)) turns.push({ speaker:/company/i.test(match[1]) ? 'company':'customer', text:clean(match[2]), mode:'prefill', options:[] });
-  return turns.slice(0,8);
+  return turns.slice(0,16);
+}
+function preserveExplicitTurns(raw, useCase) {
+  const supplied = fallbackTurns(useCase);
+  const scenarioKey = raw?.scenarios?.sms ? 'sms' : Object.keys(raw?.scenarios || {})[0];
+  const generated = scenarioKey ? turns(raw.scenarios[scenarioKey]?.turns) : [];
+  if (supplied.length < 2 || generated.length >= supplied.length || !scenarioKey) return raw;
+  const firstCompany = supplied.find(turn => turn.speaker === 'company')?.text || '';
+  const firstCustomer = supplied.find(turn => turn.speaker === 'customer')?.text || '';
+  console.log(JSON.stringify({ event:'scenario_draft_explicit_turns_preserved', supplied:supplied.length, generated:generated.length }));
+  return { ...raw, initialSender:supplied[0]?.speaker === 'customer' ? 'customer':'company', scenarios:{ ...raw.scenarios, [scenarioKey]:{ ...raw.scenarios[scenarioKey], initialMessage:firstCompany || raw.scenarios[scenarioKey]?.initialMessage, initialBody:firstCompany || raw.scenarios[scenarioKey]?.initialBody, customerMessage:firstCustomer || raw.scenarios[scenarioKey]?.customerMessage, prefilledReply:firstCustomer || raw.scenarios[scenarioKey]?.prefilledReply, turns:supplied } } };
 }
 function fallbackDraft({ companyName, website, useCase, evidence }) {
   const hostname = new URL(website).hostname.replace(/^www\./,''), company=clean(companyName,evidence.title || hostname), turns=fallbackTurns(useCase);
@@ -182,12 +192,12 @@ function draftPrompt({ companyName, website, useCase, channels, evidence }) {
   const channelSchema = channel === 'email'
     ? '{"title":"","subject":"","preheader":"","initialBody":"","customerMessage":"","prefilledReply":"","turns":[{"speaker":"company","text":""},{"speaker":"customer","text":"","mode":"prefill"}],"keywords":[{"terms":"","response":""}],"fallbackResponse":"","ctaLabel":"","ctaUrl":"","layout":"hero"}'
     : '{"title":"","sender":"","initialMessage":"","customerMessage":"","prefilledReply":"","turns":[{"speaker":"company","text":""},{"speaker":"customer","text":"","mode":"prefill"}],"keywords":[{"terms":"","response":""}],"fallbackResponse":""}';
-  return `Create one concise, realistic ${channel.toUpperCase()} two-way messaging demo. Return JSON only.\nCompany: ${companyName || '(not supplied)'}\nWebsite: ${website}\nUse case: ${useCase}\n\nEvidence: ${evidence.title}. ${evidence.description}. ${evidence.headings.slice(0,6).join(' | ')}\nWebsite text: ${evidence.text.slice(0,2000)}\nImage candidates (only use these URLs or empty strings):\n${images}\n\nUse "company" as initialSender when the company opens with outreach, a campaign, reminder, or invitation; use "customer" only when the customer explicitly begins. Preserve every explicitly provided line and its order in turns. A turn is {"speaker":"company"|"customer","text":"","mode":"prefill"|"free"|"choices","options":[]}. Any supplied customer wording must use mode "prefill". Use "choices" only for requested selectable options and "free" only for explicitly open-ended typing.\n\nReturn exactly this compact JSON shape, with only the ${channel} scenario key: {"companyName":"","initials":"","emailAddress":"","logoUrl":"","heroImageUrl":"","brandColor":"#0176D3","brandSecondaryColor":"#032D60","initialSender":"company","scenarios":{"${channel}":${channelSchema}}}. Keep text under 240 characters. Do not invent facts or URLs.`;
+  return `Create one concise, realistic ${channel.toUpperCase()} two-way messaging demo. Return JSON only.\nCompany: ${companyName || '(not supplied)'}\nWebsite: ${website}\nUse case: ${useCase}\n\nEvidence: ${evidence.title}. ${evidence.description}. ${evidence.headings.slice(0,6).join(' | ')}\nWebsite text: ${evidence.text.slice(0,2000)}\nImage candidates (only use these URLs or empty strings):\n${images}\n\nUse "company" as initialSender when the company opens with outreach, a campaign, reminder, or invitation; use "customer" only when the customer explicitly begins. Preserve every explicitly provided line and its order in turns. Include every supplied turn, up to 12 turns; never merge or omit adjacent company turns, including a handoff to another company representative. A turn is {"speaker":"company"|"customer","text":"","mode":"prefill"|"free"|"choices","options":[]}. Any supplied customer wording must use mode "prefill". Use "choices" only for requested selectable options and "free" only for explicitly open-ended typing. Copy explicitly quoted dialogue verbatim; do not shorten it.\n\nReturn exactly this compact JSON shape, with only the ${channel} scenario key: {"companyName":"","initials":"","emailAddress":"","logoUrl":"","heroImageUrl":"","brandColor":"#0176D3","brandSecondaryColor":"#032D60","initialSender":"company","scenarios":{"${channel}":${channelSchema}}}. When dialogue is not supplied, keep each generated text under 240 characters. Do not invent facts or URLs.`;
 }
 function clean(value, fallback = '') { return typeof value === 'string' ? value.trim().slice(0,1800) : fallback; }
 function color(value, fallback = '#0176D3') { const candidate = clean(value); return /^#[0-9a-f]{6}$/i.test(candidate) ? candidate.toUpperCase() : fallback; }
 function responses(value) { return Array.isArray(value) ? value.slice(0,3).map(item => ({ terms:clean(item?.terms,'').slice(0,140), response:clean(item?.response,'') })).filter(item => item.response) : []; }
-function turns(value) { return Array.isArray(value) ? value.slice(0,10).map(turn => { const speaker=clean(turn?.speaker).toLowerCase()==='customer'?'customer':'company'; const mode=['prefill','free','choices'].includes(clean(turn?.mode).toLowerCase())?clean(turn?.mode).toLowerCase():'prefill'; return { speaker, text:clean(turn?.text), mode:speaker==='customer'?mode:undefined, options:Array.isArray(turn?.options)?turn.options.map(option=>clean(option)).filter(Boolean).slice(0,6):[] }; }).filter(turn => turn.text) : []; }
+function turns(value) { return Array.isArray(value) ? value.slice(0,16).map(turn => { const speaker=clean(turn?.speaker).toLowerCase()==='customer'?'customer':'company'; const mode=['prefill','free','choices'].includes(clean(turn?.mode).toLowerCase())?clean(turn?.mode).toLowerCase():'prefill'; return { speaker, text:clean(turn?.text), mode:speaker==='customer'?mode:undefined, options:Array.isArray(turn?.options)?turn.options.map(option=>clean(option)).filter(Boolean).slice(0,6):[] }; }).filter(turn => turn.text) : []; }
 function normalizeDraft(raw, channels, website) {
   const hostname = new URL(website).hostname.replace(/^www\./,'');
   const scenarios = {};
@@ -241,7 +251,7 @@ async function handleApi(request,response,url) {
         canonical=fallbackDraft({ companyName:clean(body.companyName), website:remote.url, useCase, evidence });
         console.log(JSON.stringify({ event:'scenario_draft_fallback', reason:fallbackReason, elapsedMs:Date.now()-startedAt }));
       }
-      const ai = adaptCanonicalDraft(canonical,channels);
+      const ai = adaptCanonicalDraft(preserveExplicitTurns(canonical,useCase),channels);
       console.log(JSON.stringify({ event:'scenario_draft_completed', elapsedMs:Date.now()-startedAt }));
       sendJson(response,200,{ draft:normalizeDraft(ai,channels,remote.url), source:{ url:remote.url, title:evidence.title, imageCandidates:evidence.candidates, fallbackReason } });
     } catch (error) { const code=error?.code || 'scenario_generation_failed'; console.error(JSON.stringify({ event:'scenario_draft_failed', code, status:error?.status || null, name:error?.name || null, message:String(error?.message || '').slice(0,240) })); const status = code === 'llm_not_configured' ? 503 : ['invalid_url','blocked_url','blocked_host','missing_required_fields'].includes(code) ? 400 : 502; sendJson(response,status,{ error:code }); }
