@@ -56,7 +56,7 @@ test('AI uses one explicit initial sender across every channel, including email'
 
 test('AI preserves ordered scripted customer turns and defaults their supplied copy to composer prefills', () => {
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
-  for (const marker of ['Preserve every explicitly provided line and its order in turns.', 'Any supplied customer wording must use mode "prefill".', 'function turns(value)', 'turns:turns(scenario.turns)']) {
+  for (const marker of ['Preserve every explicitly provided line and its order in turns.', 'Include every supplied turn, up to 12 turns', 'Copy explicitly quoted dialogue verbatim; do not shorten it.', 'function preserveExplicitTurns', 'scenario_draft_explicit_turns_preserved', 'return turns.slice(0,16)', 'value.slice(0,16)', 'Any supplied customer wording must use mode "prefill".', 'function turns(value)', 'turns:turns(scenario.turns)']) {
     assert.ok(server.includes(marker), `expected scripted AI-turn contract: ${marker}`);
   }
   for (const marker of ['scriptedStepsFromAi', "turn.mode==='free'?'free':turn.mode==='choices'?'prefilled':'prefill'", 'scenario.steps=turns', 'reusableSet:mode===\'free\'']) {
@@ -66,7 +66,7 @@ test('AI preserves ordered scripted customer turns and defaults their supplied c
 
 test('AI generation uses one compact canonical request within the hosted timeout budget', () => {
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
-  for (const marker of ["const channel = channels[0] || 'sms'", 'Return exactly this compact JSON shape', 'requestTimeoutMs = 7_000', 'geminiRequestTimeoutMs = 20_000', 'maxOutputTokens:1200', 'function adaptCanonicalDraft', 'function fallbackDraft', "event:'scenario_draft_fallback'", "requests:1, channels", "channels:['sms']", "error?.name === 'TypeError'"]) {
+  for (const marker of ["const channel = channels[0] || 'sms'", 'Return exactly this compact JSON shape', 'requestTimeoutMs = 7_000', 'geminiRequestTimeoutMs = 20_000', 'maxOutputTokens:2400', 'function adaptCanonicalDraft', 'function fallbackDraft', "event:'scenario_draft_fallback'", "requests:1, channels", "channels:['sms']", "error?.name === 'TypeError'"]) {
     assert.ok(server.includes(marker), `expected resilient AI generation: ${marker}`);
   }
 });
@@ -214,7 +214,7 @@ test('the bundled default user portrait is shared by WhatsApp and Gmail', () => 
 });
 
 test('interactive HTML downloads are standalone active-channel browser experiences', () => {
-  for (const marker of ['downloadStandaloneHtml', 'inlineStandaloneAssets', 'export-channel-${esc(channel)}', 'html.replace(/<body\\b[^>]*>/i', 'scenarios:[selected]', 'emailPresentationHint', 'Gmail preview', 'full-screen, browser-tab Gmail experience']) {
+  for (const marker of ['downloadStandaloneHtml', 'inlineStandaloneAssets', 'export-booting', 'releaseStandaloneExportBoot', 'export-channel-${esc(channel)}', 'html.replace(/<body\\b[^>]*>/i', 'scenarios:[selected]', 'emailPresentationHint', 'Gmail preview', 'full-screen, browser-tab Gmail experience']) {
     assert.ok(html.includes(marker), `expected standalone export behavior: ${marker}`);
   }
   assert.ok(html.includes(".export .builder,.export .appbar,.export .preview-info"), 'exports remove builder and presenter chrome');
@@ -246,6 +246,18 @@ test('conversation reordering is self-contained and preserves open editors', () 
     assert.ok(html.includes(marker), `expected reliable conversation drag behavior: ${marker}`);
   }
   assert.ok(html.includes('tools.querySelectorAll(\'[data-move]\').forEach(button=>button.remove())'), 'legacy reordering arrows are removed while collapse and delete controls stay on the right');
+});
+
+test('the email company-avatar control reuses the selected email logo when no separate avatar exists', () => {
+  for (const marker of ["avatarValue=scenario.avatar||(!scenario.avatarDismissed&&scenario.channel==='email'?scenario.emailLogo:'')", 'scenario.avatarDismissed=!source', "label:'Company avatar'"]) {
+    assert.ok(html.includes(marker), `expected linked email avatar behavior: ${marker}`);
+  }
+});
+
+test('the final builder render applies Customer terminology after channel-specific markup is rebuilt', () => {
+  for (const marker of ['renderBuilderWithFinalCustomerTerminology', 'applyCustomerTerminology()']) {
+    assert.ok(html.includes(marker), `expected final customer terminology normalization: ${marker}`);
+  }
 });
 
 test('server keeps request-size, timeout, and rate-limit safeguards enabled', () => {
