@@ -25,10 +25,102 @@ test('quality guardrails are included in the standalone export source', () => {
 });
 
 test('multi-channel scenarios preserve independent channel variants', () => {
-  for (const marker of ['scenarioMode', 'variants', 'captureJourneyVariant', 'projectJourneyVariant', 'addJourneyChannel', 'Create multi-channel scenario']) {
+  for (const marker of ['scenarioMode', 'variants', 'captureJourneyVariant', 'projectJourneyVariant', 'addJourneyChannel', 'Apply to ${scenario?.name||\'this scenario\'}']) {
     assert.ok(html.includes(marker), `expected multi-channel scenario support: ${marker}`);
   }
   assert.ok(html.includes('Switching never overwrites another channel’s flow.'), 'the builder explains independent channel editing');
+});
+
+test('versioned saves capture the active multi-channel variant before rendering', () => {
+  const finalPersist = html.lastIndexOf('persist=function(){captureJourneyVariant();if(isStandaloneExport)');
+  assert.ok(finalPersist > html.indexOf('function captureJourneyVariant'), 'the final persistence implementation captures the projected channel variant');
+  assert.ok(html.indexOf('captureJourneyVariant();if(isStandaloneExport)', finalPersist) === finalPersist + 'persist=function(){'.length, 'capture happens before export handling or writing the versioned scenario record');
+});
+
+test('AI applies to the active named scenario by default, with a separate-scenario escape hatch', () => {
+  for (const marker of ['Apply to ${scenario?.name||\'this scenario\'}', 'createAiScenarioSeparately', 'Create separately', 'applyAiDraft=async function({separate=false}={})', 'destination=separate?', 'Object.keys(target).forEach(key=>delete target[key])', 'state.scenarios.push(journey)']) {
+    assert.ok(html.includes(marker), `expected clear AI scenario destination behavior: ${marker}`);
+  }
+  assert.ok(html.includes('Choose Create separately to keep this scenario unchanged.'), 'the review explains that the secondary action preserves the current scenario');
+});
+
+test('AI uses one explicit initial sender across every channel, including email', () => {
+  const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+  for (const marker of ['"initialSender":"company"', 'Use "company" as initialSender when the company opens with outreach', 'customerMessage:clean(scenario.customerMessage)', "initialSender:clean(raw?.initialSender).toLowerCase()==='customer'?'customer':'company'"]) {
+    assert.ok(server.includes(marker), `expected AI draft sender contract: ${marker}`);
+  }
+  for (const marker of ["customerFirst=draft.initialSender==='customer'", "author:'brand',kind:'text',text:config.initialBody||config.initialMessage||config.fallbackResponse", "emailBody:customerFirst?'':config.initialBody", 'aiCustomerStep(config,true)', 'aiBrandResponseSteps(config)']) {
+    assert.ok(html.includes(marker), `expected shared sender behavior in the channel converter: ${marker}`);
+  }
+});
+
+test('AI honors a named company as the stated opening sender, including fallback drafts', () => {
+  const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+  const helpers = new Function(`${server.slice(server.indexOf('function fallbackTurns'), server.indexOf('function readJson'))};return { requestedInitialSender, fallbackDraft, enforceRequestedInitialSender };`)();
+  const useCase = 'NCSA sends a marketing communication about an upcoming Baseball Recruiting event. A customer, Sean, responds with questions about cost and group tickets.';
+  assert.equal(helpers.requestedInitialSender(useCase, 'NCSA'), 'company');
+  const fallback = helpers.fallbackDraft({ companyName:'NCSA', website:'https://ncsasports.org', useCase, evidence:{ title:'NCSA', candidates:[] } });
+  assert.equal(fallback.initialSender, 'company');
+  assert.equal(fallback.scenarios.sms.turns[0].speaker, 'company');
+  const corrected = helpers.enforceRequestedInitialSender({ companyName:'NCSA', initialSender:'customer', scenarios:{ sms:{ initialMessage:'Join the NCSA Baseball Recruiting event.', turns:[{ speaker:'customer', text:'What does it cost?' },{ speaker:'company', text:'We can help with tickets.' }] } } }, useCase, 'NCSA');
+  assert.equal(corrected.initialSender, 'company');
+  assert.equal(corrected.scenarios.sms.turns[0].speaker, 'company');
+});
+
+test('fallback drafts preserve natural-language customer, topic, question, and handoff details', () => {
+  const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+  const helpers = new Function(`${server.slice(server.indexOf('function fallbackTurns'), server.indexOf('function readJson'))};return { fallbackDraft, enforcePromptStory };`)();
+  const cases = [
+    { company:'NCSA', website:'https://ncsasports.org', useCase:'NCSA sends a marketing communication about an upcoming Baseball Recruiting event. A customer, Sean, responds to the message with questions around the cost and if there are any group tickets. After a few back and forth messages between them, when Sean wants to learn more about IMG Academy, he is connected to a Sales Rep named Jake in the same thread.', details:['Sean', 'Baseball Recruiting event', 'cost', 'group tickets', 'IMG Academy', 'Jake'] },
+    { company:'Aurora Skills', website:'https://auroraskills.example', useCase:'Aurora Skills sends an invitation for its Climate Innovation Forum. A prospect, Amara, asks about accessibility and virtual attendance. Later, Amara wants to learn more about the Greenhouse Accelerator, so an Account Executive named Priya joins the same thread.', details:['Amara', 'Climate Innovation Forum', 'accessibility', 'virtual attendance', 'Greenhouse Accelerator', 'Priya'] }
+  ];
+  for (const sample of cases) {
+    const fallback = helpers.fallbackDraft({ companyName:sample.company, website:sample.website, useCase:sample.useCase, evidence:{ title:sample.company, candidates:[] } });
+    const transcript = fallback.scenarios.sms.turns.map(turn => turn.text).join('\n');
+    assert.equal(fallback.scenarios.sms.turns.length, 6);
+    for (const detail of sample.details) assert.match(transcript, new RegExp(detail, 'i'), `fallback should retain ${detail}`);
+    const incomplete = { companyName:sample.company, scenarios:{ sms:{ initialMessage:'A generic update.', turns:[{ speaker:'company', text:'A generic update.' },{ speaker:'customer', text:'Please tell me more.' }] } } };
+    const enforced = helpers.enforcePromptStory(incomplete, sample.useCase, sample.company);
+    const enforcedTranscript = enforced.scenarios.sms.turns.map(turn => turn.text).join('\n');
+    for (const detail of sample.details) assert.match(enforcedTranscript, new RegExp(detail, 'i'), `coverage gate should retain ${detail}`);
+  }
+});
+
+test('AI preserves ordered scripted customer turns and defaults their supplied copy to composer prefills', () => {
+  const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+  for (const marker of ['Preserve every explicitly provided line and its order in turns.', 'Include every supplied turn, up to 12 turns', 'Copy explicitly quoted dialogue verbatim; do not shorten it.', 'function cleanPrompt', 'slice(0,12_000)', 'function validateDraftRequest', 'const useCase = cleanPrompt(body?.useCase)', 'function preserveExplicitTurns', 'scenario_draft_explicit_turns_preserved', 'return turns.slice(0,16)', 'value.slice(0,16)', 'Any supplied customer wording must use mode "prefill".', 'function turns(value)', 'turns:turns(scenario.turns)']) {
+    assert.ok(server.includes(marker), `expected scripted AI-turn contract: ${marker}`);
+  }
+  for (const marker of ['scriptedStepsFromAi', "turn.mode==='free'?'free':turn.mode==='choices'?'prefilled':'prefill'", 'scenario.steps=turns', 'reusableSet:mode===\'free\'']) {
+    assert.ok(html.includes(marker), `expected scripted AI-turn mapping: ${marker}`);
+  }
+});
+
+test('AI generation uses one compact canonical request within the hosted timeout budget', () => {
+  const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+  for (const marker of ["const channel = channels[0] || 'sms'", 'Return exactly this compact JSON shape', 'requestTimeoutMs = 7_000', 'geminiRequestTimeoutMs = 20_000', 'maxOutputTokens:2400', 'function adaptCanonicalDraft', 'function fallbackDraft', "event:'scenario_draft_fallback'", "requests:1, channels", "channels:['sms']", "error?.name === 'TypeError'"]) {
+    assert.ok(server.includes(marker), `expected resilient AI generation: ${marker}`);
+  }
+});
+
+test('customer response modes distinguish typing, composer prefills, and intentional choice bubbles', () => {
+  for (const marker of ['customerResponseModeEditor', 'Type in phone', 'Prefill message', 'Reply choices', 'Message to prefill', 'Scripted sequence', "['prefill','prefilled'].includes(step.kind)", 'state.composerPrefillToken']) {
+    assert.ok(html.includes(marker), `expected customer response mode: ${marker}`);
+  }
+  assert.ok(html.includes("pending.kind==='prefill')state.composer=pending.text||''"), 'a message prefill is placed into the live composer');
+});
+
+test('help content is mounted in a viewport-safe document popover instead of being clipped by cards', () => {
+  for (const marker of ['ruleHelpPopover', 'placeRuleHelpPopover', 'wireRuleHelpPopovers', "copy.hidden=true", "ruleHelpPopover.hidden=true", "role','tooltip'"]) {
+    assert.ok(html.includes(marker), `expected safe help popover behavior: ${marker}`);
+  }
+});
+
+test('email response styling is controlled per company response with compact shared assets', () => {
+  for (const marker of ['email-identity-assets', 'Company email assets', 'emailAssetCard', 'data-image-url-apply', 'email-response-toggle', 'data-response-mode', 'response-rich-editor', 'renderBuilderWithPerResponseEmailDesign', "$('#emailDesigner')?.remove()", 'bubbleWithPerResponseEmailDesign']) {
+    assert.ok(html.includes(marker), `expected per-response email design behavior: ${marker}`);
+  }
+  assert.ok(html.includes('Customer replies remain plain Gmail text.'), 'customer responses are deliberately kept as plain-text email');
 });
 
 test('branded email omits a broken or missing logo instead of showing a placeholder', () => {
@@ -54,10 +146,11 @@ test('AI company identity uses one selected logo across sender and email surface
   }
 });
 
-test('every editable image uses the compact add, change, remove, or URL workflow', () => {
-  for (const marker of ['image-asset-control', 'data-image-upload', 'data-image-url-apply', 'normalizeImageSource', "label:'Company avatar'", "label:'Card image'", "label:'Hero image'"]) {
+test('every editable image uses the direct upload, visible thumbnail, remove, or URL workflow', () => {
+  for (const marker of ['image-asset-control', 'data-image-upload>Upload', 'data-image-thumbnail', 'data-image-url-apply', 'normalizeImageSource', 'loadImageFromUrl', 'identity-image-cell', "label:'Company avatar'", "label:'Card image'", "label:'Hero image'"]) {
     assert.ok(html.includes(marker), `expected unified image-control behavior: ${marker}`);
   }
+  assert.ok(!html.includes('<div class="image-asset-sources"'), 'image URL controls must not reveal a redundant source menu');
 });
 
 test('AI setup separates the active company logo from campaign hero options', () => {
@@ -75,6 +168,12 @@ test('AI logo choices remain stable after selecting a different option', () => {
 test('QA starts minimized and tests a recipient message without routing dropdown jargon', () => {
   for (const marker of ['Testing &amp; Quality Assurance', 'data-qa-toggle', 'data-qa-turn', 'Test recipient message', 'Keyword match → company response', 'const isCollapsed=step.collapsed!==false']) {
     assert.ok(html.includes(marker), `expected compact QA and collapsed flow controls: ${marker}`);
+  }
+});
+
+test('QA summary counts every customer and company step, not only routing sets', () => {
+  for (const marker of ['routeLabMarkupWithFullFlowCounts', "step.author==='customer'||step.author==='recipient'", "step.author==='brand'||step.author==='company'", 'customerCount} customer', 'companyCount} company']) {
+    assert.ok(html.includes(marker), `expected full conversation counts in QA summary: ${marker}`);
   }
 });
 
@@ -111,14 +210,14 @@ test('opened Gmail messages retain read state after returning to the inbox', () 
 });
 
 test('saved scenario data is versioned, validated, and automatically recoverable', () => {
-  for (const marker of ['scenarioStoreVersion=4', "scenarioStoreKey='two-way-studio-v4'", 'Array.isArray(parsed?.scenarios)', 'bootstrapScenario', 'supportedBootstrapChannels', 'savedScenarioRecoveryNeeded', '!normalizedScenarios.length', 'Restore starter scenarios', 'restoreStarterScenarios']) {
+  for (const marker of ['scenarioStoreVersion=1', "scenarioStoreKey='two-way-experience-studio-v2-scenarios'", 'Array.isArray(parsed?.scenarios)', 'bootstrapScenario', 'supportedBootstrapChannels', 'savedScenarioRecoveryNeeded', '!normalizedScenarios.length', 'Restore starter scenarios', 'restoreStarterScenarios']) {
     assert.ok(html.includes(marker), 'expected saved-scenario recovery behavior: ' + marker);
   }
   assert.ok(html.includes('Your custom scenarios will be kept.'), 'manual starter restoration preserves custom scenarios');
 });
 
 test('startup validates saved scenarios before the first render and has a one-time reset fallback', () => {
-  for (const marker of ['bootstrapRecoveryFlag', 'recoverFromBootstrapFailure', "localStorage.removeItem('two-way-studio-v4')", "localStorage.removeItem('two-way-studio-v3')", "window.addEventListener('error'", 'bootstrapRendered=true']) {
+  for (const marker of ['bootstrapRecoveryFlag', 'recoverFromBootstrapFailure', "localStorage.removeItem('two-way-experience-studio-v2-scenarios')", "window.addEventListener('error'", 'bootstrapRendered=true']) {
     assert.ok(html.includes(marker), 'expected refresh-time blank-state prevention: ' + marker);
   }
   assert.ok(html.indexOf('function bootstrapScenario') < html.indexOf('function renderBuilder()'), 'saved records are normalized before the first builder render');
@@ -145,6 +244,16 @@ test('conversation cards use one drag-and-drop reorderer across every channel', 
   assert.ok(html.includes("tools.querySelectorAll('[data-move]').forEach(button=>button.remove())"), 'legacy arrow controls are removed when drag controls are added');
 });
 
+test('guided sequences deliver every consecutive company message, while keyword routes choose one', () => {
+  for (const marker of [
+    'answers=routeByKeywords?[chooseResponse(set,text)].filter(Boolean):set.responses.filter(available)',
+    'const deliver=(index=0)=>{state.visible.push(answers[index])',
+    'if(index+1<answers.length){renderPreview();setTimeout(()=>deliver(index+1),900);return}',
+    "Guided sequence: ${replies.length} company ${replies.length===1?'message will':'messages will'} appear in order.",
+    'every following company message appears in order'
+  ]) assert.ok(html.includes(marker), `expected guided multi-message behavior: ${marker}`);
+});
+
 test('the bundled default user portrait is shared by WhatsApp and Gmail', () => {
   const portrait = path.join(root, 'assets', 'avatars', 'imansur-profile.png');
   assert.ok(fs.existsSync(portrait), 'the supplied default portrait is bundled with the demo');
@@ -153,9 +262,135 @@ test('the bundled default user portrait is shared by WhatsApp and Gmail', () => 
   }
 });
 
+test('interactive HTML downloads are standalone active-channel browser experiences', () => {
+  for (const marker of ['downloadStandaloneHtml', 'inlineStandaloneAssets', 'export-booting', 'releaseStandaloneExportBoot', 'export-channel-${esc(channel)}', 'html.replace(/<body\\b[^>]*>/i', 'scenarios:[selected]', 'emailPresentationHint', 'Gmail preview', 'full-screen, browser-tab Gmail experience', 'isStandaloneExport=document.body.classList.contains(\'export\')', 'if(!isStandaloneExport)try{saved=localStorage.getItem', 'if(isStandaloneExport){const saveState=$(\'#saveState\')', 'standalone-export-lock']) {
+    assert.ok(html.includes(marker), `expected standalone export behavior: ${marker}`);
+  }
+  assert.ok(html.includes(".export .builder,.export .appbar,.export .preview-info"), 'exports remove builder and presenter chrome');
+  assert.ok(html.includes("document.body.classList.remove('presentation','email-presentation')"), 'leaving presentation removes email-only presentation state');
+});
+
+test('standalone downloads use only their embedded scenario, not shared file storage', () => {
+  const exportBootstrap = html.slice(html.indexOf("isStandaloneExport=document.body.classList.contains('export')"), html.indexOf('function bootstrapScenario'));
+  assert.ok(!exportBootstrap.includes('saved=localStorage.getItem') || exportBootstrap.includes('if(!isStandaloneExport)try{saved=localStorage.getItem'), 'exports must skip shared localStorage during startup');
+  assert.ok(html.includes('if(isStandaloneExport){const saveState=$(\'#saveState\')'), 'exports must not overwrite shared localStorage when interactions occur');
+});
+
+test('regenerating an AI draft returns to the editable prompt without auto-generating', () => {
+  for (const marker of ['returnAiDraftToEditor', 'Draft cleared. Update the prompt', "state.setupMode='ai'", "ai.draft=null", 'regenerateAiDraft']) {
+    assert.ok(html.includes(marker), `expected editable AI regeneration behavior: ${marker}`);
+  }
+  const regenerate = html.slice(html.indexOf('function returnAiDraftToEditor'), html.indexOf('const generateAiDraftWithFreshLogoChoices'));
+  assert.ok(!regenerate.includes('generateAiDraft()'), 'returning to the prompt must not immediately submit another generation request');
+});
+
+test('selected builder images show a contained visual thumbnail', () => {
+  for (const marker of ['image-asset-thumb', 'data-image-thumbnail', 'thumbnail=hasImage?`<img', 'src="${esc(value)}"', 'Company SVGs and photo uploads share the same <img> source path as the channel previews.']) {
+    assert.ok(html.includes(marker), `expected visible selected-image preview: ${marker}`);
+  }
+  assert.ok(!html.includes('URL.createObjectURL(new Blob([bytes]'), 'builder thumbnails must not transform AI SVGs into a separate image source');
+  assert.ok(html.includes('.builder .image-asset-thumb.logo{display:block!important}'), 'the header-logo hide rule must not hide company image thumbnails');
+});
+
+test('AI review image candidates use a same-origin proxy and fail gracefully', () => {
+  const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+  for (const marker of ["url.searchParams.get('raw') === '1'", "'X-Content-Type-Options':'nosniff'", 'aiPreviewImageUrl', '/api/asset?raw=1&url=', 'proxyAiReviewImages', 'Image unavailable', 'embeddedAsset=async function(url){return embeddedAssetWithRemoteFallback(url)}']) {
+    assert.ok(html.includes(marker) || server.includes(marker), `expected resilient AI image preview behavior: ${marker}`);
+  }
+});
+
+test('conversation card disclosures use a stable one-click Customer/Company handler', () => {
+  for (const marker of ['decorateCollapsibleBlocksWithStableLabels', "label=step.author==='brand'?'Company response':'Customer input'", 'previous.replaceWith(toggle)', 'event.stopPropagation()', "step.collapsed=!(step.collapsed!==false)"]) {
+    assert.ok(html.includes(marker), `expected stable conversation disclosure behavior: ${marker}`);
+  }
+});
+
+test('conversation reordering is self-contained and preserves open editors', () => {
+  for (const marker of ['conversationCards(container)', "card.dataset.stepBlock=scenario.steps[index].id", 'preserveConversationDisclosureState', "step.collapsed=block.classList.contains('is-collapsed')", "handle.addEventListener('pointerdown'", "document.addEventListener('pointermove'", 'conversation-drag-ghost', 'conversation-drop-indicator', 'showInsertion(target)', 'reorderConversationSteps(origin?.dataset.stepBlock,targetId,after)']) {
+    assert.ok(html.includes(marker), `expected reliable conversation drag behavior: ${marker}`);
+  }
+  assert.ok(html.includes('tools.querySelectorAll(\'[data-move]\').forEach(button=>button.remove())'), 'legacy reordering arrows are removed while collapse and delete controls stay on the right');
+});
+
+test('the email company-avatar control reuses the selected email logo when no separate avatar exists', () => {
+  for (const marker of ["avatarValue=scenario.avatar||(!scenario.avatarDismissed&&scenario.channel==='email'?scenario.emailLogo:'')", 'scenario.avatarDismissed=!source', "label:'Company avatar'"]) {
+    assert.ok(html.includes(marker), `expected linked email avatar behavior: ${marker}`);
+  }
+});
+
+test('the final builder render applies Customer terminology after channel-specific markup is rebuilt', () => {
+  for (const marker of [
+    'renderBuilderWithFinalCustomerTerminology',
+    'applyCustomerTerminology()',
+    "if(addCustomer)addCustomer.textContent='+ Customer'",
+    "if(addEmailCustomer)addEmailCustomer.textContent='+ Customer'"
+  ]) {
+    assert.ok(html.includes(marker), `expected final customer terminology normalization: ${marker}`);
+  }
+});
+
+test('WhatsApp has one full-width editable You-profile control with no duplicate preview', () => {
+  for (const marker of ['normalizeIdentityAssetPresentation', 'whatsapp-you-editor--unified', 'recipientAvatarDismissed', "label:'Your WhatsApp profile image'", "editor?.querySelector('.identity-preview')?.remove()"]) {
+    assert.ok(html.includes(marker), `expected unified WhatsApp profile control: ${marker}`);
+  }
+});
+
+test('Email distinguishes the Gmail sender avatar from the branded-email header logo', () => {
+  for (const marker of ["heading.textContent='Sender avatar'", "copy.querySelector('span').textContent='Shown beside the sender in Gmail.'", 'function emailLogoAssetValue(s)', 'emailLogo:emailLogoAssetValue(scenario)', 'emailAssetCard(key,label,value,logo=false)']) {
+    assert.ok(html.includes(marker), `expected distinct email identity roles: ${marker}`);
+  }
+});
+
+test('email image assets show their current rendered image and use the same reliable URL loader', () => {
+  for (const marker of ["const emailLogo=emailLogoAssetValue(s)", "emailAssetCard('emailLogo','Company logo',emailLogo,true)", 'imageAssetControlMarkup({id:`email-${key}`,key,value,label', 'bindImageAssetControls()', 'scenario.emailLogoDismissed=!source']) {
+    assert.ok(html.includes(marker), `expected reliable email image asset behavior: ${marker}`);
+  }
+});
+
 test('server keeps request-size, timeout, and rate-limit safeguards enabled', () => {
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
   for (const marker of ['requestLimitBytes', 'requestTimeoutMs', 'withinRateLimit', 'safeUrl', 'privateIp']) {
     assert.ok(server.includes(marker), `expected server safeguard: ${marker}`);
   }
+});
+
+test('RCS card-only messages omit an empty bubble and keep suggested replies inside the card', () => {
+  for (const marker of [
+    'RCS rich-card actions',
+    "const message=String(step.text||'').trim(),textBubble=message?",
+    'rcs-card-actions',
+    'data-rcs-reply',
+    'document.querySelector(\'#transcript > .chips\')?.remove()',
+    'data-rcs-action-owner',
+    'data-rcs-action-url-apply',
+    'function rcsActionTarget',
+    'function rcsConversationPreview'
+  ]) {
+    assert.ok(html.includes(marker), `expected RCS card-only action behavior: ${marker}`);
+  }
+});
+
+test('company-first email opening is rendered only once', () => {
+  for (const marker of [
+    'bubbleWithoutDuplicateOpeningEmail',
+    "scenario.channel==='email'&&scenario.steps?.[0]?.author==='brand'",
+    'step===scenario.steps[0]'
+  ]) {
+    assert.ok(html.includes(marker), `expected company-first email deduplication: ${marker}`);
+  }
+});
+
+test('company email responses support sandboxed custom HTML previews', () => {
+  for (const marker of [
+    'Custom HTML company emails',
+    "step?.emailMode==='html'?'html'",
+    'data-response-custom-html',
+    'customHtmlEmailMarkup',
+    'sandbox=""',
+    'referrerpolicy="no-referrer"'
+  ]) {
+    assert.ok(html.includes(marker), `expected custom HTML email support: ${marker}`);
+  }
+  assert.ok(html.includes("if(!markup)return ''"), 'empty Custom HTML responses must not create an empty email preview');
+  assert.ok(!html.includes('Paste your email HTML to preview it here.'), 'the Gmail preview must not show a Custom HTML placeholder');
 });
