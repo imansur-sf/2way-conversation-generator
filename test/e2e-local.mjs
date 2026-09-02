@@ -64,6 +64,28 @@ try {
   await emailPage.locator('[data-email="0"]').click();
   assert.equal(await emailPage.locator('.scenario-email').count(), 1, 'A company-first opening email must render once, even when the active scenario projection recreates its step object');
   await emailContext.close();
+  const livePreviewContext = await browser.newContext();
+  const livePreviewPage = await livePreviewContext.newPage();
+  await livePreviewPage.goto(baseUrl, { waitUntil:'networkidle' });
+  await livePreviewPage.evaluate(() => {
+    const scenario = {
+      id:'live-preview-journey', name:'Live preview journey', scenarioMode:'multi', channel:'rcs',
+      variants:{ rcs:{ channel:'rcs', brandName:'Live Preview Co', smsAddress:'Live Preview Co', emailAddress:'', subject:'', emailBody:'', initials:'LP', avatar:'', steps:[
+        { id:'live-rich-card', author:'brand', kind:'rich', text:'Opening message', cardTitle:'Original card title', cardDescription:'Original description', cardImage:'', cardCta:'Learn more', cardUrl:'' },
+        { id:'live-customer', author:'customer', kind:'free', text:'', options:'', reusableSet:false },
+        { id:'live-later-company', author:'brand', kind:'text', text:'Later response', matchTerms:'', allowRepeat:true }
+      ] } }
+    };
+    localStorage.setItem('two-way-experience-studio-v2-scenarios', JSON.stringify({ version:4, scenarios:[scenario] }));
+  });
+  await livePreviewPage.reload({ waitUntil:'networkidle' });
+  const liveCardTitle = livePreviewPage.locator('[data-step="live-rich-card"][data-field="cardTitle"]');
+  await liveCardTitle.focus();
+  await liveCardTitle.fill('Updated card title');
+  await livePreviewPage.waitForFunction(() => document.querySelector('#stage')?.textContent?.includes('Updated card title'));
+  assert.ok(await livePreviewPage.locator('.rich-card, .card').count(), 'Focusing an RCS card editor must reveal its in-phone preview');
+  assert.match(await livePreviewPage.locator('#stage').textContent(), /Live preview/, 'The preview should identify the message currently being edited');
+  await livePreviewContext.close();
   const context = await browser.newContext({ acceptDownloads:true, viewport:{ width:1440, height:960 } });
   const page = await context.newPage();
   const builderResponse = await page.goto(baseUrl, { waitUntil:'networkidle' });
