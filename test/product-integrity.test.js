@@ -31,6 +31,12 @@ test('multi-channel scenarios preserve independent channel variants', () => {
   assert.ok(html.includes('Switching never overwrites another channel’s flow.'), 'the builder explains independent channel editing');
 });
 
+test('builder edits synchronize the current variant into the live preview by stable step ID', () => {
+  for (const marker of ['currentPreviewStep', 'syncRuntimePreviewSteps', 'setLivePreviewStep', 'livePreviewStepId', 'wireBuilderWithLivePreview', 'Live draft preview']) {
+    assert.ok(html.includes(marker), `expected live builder preview support: ${marker}`);
+  }
+});
+
 test('versioned saves capture the active multi-channel variant before rendering', () => {
   const finalPersist = html.lastIndexOf('persist=function(){captureJourneyVariant();if(isStandaloneExport)');
   assert.ok(finalPersist > html.indexOf('function captureJourneyVariant'), 'the final persistence implementation captures the projected channel variant');
