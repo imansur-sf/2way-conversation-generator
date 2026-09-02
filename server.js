@@ -1,13 +1,16 @@
 const http = require('node:http');
 const { createReadStream, stat } = require('node:fs');
 const { lookup } = require('node:dns').promises;
+const { randomUUID, createHash } = require('node:crypto');
 const net = require('node:net');
 const path = require('node:path');
 
 const port = Number(process.env.PORT) || 3000;
 const root = __dirname;
+const appEnvironment = process.env.APP_ENV || 'development';
+const appVersion = process.env.APP_VERSION || '2.0.0';
 const geminiApiKey = process.env.GEMINI_API_KEY || '';
-const geminiModel = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+const geminiModel = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
 const scrapeLimitBytes = 500_000;
 const imageLimitBytes = 2_000_000;
 const requestLimitBytes = 200_000;
@@ -18,15 +21,25 @@ const geminiRequestTimeoutMs = 20_000;
 const rateWindowMs = 60_000;
 const perMinuteLimit = 12;
 const rateBuckets = new Map();
+const generationJobs = new Map();
+const idempotencyJobs = new Map();
+/* This is deliberately an in-memory convenience cache, not scenario storage.
+   It only avoids repeat Gemini calls while a single dyno remains alive. */
+const draftCache = new Map();
+const draftCacheTtlMs = 5 * 60_000;
+const generationJobTtlMs = 15 * 60_000;
+const generationJobLimit = 120;
+const generationMetrics = { started:0, completed:0, failed:0, fallback:0, totalDurationMs:0, lastCompletedAt:null, lastFailureAt:null };
 const mimeTypes = { '.css':'text/css; charset=utf-8', '.gif':'image/gif', '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.json':'application/json; charset=utf-8', '.jpg':'image/jpeg', '.jpeg':'image/jpeg', '.png':'image/png', '.svg':'image/svg+xml' };
 
-function sendJson(response, status, body) {
-  response.writeHead(status, { 'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store' });
-  response.end(JSON.stringify(body));
+function sendJson(response, status, body, requestId = '') {
+  response.writeHead(status, { 'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store', ...(requestId ? { 'X-Request-Id':requestId } : {}) });
+  response.end(JSON.stringify(requestId ? { ...body, requestId } : body));
 }
 function clientIp(request) { return request.headers['x-forwarded-for']?.split(',')[0]?.trim() || request.socket.remoteAddress || 'unknown'; }
 function withinRateLimit(request) {
   const now = Date.now(), key = clientIp(request), bucket = rateBuckets.get(key);
+  for (const [candidate, value] of rateBuckets) if (value.resetAt <= now) rateBuckets.delete(candidate);
   if (!bucket || bucket.resetAt <= now) { rateBuckets.set(key, { count:1, resetAt:now + rateWindowMs }); return true; }
   bucket.count += 1;
   return bucket.count <= perMinuteLimit;
@@ -153,7 +166,18 @@ async function callGemini(prompt) {
       throw error;
     } finally { clearTimeout(timeout); }
   };
-  return request();
+  let failure;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try { return await request(attempt); }
+    catch (error) {
+      failure = error;
+      const retryable = ['gemini_timeout','gemini_failed','gemini_bad_json','gemini_rate_limited'].includes(error?.code);
+      if (!retryable || attempt === 1) throw error;
+      console.log(JSON.stringify({ event:'gemini_request_retrying', attempt:attempt + 1, code:error.code }));
+      await new Promise(resolve => setTimeout(resolve, 350));
+    }
+  }
+  throw failure;
 }
 function adaptCanonicalDraft(raw, channels) {
   const source = raw?.scenarios?.sms || raw?.scenarios?.[Object.keys(raw?.scenarios || {})[0]] || {};
@@ -175,6 +199,23 @@ function promptStory(useCase) {
   const questionTopic = clean(copy.match(/\b(?:questions?\s+(?:around|about|regarding)|asks?\s+(?:about|whether)|inquires?\s+(?:about|whether)|wants?\s+to\s+know\s+(?:about\s+)?)\s*([^.!?]+)/i)?.[1]);
   const handoffTopic = clean(copy.match(/\b(?:wants?\s+to\s+learn\s+more\s+about|is\s+interested\s+in|asks?\s+to\s+learn\s+about)\s+([^,.!?]+)/i)?.[1]);
   return { customer, representative, representativeRole, openingTopic, questionTopic, handoffTopic };
+}
+function requestedMessageCount(useCase) {
+  const scripted = fallbackTurns(useCase);
+  if (scripted.length >= 2) return scripted.length;
+  const match = cleanPrompt(useCase).match(/\b([2-9]|1[0-2])\s+(?:total\s+)?(?:messages?|turns?|steps?)\b/i);
+  return match ? Number(match[1]) : 0;
+}
+function storyBrief(useCase, companyName = '') {
+  const story = promptStory(useCase);
+  const scriptedTurns = fallbackTurns(useCase);
+  return {
+    company:clean(companyName),
+    initialSender:requestedInitialSender(useCase,companyName) || (scriptedTurns[0]?.speaker || ''),
+    expectedMessageCount:requestedMessageCount(useCase),
+    scriptedTurns,
+    story
+  };
 }
 function promptStoryAnchors(story) { return [story.customer, story.representative, story.openingTopic, story.questionTopic, story.handoffTopic].filter(value => value && value.length >= 3); }
 function naturalLanguageFallbackTurns(useCase, company) {
@@ -200,6 +241,8 @@ function naturalLanguageFallbackTurns(useCase, company) {
 function escapedPattern(value) { return String(value || '').replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }
 function requestedInitialSender(useCase, companyName = '') {
   const copy = String(useCase || ''), company = escapedPattern(companyName.trim());
+  const explicit = copy.match(/\b(?:start|begin|open)(?:\s+the\s+(?:conversation|demo|flow))?\s+with\s+(?:the\s+)?(company|customer)\b/i)?.[1]?.toLowerCase();
+  if (explicit) return explicit;
   const companySubject = company ? `(?:company|brand|${company})` : '(?:company|brand)';
   const customerSubject = '(?:customer|prospect|recipient|lead)';
   const companyAction = '(?:says?|sends?|shares?|announces?|invites?|markets?|reaches?\\s+out|launches?)';
@@ -222,17 +265,45 @@ function enforceRequestedInitialSender(raw, useCase, companyName = '') {
     console.log(JSON.stringify({ event:'scenario_draft_initial_sender_corrected', requested, generatedFirst:generated[0]?.speaker || null }));
     return { ...raw, initialSender:'company', scenarios:{ ...raw.scenarios, [scenarioKey]:{ ...scenario, initialMessage:opening, initialBody:opening, turns:[{ speaker:'company', text:opening },...generated] } } };
   }
+  if (requested === 'customer' && generated[0]?.speaker !== 'customer') {
+    const firstCustomer = generated.find(turn => turn.speaker === 'customer');
+    const opening = firstCustomer || { speaker:'customer', text:`Hi, I have a question about ${promptStory(useCase).questionTopic || promptStory(useCase).openingTopic || 'your offering'}.`, mode:'prefill', options:[] };
+    console.log(JSON.stringify({ event:'scenario_draft_initial_sender_corrected', requested, generatedFirst:generated[0]?.speaker || null }));
+    return { ...raw, initialSender:'customer', scenarios:{ ...raw.scenarios, [scenarioKey]:{ ...scenario, customerMessage:opening.text, prefilledReply:opening.text, turns:[opening,...generated.filter(turn => turn !== firstCustomer)] } } };
+  }
   return { ...raw, initialSender:requested };
 }
 function preserveExplicitTurns(raw, useCase) {
   const supplied = fallbackTurns(useCase);
   const scenarioKey = raw?.scenarios?.sms ? 'sms' : Object.keys(raw?.scenarios || {})[0];
   const generated = scenarioKey ? turns(raw.scenarios[scenarioKey]?.turns) : [];
-  if (supplied.length < 2 || generated.length >= supplied.length || !scenarioKey) return raw;
+  const orderedMatch = supplied.length === generated.length && supplied.every((turn,index) => turn.speaker === generated[index]?.speaker && turn.text === generated[index]?.text);
+  if (supplied.length < 2 || orderedMatch || !scenarioKey) return raw;
   const firstCompany = supplied.find(turn => turn.speaker === 'company')?.text || '';
   const firstCustomer = supplied.find(turn => turn.speaker === 'customer')?.text || '';
   console.log(JSON.stringify({ event:'scenario_draft_explicit_turns_preserved', supplied:supplied.length, generated:generated.length }));
   return { ...raw, initialSender:supplied[0]?.speaker === 'customer' ? 'customer':'company', scenarios:{ ...raw.scenarios, [scenarioKey]:{ ...raw.scenarios[scenarioKey], initialMessage:firstCompany || raw.scenarios[scenarioKey]?.initialMessage, initialBody:firstCompany || raw.scenarios[scenarioKey]?.initialBody, customerMessage:firstCustomer || raw.scenarios[scenarioKey]?.customerMessage, prefilledReply:firstCustomer || raw.scenarios[scenarioKey]?.prefilledReply, turns:supplied } } };
+}
+function enforceRequestedMessageCount(raw, useCase, companyName = '') {
+  const required = requestedMessageCount(useCase);
+  const scenarioKey = raw?.scenarios?.sms ? 'sms' : Object.keys(raw?.scenarios || {})[0];
+  const scenario = scenarioKey ? raw.scenarios[scenarioKey] : null;
+  const generated = turns(scenario?.turns);
+  if (!scenario || !required || generated.length >= required) return raw;
+  const story = promptStory(useCase), company = clean(companyName,clean(raw?.companyName,'Our team'));
+  const topic = story.questionTopic || story.openingTopic || 'the details';
+  const addition = [];
+  while (generated.length + addition.length < required) {
+    const offset = addition.length;
+    addition.push(offset % 2 === 0
+      ? { speaker:'customer', text:`Could you share one more detail about ${topic}${story.customer ? ` for ${story.customer}` : ''}?`, mode:'prefill', options:[] }
+      : { speaker:'company', text:`Absolutely${story.customer ? `, ${story.customer}` : ''}. ${company} can walk through ${topic} and the next best step with you.`, mode:'prefill', options:[] });
+  }
+  /* Keep a named handoff as the ending rather than burying it behind filler. */
+  const handoffIndex = story.handoffTopic ? generated.findIndex(turn => turn.text.toLowerCase().includes(story.handoffTopic.toLowerCase())) : -1;
+  const expanded = handoffIndex > -1 ? [...generated.slice(0,handoffIndex),...addition,...generated.slice(handoffIndex)] : [...generated,...addition];
+  console.log(JSON.stringify({ event:'scenario_draft_message_count_repaired', required, generated:generated.length, repaired:expanded.length }));
+  return { ...raw, scenarios:{ ...raw.scenarios, [scenarioKey]:{ ...scenario, turns:expanded.slice(0,12) } } };
 }
 function enforcePromptStory(raw, useCase, companyName = '') {
   const story = promptStory(useCase), required = promptStoryAnchors(story), contextualTurns = naturalLanguageFallbackTurns(useCase,clean(companyName,clean(raw?.companyName,'Our team')));
@@ -261,11 +332,11 @@ function fallbackDraft({ companyName, website, useCase, evidence }) {
 function draftPrompt({ companyName, website, useCase, channels, evidence }) {
   const images = evidence.candidates.map((item,index) => `${index + 1}. ${item.role}: ${item.url}`).join('\n') || '(none)';
   const channel = channels[0] || 'sms';
-  const story = promptStory(useCase);
+  const brief = storyBrief(useCase,companyName);
   const channelSchema = channel === 'email'
     ? '{"title":"","subject":"","preheader":"","initialBody":"","customerMessage":"","prefilledReply":"","turns":[{"speaker":"company","text":""},{"speaker":"customer","text":"","mode":"prefill"}],"keywords":[{"terms":"","response":""}],"fallbackResponse":"","ctaLabel":"","ctaUrl":"","layout":"hero"}'
     : '{"title":"","sender":"","initialMessage":"","customerMessage":"","prefilledReply":"","turns":[{"speaker":"company","text":""},{"speaker":"customer","text":"","mode":"prefill"}],"keywords":[{"terms":"","response":""}],"fallbackResponse":""}';
-  return `Create one concise, realistic ${channel.toUpperCase()} two-way messaging demo. Return JSON only.\nCompany: ${companyName || '(not supplied)'}\nWebsite: ${website}\nUse case: ${useCase}\nStory requirements parsed from the use case: ${JSON.stringify(story)}. Include every non-empty named person, topic, question, and handoff in the turns; never replace them with generic placeholders.\n\nEvidence: ${evidence.title}. ${evidence.description}. ${evidence.headings.slice(0,6).join(' | ')}\nWebsite text: ${evidence.text.slice(0,2000)}\nImage candidates (only use these URLs or empty strings):\n${images}\n\nUse "company" as initialSender when the company opens with outreach, a campaign, reminder, or invitation; use "customer" only when the customer explicitly begins. Preserve every explicitly provided line and its order in turns. Include every supplied turn, up to 12 turns; never merge or omit adjacent company turns, including a handoff to another company representative. A turn is {"speaker":"company"|"customer","text":"","mode":"prefill"|"free"|"choices","options":[]}. Any supplied customer wording must use mode "prefill". Use "choices" only for requested selectable options and "free" only for explicitly open-ended typing. Copy explicitly quoted dialogue verbatim; do not shorten it.\n\nReturn exactly this compact JSON shape, with only the ${channel} scenario key: {"companyName":"","initials":"","emailAddress":"","logoUrl":"","heroImageUrl":"","brandColor":"#0176D3","brandSecondaryColor":"#032D60","initialSender":"company","scenarios":{"${channel}":${channelSchema}}}. When dialogue is not supplied, keep each generated text under 240 characters. Do not invent facts or URLs.`;
+  return `Create one concise, realistic ${channel.toUpperCase()} two-way messaging demo. Return JSON only.\nCompany: ${companyName || '(not supplied)'}\nWebsite: ${website}\nUse case: ${useCase}\n\nStructured brief (this is the acceptance contract): ${JSON.stringify(brief)}. Include every non-empty named person, topic, question, and handoff in the turns; never replace them with generic placeholders. If expectedMessageCount is non-zero, return exactly that many turns. If scriptedTurns is non-empty, preserve each scripted turn's speaker, text, and order verbatim. Preserve every explicitly provided line and its order in turns. Include every supplied turn, up to 12 turns.\n\nEvidence: ${evidence.title}. ${evidence.description}. ${evidence.headings.slice(0,6).join(' | ')}\nWebsite text: ${evidence.text.slice(0,2000)}\nImage candidates (only use these URLs or empty strings):\n${images}\n\nUse "company" as initialSender when the company opens with outreach, a campaign, reminder, or invitation; use "customer" only when the customer explicitly begins. Never merge or omit adjacent company turns, including a handoff to another company representative. A turn is {"speaker":"company"|"customer","text":"","mode":"prefill"|"free"|"choices","options":[]}. Any supplied customer wording must use mode "prefill". Use "choices" only for requested selectable options and "free" only for explicitly open-ended typing. Copy explicitly quoted dialogue verbatim; do not shorten it.\n\nReturn exactly this compact JSON shape, with only the ${channel} scenario key: {"companyName":"","initials":"","emailAddress":"","logoUrl":"","heroImageUrl":"","brandColor":"#0176D3","brandSecondaryColor":"#032D60","initialSender":"company","scenarios":{"${channel}":${channelSchema}}}. When dialogue is not supplied, keep each generated text under 240 characters. Do not invent facts or URLs.`;
 }
 function clean(value, fallback = '') { return typeof value === 'string' ? value.trim().slice(0,1800) : fallback; }
 function cleanPrompt(value) { return typeof value === 'string' ? value.trim().slice(0,12_000) : ''; }
@@ -289,15 +360,153 @@ function readJson(request) {
     request.on('error',reject);
   });
 }
+function validateDraftRequest(body) {
+  const website = normalizedWebsiteUrl(clean(body?.website));
+  const useCase = cleanPrompt(body?.useCase);
+  const channels = [...new Set(Array.isArray(body?.channels) ? body.channels.filter(channel => ['sms','rcs','whatsapp','email'].includes(channel)) : [])];
+  if (!website || !useCase || !channels.length) throw Object.assign(new Error('missing_required_fields'), { code:'missing_required_fields' });
+  return { companyName:clean(body?.companyName), website, useCase, channels };
+}
+function requirementChecklist(draft, useCase) {
+  const brief = storyBrief(useCase,draft?.companyName);
+  const story = brief.story;
+  const fields = [
+    ['Customer',story.customer], ['Representative',story.representative], ['Opening topic',story.openingTopic], ['Customer question',story.questionTopic], ['Handoff topic',story.handoffTopic]
+  ].filter(([,value]) => value && value.length >= 3);
+  const canonical = draft?.scenarios?.sms || Object.values(draft?.scenarios || {})[0] || {};
+  const generatedTurns = turns(canonical.turns);
+  const transcript = Object.values(draft?.scenarios || {}).flatMap(scenario => [scenario.initialMessage,scenario.initialBody,...turns(scenario.turns).map(turn => turn.text)]).filter(Boolean).join('\n').toLowerCase();
+  const items = fields.map(([label,value]) => ({ label, value, satisfied:transcript.includes(value.toLowerCase()) }));
+  const initialSenderSatisfied = !brief.initialSender || draft?.initialSender === brief.initialSender && generatedTurns[0]?.speaker === brief.initialSender;
+  const countSatisfied = !brief.expectedMessageCount || generatedTurns.length === brief.expectedMessageCount;
+  const scriptedTurnsSatisfied = !brief.scriptedTurns.length || (brief.scriptedTurns.length === generatedTurns.length && brief.scriptedTurns.every((turn,index) => turn.speaker === generatedTurns[index]?.speaker && turn.text === generatedTurns[index]?.text));
+  return { story, items, initialSender:brief.initialSender || null, initialSenderSatisfied, expectedMessageCount:brief.expectedMessageCount || null, actualMessageCount:generatedTurns.length, countSatisfied, scriptedTurns:brief.scriptedTurns.length, scriptedTurnsSatisfied, complete:items.every(item => item.satisfied) && initialSenderSatisfied && countSatisfied && scriptedTurnsSatisfied };
+}
+function errorStatus(code) {
+  if (code === 'llm_not_configured') return 503;
+  if (['invalid_url','blocked_url','blocked_host','missing_required_fields','request_too_large','invalid_json'].includes(code)) return 400;
+  if (code === 'rate_limited') return 429;
+  return 502;
+}
+function publicGenerationMetrics() {
+  const active = [...generationJobs.values()].filter(job => ['queued','running'].includes(job.status)).length;
+  const completed = generationMetrics.completed;
+  return {
+    active,
+    started:generationMetrics.started,
+    completed,
+    failed:generationMetrics.failed,
+    fallback:generationMetrics.fallback,
+    averageDurationMs:completed ? Math.round(generationMetrics.totalDurationMs / completed) : 0,
+    lastCompletedAt:generationMetrics.lastCompletedAt,
+    lastFailureAt:generationMetrics.lastFailureAt
+  };
+}
+async function generateScenarioDraft(body, requestId) {
+  const request = validateDraftRequest(body);
+  const cacheKey = createHash('sha256').update(JSON.stringify(request)).digest('hex');
+  const cached = draftCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    console.log(JSON.stringify({ event:'scenario_draft_cache_hit', requestId }));
+    return JSON.parse(JSON.stringify(cached.value));
+  }
+  const startedAt = Date.now();
+  console.log(JSON.stringify({ event:'scenario_draft_started', requestId, channels:request.channels, website:new URL(request.website).hostname }));
+  const remote = await fetchRemote(request.website,scrapeLimitBytes,true);
+  console.log(JSON.stringify({ event:'scenario_draft_website_ready', requestId, elapsedMs:Date.now()-startedAt, bytes:remote.body.length, partial:Boolean(remote.partial) }));
+  if (!/html|xml|text\//i.test(remote.contentType)) throw Object.assign(new Error('not_html'),{ code:'not_html' });
+  const evidence = extractWebsite(remote.body.toString('utf8'),remote.url);
+  console.log(JSON.stringify({ event:'scenario_draft_gemini_started', requestId, elapsedMs:Date.now()-startedAt, model:geminiModel, requests:1, channels:request.channels }));
+  let canonical, fallbackReason='';
+  try { canonical = await callGemini(draftPrompt({ companyName:request.companyName, website:remote.url, useCase:request.useCase, channels:['sms'], evidence })); }
+  catch (error) {
+    if (!['gemini_timeout','gemini_failed','gemini_bad_json'].includes(error?.code)) throw error;
+    fallbackReason=error.code;
+    canonical=fallbackDraft({ companyName:request.companyName, website:remote.url, useCase:request.useCase, evidence });
+    console.log(JSON.stringify({ event:'scenario_draft_fallback', requestId, reason:fallbackReason, elapsedMs:Date.now()-startedAt }));
+  }
+  const promptComplete = enforceRequestedMessageCount(enforcePromptStory(preserveExplicitTurns(canonical,request.useCase),request.useCase,request.companyName),request.useCase,request.companyName);
+  const ai = adaptCanonicalDraft(enforceRequestedInitialSender(promptComplete,request.useCase,request.companyName),request.channels);
+  const draft = normalizeDraft(ai,request.channels,remote.url);
+  const requirements = requirementChecklist(draft,request.useCase);
+  console.log(JSON.stringify({ event:'scenario_draft_completed', requestId, elapsedMs:Date.now()-startedAt, requirementsComplete:requirements.complete }));
+  const result = { draft, source:{ url:remote.url, title:evidence.title, imageCandidates:evidence.candidates, fallbackReason, brief:storyBrief(request.useCase,request.companyName) }, requirements };
+  if (!fallbackReason) draftCache.set(cacheKey,{ expiresAt:Date.now()+draftCacheTtlMs, value:result });
+  for (const [key,value] of draftCache) if (value.expiresAt <= Date.now()) draftCache.delete(key);
+  return result;
+}
+function pruneGenerationJobs() {
+  const threshold = Date.now() - generationJobTtlMs;
+  for (const [id, job] of generationJobs) if (job.createdAt < threshold) generationJobs.delete(id);
+  for (const [key, id] of idempotencyJobs) if (!generationJobs.has(id)) idempotencyJobs.delete(key);
+  while (generationJobs.size > generationJobLimit) generationJobs.delete(generationJobs.keys().next().value);
+}
+function startGenerationJob(body, requestId, idempotencyKey = '') {
+  pruneGenerationJobs();
+  const existingId = idempotencyKey ? idempotencyJobs.get(idempotencyKey) : '';
+  const existing = existingId ? generationJobs.get(existingId) : null;
+  if (existing) return { job:existing, reused:true };
+  const id = randomUUID();
+  const job = { id, requestId, createdAt:Date.now(), updatedAt:Date.now(), startedAt:null, completedAt:null, status:'queued', result:null, error:null };
+  generationJobs.set(id,job);
+  if (idempotencyKey) idempotencyJobs.set(idempotencyKey,id);
+  generationMetrics.started += 1;
+  queueMicrotask(async () => {
+    job.status='running'; job.startedAt=Date.now(); job.updatedAt=job.startedAt;
+    try {
+      job.result = await generateScenarioDraft(body,requestId);
+      job.status='completed';
+      generationMetrics.completed += 1;
+      generationMetrics.totalDurationMs += Date.now() - job.startedAt;
+      generationMetrics.lastCompletedAt = Date.now();
+      if (job.result?.source?.fallbackReason) generationMetrics.fallback += 1;
+    }
+    catch (error) {
+      job.error = error?.code || 'scenario_generation_failed';
+      job.status='failed';
+      generationMetrics.failed += 1;
+      generationMetrics.lastFailureAt = Date.now();
+      console.error(JSON.stringify({ event:'scenario_draft_failed', requestId, code:job.error, status:error?.status || null, name:error?.name || null, message:String(error?.message || '').slice(0,240) }));
+    }
+    finally { job.completedAt=Date.now(); job.updatedAt=job.completedAt; }
+  });
+  return { job, reused:false };
+}
+function publicJob(job) {
+  const response = { id:job.id, status:job.status, createdAt:job.createdAt, updatedAt:job.updatedAt, durationMs:job.startedAt ? Math.max(0, (job.completedAt || Date.now()) - job.startedAt) : 0 };
+  if (job.status === 'completed') Object.assign(response,job.result);
+  if (job.status === 'failed') response.error=job.error;
+  return response;
+}
 function sendFile(file,response) {
   stat(file,(error,details) => {
     if (error || !details.isFile()) { response.writeHead(404,{ 'Content-Type':'text/plain; charset=utf-8' }); response.end('Not found'); return; }
-    response.writeHead(200,{ 'Content-Type':mimeTypes[path.extname(file).toLowerCase()] || 'application/octet-stream', 'Cache-Control':'public, max-age=3600' });
+    const releaseCritical = path.basename(file) === 'interactive-simulator-builder.html' || file.includes(`${path.sep}assets${path.sep}v2${path.sep}`) || file.endsWith(`${path.sep}assets${path.sep}v2-modern.css`) || file.endsWith(`${path.sep}assets${path.sep}v2-modern.js`);
+    response.writeHead(200,{ 'Content-Type':mimeTypes[path.extname(file).toLowerCase()] || 'application/octet-stream', 'Cache-Control':releaseCritical ? 'no-cache' : 'public, max-age=3600' });
     createReadStream(file).pipe(response);
   });
 }
 async function handleApi(request,response,url) {
-  if (request.method === 'GET' && url.pathname === '/api/health') { sendJson(response,200,{ ok:true, service:'two-way-experience-studio', aiConfigured:Boolean(geminiApiKey) }); return true; }
+  const requestId = request.headers['x-request-id']?.toString().slice(0,96) || randomUUID();
+  if (request.method === 'GET' && url.pathname === '/api/health') { sendJson(response,200,{ ok:true, service:'two-way-experience-studio', version:appVersion, environment:appEnvironment, aiConfigured:Boolean(geminiApiKey), jobs:{ transient:true, retentionMinutes:generationJobTtlMs / 60_000, metrics:publicGenerationMetrics() } },requestId); return true; }
+  const jobMatch = url.pathname.match(/^\/api\/scenario-jobs\/([0-9a-f-]{36})$/i);
+  if (request.method === 'GET' && jobMatch) {
+    const job = generationJobs.get(jobMatch[1]);
+    if (!job) sendJson(response,404,{ error:'job_not_found' },requestId);
+    else sendJson(response,200,publicJob(job),requestId);
+    return true;
+  }
+  if (request.method === 'POST' && url.pathname === '/api/scenario-jobs') {
+    if (!withinRateLimit(request)) { sendJson(response,429,{ error:'rate_limited' },requestId); return true; }
+    try {
+      const body = await readJson(request);
+      validateDraftRequest(body);
+      const idempotencyKey = String(request.headers['x-idempotency-key'] || request.headers['x-request-id'] || '').trim().slice(0,128);
+      const { job, reused } = startGenerationJob(body,requestId,idempotencyKey);
+      sendJson(response,202,{ id:job.id, status:job.status, poll:`/api/scenario-jobs/${job.id}`, reused },requestId);
+    } catch (error) { sendJson(response,errorStatus(error?.code),{ error:error?.code || 'scenario_generation_failed' },requestId); }
+    return true;
+  }
   if (request.method === 'GET' && url.pathname === '/api/asset') {
     const requested = url.searchParams.get('url');
     if (!requested) { sendJson(response,400,{ error:'missing_url' }); return true; }
@@ -306,30 +515,11 @@ async function handleApi(request,response,url) {
     return true;
   }
   if (request.method === 'POST' && url.pathname === '/api/scenario-draft') {
-    if (!withinRateLimit(request)) { sendJson(response,429,{ error:'rate_limited' }); return true; }
+    if (!withinRateLimit(request)) { sendJson(response,429,{ error:'rate_limited' },requestId); return true; }
     try {
-      const body = await readJson(request), website = normalizedWebsiteUrl(clean(body.website)), useCase = cleanPrompt(body.useCase), channels = Array.isArray(body.channels) ? body.channels.filter(channel => ['sms','rcs','whatsapp','email'].includes(channel)) : [];
-      if (!website || !useCase || !channels.length) { sendJson(response,400,{ error:'missing_required_fields' }); return true; }
-      const startedAt = Date.now();
-      console.log(JSON.stringify({ event:'scenario_draft_started', channels, website:new URL(website).hostname }));
-      const remote = await fetchRemote(website,scrapeLimitBytes,true);
-      console.log(JSON.stringify({ event:'scenario_draft_website_ready', elapsedMs:Date.now()-startedAt, bytes:remote.body.length, partial:Boolean(remote.partial) }));
-      if (!/html|xml|text\//i.test(remote.contentType)) throw Object.assign(new Error('not_html'),{ code:'not_html' });
-      const evidence = extractWebsite(remote.body.toString('utf8'),remote.url);
-      console.log(JSON.stringify({ event:'scenario_draft_gemini_started', elapsedMs:Date.now()-startedAt, model:geminiModel, requests:1, channels }));
-      let canonical, fallbackReason='';
-      try { canonical = await callGemini(draftPrompt({ companyName:clean(body.companyName), website:remote.url, useCase, channels:['sms'], evidence })); }
-      catch (error) {
-        if (!['gemini_timeout','gemini_failed','gemini_bad_json'].includes(error?.code)) throw error;
-        fallbackReason=error.code;
-        canonical=fallbackDraft({ companyName:clean(body.companyName), website:remote.url, useCase, evidence });
-        console.log(JSON.stringify({ event:'scenario_draft_fallback', reason:fallbackReason, elapsedMs:Date.now()-startedAt }));
-      }
-      const promptComplete = enforcePromptStory(preserveExplicitTurns(canonical,useCase),useCase,clean(body.companyName));
-      const ai = adaptCanonicalDraft(enforceRequestedInitialSender(promptComplete,useCase,clean(body.companyName)),channels);
-      console.log(JSON.stringify({ event:'scenario_draft_completed', elapsedMs:Date.now()-startedAt }));
-      sendJson(response,200,{ draft:normalizeDraft(ai,channels,remote.url), source:{ url:remote.url, title:evidence.title, imageCandidates:evidence.candidates, fallbackReason } });
-    } catch (error) { const code=error?.code || 'scenario_generation_failed'; console.error(JSON.stringify({ event:'scenario_draft_failed', code, status:error?.status || null, name:error?.name || null, message:String(error?.message || '').slice(0,240) })); const status = code === 'llm_not_configured' ? 503 : ['invalid_url','blocked_url','blocked_host','missing_required_fields'].includes(code) ? 400 : 502; sendJson(response,status,{ error:code }); }
+      const result = await generateScenarioDraft(await readJson(request),requestId);
+      sendJson(response,200,result,requestId);
+    } catch (error) { const code=error?.code || 'scenario_generation_failed'; console.error(JSON.stringify({ event:'scenario_draft_failed', requestId, code, status:error?.status || null, name:error?.name || null, message:String(error?.message || '').slice(0,240) })); sendJson(response,errorStatus(code),{ error:code },requestId); }
     return true;
   }
   return false;
@@ -343,4 +533,4 @@ http.createServer(async (request,response) => {
   const file = path.resolve(root,relativePath);
   if (!file.startsWith(`${root}${path.sep}`)) { response.writeHead(400); response.end('Invalid path'); return; }
   sendFile(file,response);
-}).listen(port,() => console.log(`Two-Way Experience Studio is running on port ${port}; AI setup: ${geminiApiKey ? 'configured':'needs GEMINI_API_KEY'}`));
+}).listen(port,() => console.log(`Two-Way Experience Studio ${appVersion} is running on port ${port} (${appEnvironment}); AI setup: ${geminiApiKey ? 'configured':'needs GEMINI_API_KEY'}`));

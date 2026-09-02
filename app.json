@@ -1,0 +1,12 @@
+{
+  "name": "saasysolutions-2way-generator-d5d5517bce22",
+  "description": "Production Two-Way Experience Studio generator.",
+  "stack": "heroku-24",
+  "env": {
+    "APP_ENV": { "description": "Deployment environment label.", "value": "production" },
+    "APP_VERSION": { "description": "Application release label.", "value": "1.1.0" },
+    "GEMINI_API_KEY": { "description": "Gemini API key used only by this staging deployment.", "required": true },
+    "GEMINI_MODEL": { "description": "Gemini model available to the configured key.", "value": "gemini-3.5-flash", "required": false }
+  },
+  "formation": { "web": { "quantity": 1, "size": "basic" } }
+}

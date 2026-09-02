@@ -88,7 +88,7 @@ test('fallback drafts preserve natural-language customer, topic, question, and h
 
 test('AI preserves ordered scripted customer turns and defaults their supplied copy to composer prefills', () => {
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
-  for (const marker of ['Preserve every explicitly provided line and its order in turns.', 'Include every supplied turn, up to 12 turns', 'Copy explicitly quoted dialogue verbatim; do not shorten it.', 'function cleanPrompt', 'slice(0,12_000)', 'useCase = cleanPrompt(body.useCase)', 'function preserveExplicitTurns', 'scenario_draft_explicit_turns_preserved', 'return turns.slice(0,16)', 'value.slice(0,16)', 'Any supplied customer wording must use mode "prefill".', 'function turns(value)', 'turns:turns(scenario.turns)']) {
+  for (const marker of ['Preserve every explicitly provided line and its order in turns.', 'Include every supplied turn, up to 12 turns', 'Copy explicitly quoted dialogue verbatim; do not shorten it.', 'function cleanPrompt', 'slice(0,12_000)', 'function validateDraftRequest', 'const useCase = cleanPrompt(body?.useCase)', 'function preserveExplicitTurns', 'scenario_draft_explicit_turns_preserved', 'return turns.slice(0,16)', 'value.slice(0,16)', 'Any supplied customer wording must use mode "prefill".', 'function turns(value)', 'turns:turns(scenario.turns)']) {
     assert.ok(server.includes(marker), `expected scripted AI-turn contract: ${marker}`);
   }
   for (const marker of ['scriptedStepsFromAi', "turn.mode==='free'?'free':turn.mode==='choices'?'prefilled':'prefill'", 'scenario.steps=turns', 'reusableSet:mode===\'free\'']) {
@@ -210,14 +210,14 @@ test('opened Gmail messages retain read state after returning to the inbox', () 
 });
 
 test('saved scenario data is versioned, validated, and automatically recoverable', () => {
-  for (const marker of ['scenarioStoreVersion=4', "scenarioStoreKey='two-way-studio-v4'", 'Array.isArray(parsed?.scenarios)', 'bootstrapScenario', 'supportedBootstrapChannels', 'savedScenarioRecoveryNeeded', '!normalizedScenarios.length', 'Restore starter scenarios', 'restoreStarterScenarios']) {
+  for (const marker of ['scenarioStoreVersion=1', "scenarioStoreKey='two-way-experience-studio-v2-scenarios'", 'Array.isArray(parsed?.scenarios)', 'bootstrapScenario', 'supportedBootstrapChannels', 'savedScenarioRecoveryNeeded', '!normalizedScenarios.length', 'Restore starter scenarios', 'restoreStarterScenarios']) {
     assert.ok(html.includes(marker), 'expected saved-scenario recovery behavior: ' + marker);
   }
   assert.ok(html.includes('Your custom scenarios will be kept.'), 'manual starter restoration preserves custom scenarios');
 });
 
 test('startup validates saved scenarios before the first render and has a one-time reset fallback', () => {
-  for (const marker of ['bootstrapRecoveryFlag', 'recoverFromBootstrapFailure', "localStorage.removeItem('two-way-studio-v4')", "localStorage.removeItem('two-way-studio-v3')", "window.addEventListener('error'", 'bootstrapRendered=true']) {
+  for (const marker of ['bootstrapRecoveryFlag', 'recoverFromBootstrapFailure', "localStorage.removeItem('two-way-experience-studio-v2-scenarios')", "window.addEventListener('error'", 'bootstrapRendered=true']) {
     assert.ok(html.includes(marker), 'expected refresh-time blank-state prevention: ' + marker);
   }
   assert.ok(html.indexOf('function bootstrapScenario') < html.indexOf('function renderBuilder()'), 'saved records are normalized before the first builder render');
@@ -352,4 +352,45 @@ test('server keeps request-size, timeout, and rate-limit safeguards enabled', ()
   for (const marker of ['requestLimitBytes', 'requestTimeoutMs', 'withinRateLimit', 'safeUrl', 'privateIp']) {
     assert.ok(server.includes(marker), `expected server safeguard: ${marker}`);
   }
+});
+
+test('RCS card-only messages omit an empty bubble and keep suggested replies inside the card', () => {
+  for (const marker of [
+    'RCS rich-card actions',
+    "const message=String(step.text||'').trim(),textBubble=message?",
+    'rcs-card-actions',
+    'data-rcs-reply',
+    'document.querySelector(\'#transcript > .chips\')?.remove()',
+    'data-rcs-action-owner',
+    'data-rcs-action-url-apply',
+    'function rcsActionTarget',
+    'function rcsConversationPreview'
+  ]) {
+    assert.ok(html.includes(marker), `expected RCS card-only action behavior: ${marker}`);
+  }
+});
+
+test('company-first email opening is rendered only once', () => {
+  for (const marker of [
+    'bubbleWithoutDuplicateOpeningEmail',
+    "scenario.channel==='email'&&scenario.steps?.[0]?.author==='brand'",
+    'step===scenario.steps[0]'
+  ]) {
+    assert.ok(html.includes(marker), `expected company-first email deduplication: ${marker}`);
+  }
+});
+
+test('company email responses support sandboxed custom HTML previews', () => {
+  for (const marker of [
+    'Custom HTML company emails',
+    "step?.emailMode==='html'?'html'",
+    'data-response-custom-html',
+    'customHtmlEmailMarkup',
+    'sandbox=""',
+    'referrerpolicy="no-referrer"'
+  ]) {
+    assert.ok(html.includes(marker), `expected custom HTML email support: ${marker}`);
+  }
+  assert.ok(html.includes("if(!markup)return ''"), 'empty Custom HTML responses must not create an empty email preview');
+  assert.ok(!html.includes('Paste your email HTML to preview it here.'), 'the Gmail preview must not show a Custom HTML placeholder');
 });
