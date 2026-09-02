@@ -1,5 +1,5 @@
 {
-  "name": "saasysolutions-2way-generator-d5d5517bce22",
+  "name": "saasysolutions-2way-generator",
   "description": "Production Two-Way Experience Studio generator.",
   "stack": "heroku-24",
   "env": {
