@@ -46,6 +46,24 @@ try {
   assert.ok(migrated.scenarios.some(scenario => scenario.name === 'Migrated 1.0 scenario'), 'Valid 1.0 scenarios must migrate into the upgraded storage key');
   assert.equal(migrated.history[0].label, 'Before promotion', 'Valid 1.0 version history must migrate into the upgraded storage key');
   await migrationContext.close();
+  const emailContext = await browser.newContext();
+  const emailPage = await emailContext.newPage();
+  await emailPage.goto(baseUrl, { waitUntil:'networkidle' });
+  await emailPage.evaluate(() => {
+    const scenario = {
+      id:'company-first-email-once', name:'Company-first email once', channel:'email', brandName:'Example Co', smsAddress:'', emailAddress:'hello@example.com', subject:'One opening only', emailBody:'This legacy body must not create a second email.', initials:'EC', avatar:'',
+      steps:[
+        { id:'opening-email', author:'brand', kind:'text', text:'Opening email copy', emailMode:'branded' },
+        { id:'customer-reply', author:'customer', kind:'free', text:'' },
+        { id:'later-company-reply', author:'brand', kind:'text', text:'Later company reply', emailMode:'branded', allowRepeat:true }
+      ]
+    };
+    localStorage.setItem('two-way-experience-studio-v2-scenarios', JSON.stringify({ version:4, scenarios:[scenario] }));
+  });
+  await emailPage.reload({ waitUntil:'networkidle' });
+  await emailPage.locator('[data-email="0"]').click();
+  assert.equal(await emailPage.locator('.scenario-email').count(), 1, 'A company-first opening email must render once, even when the active scenario projection recreates its step object');
+  await emailContext.close();
   const context = await browser.newContext({ acceptDownloads:true, viewport:{ width:1440, height:960 } });
   const page = await context.newPage();
   const builderResponse = await page.goto(baseUrl, { waitUntil:'networkidle' });
