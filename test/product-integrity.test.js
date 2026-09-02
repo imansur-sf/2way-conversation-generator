@@ -374,7 +374,10 @@ test('company-first email opening is rendered only once', () => {
   for (const marker of [
     'bubbleWithoutDuplicateOpeningEmail',
     "scenario.channel==='email'&&scenario.steps?.[0]?.author==='brand'",
-    'step===scenario.steps[0]'
+    'initialCompanyEmail=isMain',
+    "state.visible[0]?.id===s.steps[0].id",
+    'initialCompanyEmail?state.visible.slice(1):state.visible',
+    'step?.id===scenario.steps[0].id'
   ]) {
     assert.ok(html.includes(marker), `expected company-first email deduplication: ${marker}`);
   }
