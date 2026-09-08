@@ -25,7 +25,7 @@ test('quality guardrails are included in the standalone export source', () => {
 });
 
 test('multi-channel scenarios preserve independent channel variants', () => {
-  for (const marker of ['scenarioMode', 'variants', 'isJourneyVariant', 'captureJourneyVariant', 'projectJourneyVariant', 'addJourneyChannel', 'Apply to ${scenario?.name||\'this scenario\'}']) {
+  for (const marker of ['scenarioMode', 'variants', 'isJourneyVariant', 'normalizeJourneyStep', 'normalizeJourneyVariant', 'captureJourneyVariant', 'projectJourneyVariant', 'ensureJourneyState', 'addJourneyChannel', 'Apply to ${scenario?.name||\'this scenario\'}']) {
     assert.ok(html.includes(marker), `expected multi-channel scenario support: ${marker}`);
   }
   assert.ok(html.includes('Switching never overwrites another channel’s flow.'), 'the builder explains independent channel editing');

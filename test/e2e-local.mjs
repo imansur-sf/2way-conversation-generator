@@ -53,7 +53,7 @@ try {
     const malformedJourney = {
       id:'customer-initiated-initial-message', name:'Recovered multi-channel journey', scenarioMode:'multi', channel:'rcs',
       brandName:'Recovery Co', smsAddress:'Recovery Co', emailAddress:'', subject:'', emailBody:'', initials:'RC', avatar:'',
-      variants:{ rcs:{ channel:'rcs', brandName:'Recovery Co', smsAddress:'Recovery Co', steps:[{ id:'recovery-opening', author:'brand', kind:'text', text:'Recovered opening message' }] } }
+      variants:{ rcs:{ channel:'rcs', brandName:'Recovery Co', smsAddress:'Recovery Co', steps:[{ id:'recovery-opening', author:'brand', kind:'text', text:'Recovered opening message' }] }, email:{ channel:'email', brandName:'Recovery Co', emailAddress:'hello@recovery.example', steps:[null] } }
     };
     localStorage.setItem('two-way-experience-studio-v2-scenarios', JSON.stringify({ version:1, scenarios:[malformedJourney] }));
   });
@@ -63,6 +63,11 @@ try {
   assert.match(await corruptJourneyPage.locator('#stage').textContent(), /Recovered opening message/, 'The active channel must retain its valid root flow when its saved variant is incomplete');
   const repairedJourney = await corruptJourneyPage.evaluate(() => JSON.parse(localStorage.getItem('two-way-experience-studio-v2-scenarios')).scenarios.find(scenario => scenario.id === 'customer-initiated-initial-message'));
   assert.ok(Array.isArray(repairedJourney.variants.rcs.steps), 'The repaired channel variant must persist a steps array for future page loads');
+  await corruptJourneyPage.locator('[data-channel="email"]').click();
+  await corruptJourneyPage.waitForSelector('#scenarioSelect option');
+  assert.ok(await corruptJourneyPage.locator('#scenarioSelect option').count() >= 2, 'A malformed inactive channel variant must not blank the app when opened');
+  const normalizedEmailSteps = await corruptJourneyPage.evaluate(() => JSON.parse(localStorage.getItem('two-way-experience-studio-v2-scenarios')).scenarios.find(scenario => scenario.id === 'customer-initiated-initial-message').variants.email.steps);
+  assert.ok(normalizedEmailSteps.every(step => step && typeof step === 'object'), 'Nested channel steps must be normalized before the editor renders them');
   await corruptJourneyContext.close();
   const emailContext = await browser.newContext();
   const emailPage = await emailContext.newPage();
