@@ -28,7 +28,7 @@
     try {
       const parsed = JSON.parse(value || '');
       const records = Array.isArray(parsed) ? parsed : parsed?.scenarios;
-      return Array.isArray(records);
+      return Array.isArray(records) && records.length > 0 && records.some(scenario => scenario && typeof scenario === 'object' && (Array.isArray(scenario.steps) || Object.values(scenario.variants || {}).some(variant => Array.isArray(variant?.steps))));
     } catch { return false; }
   };
   return async () => {

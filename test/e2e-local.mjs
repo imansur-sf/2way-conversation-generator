@@ -46,6 +46,24 @@ try {
   assert.ok(migrated.scenarios.some(scenario => scenario.name === 'Migrated 1.0 scenario'), 'Valid 1.0 scenarios must migrate into the upgraded storage key');
   assert.equal(migrated.history[0].label, 'Before promotion', 'Valid 1.0 version history must migrate into the upgraded storage key');
   await migrationContext.close();
+  const corruptJourneyContext = await browser.newContext();
+  const corruptJourneyPage = await corruptJourneyContext.newPage();
+  await corruptJourneyPage.goto(baseUrl, { waitUntil:'networkidle' });
+  await corruptJourneyPage.evaluate(() => {
+    const malformedJourney = {
+      id:'customer-initiated-initial-message', name:'Recovered multi-channel journey', scenarioMode:'multi', channel:'rcs',
+      brandName:'Recovery Co', smsAddress:'Recovery Co', emailAddress:'', subject:'', emailBody:'', initials:'RC', avatar:'',
+      variants:{ rcs:{ channel:'rcs', brandName:'Recovery Co', smsAddress:'Recovery Co', steps:[{ id:'recovery-opening', author:'brand', kind:'text', text:'Recovered opening message' }] } }
+    };
+    localStorage.setItem('two-way-experience-studio-v2-scenarios', JSON.stringify({ version:1, scenarios:[malformedJourney] }));
+  });
+  await corruptJourneyPage.reload({ waitUntil:'networkidle' });
+  await corruptJourneyPage.waitForSelector('#scenarioSelect option');
+  assert.ok(await corruptJourneyPage.locator('#scenarioSelect option').count() >= 2, 'An incomplete saved channel variant must recover to usable starter journeys instead of blanking the builder');
+  assert.match(await corruptJourneyPage.locator('#stage').textContent(), /Recovered opening message/, 'The active channel must retain its valid root flow when its saved variant is incomplete');
+  const repairedJourney = await corruptJourneyPage.evaluate(() => JSON.parse(localStorage.getItem('two-way-experience-studio-v2-scenarios')).scenarios.find(scenario => scenario.id === 'customer-initiated-initial-message'));
+  assert.ok(Array.isArray(repairedJourney.variants.rcs.steps), 'The repaired channel variant must persist a steps array for future page loads');
+  await corruptJourneyContext.close();
   const emailContext = await browser.newContext();
   const emailPage = await emailContext.newPage();
   await emailPage.goto(baseUrl, { waitUntil:'networkidle' });

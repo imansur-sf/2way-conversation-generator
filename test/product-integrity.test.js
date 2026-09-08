@@ -25,7 +25,7 @@ test('quality guardrails are included in the standalone export source', () => {
 });
 
 test('multi-channel scenarios preserve independent channel variants', () => {
-  for (const marker of ['scenarioMode', 'variants', 'captureJourneyVariant', 'projectJourneyVariant', 'addJourneyChannel', 'Apply to ${scenario?.name||\'this scenario\'}']) {
+  for (const marker of ['scenarioMode', 'variants', 'isJourneyVariant', 'captureJourneyVariant', 'projectJourneyVariant', 'addJourneyChannel', 'Apply to ${scenario?.name||\'this scenario\'}']) {
     assert.ok(html.includes(marker), `expected multi-channel scenario support: ${marker}`);
   }
   assert.ok(html.includes('Switching never overwrites another channel’s flow.'), 'the builder explains independent channel editing');
@@ -216,7 +216,7 @@ test('opened Gmail messages retain read state after returning to the inbox', () 
 });
 
 test('saved scenario data is versioned, validated, and automatically recoverable', () => {
-  for (const marker of ['scenarioStoreVersion=1', "scenarioStoreKey='two-way-experience-studio-v2-scenarios'", 'Array.isArray(parsed?.scenarios)', 'bootstrapScenario', 'supportedBootstrapChannels', 'savedScenarioRecoveryNeeded', '!normalizedScenarios.length', 'Restore starter scenarios', 'restoreStarterScenarios']) {
+  for (const marker of ['scenarioStoreVersion=1', "scenarioStoreKey='two-way-experience-studio-v2-scenarios'", 'Array.isArray(parsed?.scenarios)', 'bootstrapScenario', 'variantEntries=Object.entries(copy.variants||{})', 'supportedBootstrapChannels', 'savedScenarioRecoveryNeeded', '!normalizedScenarios.length', 'Restore starter scenarios', 'restoreStarterScenarios']) {
     assert.ok(html.includes(marker), 'expected saved-scenario recovery behavior: ' + marker);
   }
   assert.ok(html.includes('Your custom scenarios will be kept.'), 'manual starter restoration preserves custom scenarios');
