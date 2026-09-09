@@ -489,6 +489,23 @@ function sendFile(file,response) {
 async function handleApi(request,response,url) {
   const requestId = request.headers['x-request-id']?.toString().slice(0,96) || randomUUID();
   if (request.method === 'GET' && url.pathname === '/api/health') { sendJson(response,200,{ ok:true, service:'two-way-experience-studio', version:appVersion, environment:appEnvironment, aiConfigured:Boolean(geminiApiKey), jobs:{ transient:true, retentionMinutes:generationJobTtlMs / 60_000, metrics:publicGenerationMetrics() } },requestId); return true; }
+  if (request.method === 'POST' && url.pathname === '/api/client-diagnostic') {
+    try {
+      const body = await readJson(request);
+      const safeText = value => String(value || '').replace(/[\r\n\t]/g,' ').slice(0,400);
+      console.warn(JSON.stringify({
+        event:'client_boot_diagnostic',
+        kind:safeText(body.kind),
+        phase:safeText(body.phase),
+        message:safeText(body.message),
+        source:safeText(body.source),
+        line:Number.isFinite(Number(body.line)) ? Number(body.line) : null,
+        column:Number.isFinite(Number(body.column)) ? Number(body.column) : null
+      }));
+      response.writeHead(204,{ 'Cache-Control':'no-store' }); response.end();
+    } catch { sendJson(response,400,{ error:'invalid_diagnostic' },requestId); }
+    return true;
+  }
   const jobMatch = url.pathname.match(/^\/api\/scenario-jobs\/([0-9a-f-]{36})$/i);
   if (request.method === 'GET' && jobMatch) {
     const job = generationJobs.get(jobMatch[1]);

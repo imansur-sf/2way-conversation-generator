@@ -223,11 +223,18 @@ test('saved scenario data is versioned, validated, and automatically recoverable
 });
 
 test('startup validates saved scenarios before the first render and has a one-time reset fallback', () => {
-  for (const marker of ['recoverLocal', 'recover-local=1', 'quarantineAndResetScenarioState', 'bootstrapRecoveryFlag', 'bootstrapRecoverySkipLegacy', 'bootstrapRecoveryQuarantine', 'recoverFromBootstrapFailure', 'keys.forEach(key=>localStorage.removeItem(key))', "window.addEventListener('error'", 'bootstrapRendered=true']) {
+  for (const marker of ['recoverLocal', 'recover-local=1', 'quarantineAndResetScenarioState', 'bootstrapRecoveryFlag', 'bootstrapRecoverySkipLegacy', 'bootstrapRecoveryQuarantine', 'recoverFromBootstrapFailure', 'keys.forEach(key=>localStorage.removeItem(key))', "window.addEventListener('error'", 'reportBootstrapDiagnostic', 'bootstrapFailure', 'bootstrapRendered=true']) {
     assert.ok(html.includes(marker), 'expected refresh-time blank-state prevention: ' + marker);
   }
   assert.ok(html.indexOf('function bootstrapScenario') < html.indexOf('function renderBuilder()'), 'saved records are normalized before the first builder render');
   assert.ok(html.indexOf('readThreads:new Set()') < html.indexOf('function renderSms(){const s=active()'), 'the initial phone renderer has its read-state dependency immediately available');
+});
+
+test('server accepts a bounded, privacy-safe client boot diagnostic', () => {
+  const server = fs.readFileSync(path.join(root,'server.js'),'utf8');
+  for (const marker of ["'/api/client-diagnostic'", "event:'client_boot_diagnostic'", "slice(0,400)", "response.writeHead(204"]) {
+    assert.ok(server.includes(marker), 'expected client diagnostic behavior: ' + marker);
+  }
 });
 
 test('customer-first Gmail uses a floating Compose window and later delivers a new inbound email', () => {
