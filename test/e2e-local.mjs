@@ -46,6 +46,22 @@ try {
   assert.ok(migrated.scenarios.some(scenario => scenario.name === 'Migrated 1.0 scenario'), 'Valid 1.0 scenarios must migrate into the upgraded storage key');
   assert.equal(migrated.history[0].label, 'Before promotion', 'Valid 1.0 version history must migrate into the upgraded storage key');
   await migrationContext.close();
+  const manualRecoveryContext = await browser.newContext();
+  const manualRecoveryPage = await manualRecoveryContext.newPage();
+  await manualRecoveryPage.goto(baseUrl, { waitUntil:'networkidle' });
+  await manualRecoveryPage.evaluate(() => {
+    localStorage.setItem('two-way-experience-studio-v2-scenarios', JSON.stringify({ version:1, scenarios:[{ id:'broken', scenarioMode:'multi', channel:'rcs', variants:{ rcs:{ steps:[null] } } }] }));
+    localStorage.setItem('two-way-studio-v4', JSON.stringify({ version:4, scenarios:[{ id:'legacy-broken', scenarioMode:'multi', channel:'email', variants:{ email:{ steps:[null] } } }] }));
+  });
+  await manualRecoveryPage.goto(`${baseUrl}?recover-local=1`, { waitUntil:'networkidle' });
+  await manualRecoveryPage.waitForSelector('#scenarioSelect option');
+  assert.ok(await manualRecoveryPage.locator('#scenarioSelect option').count() >= 2, 'The visible recovery link must restore a usable builder from blank-state local data');
+  const manualRecoveryState = await manualRecoveryPage.evaluate(() => ({ quarantined:localStorage.getItem('two-way-experience-studio-v2-quarantined-scenarios'), active:JSON.parse(localStorage.getItem('two-way-experience-studio-v2-scenarios')).scenarios, legacy:JSON.parse(localStorage.getItem('two-way-studio-v4')).scenarios, search:location.search }));
+  assert.ok(manualRecoveryState.quarantined, 'Manual recovery must preserve a quarantine copy before resetting local scenarios');
+  assert.ok(manualRecoveryState.active.length >= 2, 'Manual recovery must save working starter journeys');
+  assert.ok(manualRecoveryState.legacy.length >= 2, 'Manual recovery must replace the legacy mirror with the new working starter journeys');
+  assert.equal(manualRecoveryState.search, '', 'Manual recovery must remove its one-time recovery parameter from the address bar');
+  await manualRecoveryContext.close();
   const corruptJourneyContext = await browser.newContext();
   const corruptJourneyPage = await corruptJourneyContext.newPage();
   await corruptJourneyPage.goto(baseUrl, { waitUntil:'networkidle' });
