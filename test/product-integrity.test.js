@@ -257,6 +257,12 @@ test('Gmail source-style light chrome uses an app rail, Ask Gmail, and SVG navig
   }
 });
 
+test('the enhanced Gmail renderer is assigned after its inbox rows initialize', () => {
+  const rows = html.indexOf('const gmailRows=(main)');
+  const renderer = html.indexOf('renderEmail=function(){const s=active(),main={name:s.brandName');
+  assert.ok(rows >= 0 && renderer > rows, 'the Gmail renderer must not be hoisted before gmailRows initializes');
+});
+
 test('conversation cards use one drag-and-drop reorderer across every channel', () => {
   for (const marker of ['conversation-drag-handle', 'decorateConversationDragDrop', 'reorderConversationSteps', 'data-conversation-drag', 'pointerdown', 'Conversation message reordered']) {
     assert.ok(html.includes(marker), `expected conversation drag-and-drop behavior: ${marker}`);
