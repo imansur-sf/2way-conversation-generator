@@ -232,7 +232,7 @@ test('startup validates saved scenarios before the first render and has a one-ti
 
 test('a separate pre-builder guard catches errors before the main inline builder can boot', () => {
   const guard = fs.readFileSync(path.join(root, 'assets/v2/bootstrap-guard.js'), 'utf8');
-  for (const marker of ["window.__twoWayBootstrapGuardReady", "phase:'pre-builder'", "'/api/client-diagnostic'", 'resetSavedState', "window.addEventListener('error'"]) {
+  for (const marker of ["window.__twoWayBootstrapGuardReady", "phase:'pre-builder'", "'/api/client-diagnostic'", 'resetSavedState', 'escapeHtml', 'line ${details.line}', "window.addEventListener('error'"]) {
     assert.ok(guard.includes(marker), 'expected independent bootstrap guard: ' + marker);
   }
 });
