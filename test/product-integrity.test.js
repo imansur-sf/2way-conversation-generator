@@ -223,11 +223,18 @@ test('saved scenario data is versioned, validated, and automatically recoverable
 });
 
 test('startup validates saved scenarios before the first render and has a one-time reset fallback', () => {
-  for (const marker of ['recoverLocal', 'recover-local=1', 'quarantineAndResetScenarioState', 'bootstrapRecoveryFlag', 'bootstrapRecoverySkipLegacy', 'bootstrapRecoveryQuarantine', 'recoverFromBootstrapFailure', 'keys.forEach(key=>localStorage.removeItem(key))', "window.addEventListener('error'", 'reportBootstrapDiagnostic', 'bootstrapFailure', 'bootstrapRendered=true']) {
+  for (const marker of ['recoverLocal', 'recover-local=1', 'quarantineAndResetScenarioState', 'bootstrapRecoveryFlag', 'bootstrapRecoverySkipLegacy', 'bootstrapRecoveryQuarantine', 'recoverFromBootstrapFailure', 'keys.forEach(key=>localStorage.removeItem(key))', "window.addEventListener('error'", 'reportBootstrapDiagnostic', 'bootstrapFailure', 'bootstrapStatus', 'bootstrapRendered=true', '__twoWayBootstrapGuardReady']) {
     assert.ok(html.includes(marker), 'expected refresh-time blank-state prevention: ' + marker);
   }
   assert.ok(html.indexOf('function bootstrapScenario') < html.indexOf('function renderBuilder()'), 'saved records are normalized before the first builder render');
   assert.ok(html.indexOf('readThreads:new Set()') < html.indexOf('function renderSms(){const s=active()'), 'the initial phone renderer has its read-state dependency immediately available');
+});
+
+test('a separate pre-builder guard catches errors before the main inline builder can boot', () => {
+  const guard = fs.readFileSync(path.join(root, 'assets/v2/bootstrap-guard.js'), 'utf8');
+  for (const marker of ["window.__twoWayBootstrapGuardReady", "phase:'pre-builder'", "'/api/client-diagnostic'", 'resetSavedState', "window.addEventListener('error'"]) {
+    assert.ok(guard.includes(marker), 'expected independent bootstrap guard: ' + marker);
+  }
 });
 
 test('server accepts a bounded, privacy-safe client boot diagnostic', () => {

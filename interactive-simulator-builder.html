@@ -145,10 +145,11 @@
     <section class="section manual-build-section" id="manualConversationSection"><div class="eyebrow">4 · Conversation editor</div><div class="conversation-headline"><div class="section-title" style="margin:0">Build the message flow</div><div class="add-menu"><button id="addCustomer">+ Customer</button><button id="addBrand">+ Company response</button></div></div><p class="helper">A customer input owns the company responses directly below it. The first matching response is returned.</p><div id="steps"></div><div class="tip"><b>ⓘ Unified messaging tip</b><br>To demonstrate a handoff, add a customer message asking for a person, then write the company representative’s introduction in the next company block. The thread and number stay the same.</div></section>
     <div class="row-actions manual-build-section" id="manualActions"><button class="primary" id="save">Save scenario</button><button class="quiet" id="export">Download interactive HTML</button></div>
   </aside>
-  <main class="preview"><div class="preview-info rule-help"><button type="button" aria-label="About this preview">i</button><span><b>Interactive channel preview</b><br>Open the first SMS or RCS thread, then type directly in the phone whenever a Recipient input is active. The configured Company response appears based on the selected routing behavior.</span></div><div class="preview-meta" aria-hidden="true"><h2 id="previewTitle">RCS conversation preview</h2><p id="previewSub">Type directly in the phone when the recipient response block is active.</p></div><section class="stage" id="stage"><aside id="bootstrapFailure" role="alert" hidden></aside></section></main>
+  <main class="preview"><div class="preview-info rule-help"><button type="button" aria-label="About this preview">i</button><span><b>Interactive channel preview</b><br>Open the first SMS or RCS thread, then type directly in the phone whenever a Recipient input is active. The configured Company response appears based on the selected routing behavior.</span></div><div class="preview-meta" aria-hidden="true"><h2 id="previewTitle">RCS conversation preview</h2><p id="previewSub">Type directly in the phone when the recipient response block is active.</p></div><section class="stage" id="stage"><aside id="bootstrapStatus" role="status" style="display:grid;gap:8px;max-width:430px;padding:20px;border:1px solid #b9dff7;border-radius:14px;background:#f5fbff;color:#1b5e88;font:600 14px/1.45 Inter,Arial,sans-serif"><strong>Starting builder…</strong><span>If this message remains, browser scripts did not start.</span></aside><aside id="bootstrapFailure" role="alert" hidden></aside></section></main>
 </div>
 <button class="quiet" id="presentationExit">Exit presentation</button>
 <dialog id="scenarioDialog"><form method="dialog"><h3>New scenario</h3><p>Start from a blank flow or a channel-specific starter.</p><label class="label">Scenario name</label><input id="newScenarioName" placeholder="e.g. Event registration follow-up"><label class="label">Starter template</label><select id="newScenarioTemplate"><option value="blank">Blank scenario</option><option value="sms">SMS concierge</option><option value="rcs">RCS product guide</option><option value="email">Two-way email support</option></select><div class="scenario-actions"><button class="quiet" value="cancel">Cancel</button><button class="primary" id="confirmCreateScenario" value="default">Create scenario</button></div></form></dialog>
+<script src="assets/v2/bootstrap-guard.js"></script>
 <script defer src="assets/v2/live-region.js"></script>
 <script defer src="assets/v2/scenario-backup.js"></script>
 <script defer src="assets/v2-modern.js"></script>
@@ -823,7 +824,7 @@ function renderPreview(){if(active().channel==='email')renderEmail();else render
     migrateRcsCardActions();
     renderAll();
     releaseStandaloneExportBoot();
-    bootstrapPhase='ready';bootstrapRendered=true;try{sessionStorage.removeItem(bootstrapRecoveryFlag)}catch{}
+    bootstrapPhase='ready';bootstrapRendered=true;window.__twoWayBootstrapGuardReady?.();try{sessionStorage.removeItem(bootstrapRecoveryFlag)}catch{}
     if(state.savedScenarioRecoveryNeeded)announce('We restored compatible starter scenarios because older saved data could not be used.');
     })();
 </script>
