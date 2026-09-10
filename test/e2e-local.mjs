@@ -94,7 +94,9 @@ try {
       steps:[
         { id:'opening-email', author:'brand', kind:'text', text:'Opening email copy', emailMode:'branded' },
         { id:'customer-reply', author:'customer', kind:'free', text:'' },
-        { id:'later-company-reply', author:'brand', kind:'text', text:'Later company reply', emailMode:'branded', allowRepeat:true }
+        { id:'first-company-reply', author:'brand', kind:'text', text:'First company reply', emailMode:'branded' },
+        { id:'second-customer-reply', author:'customer', kind:'free', text:'' },
+        { id:'later-company-reply', author:'brand', kind:'text', text:'Later company reply', emailMode:'branded' }
       ]
     };
     localStorage.setItem('two-way-experience-studio-v2-scenarios', JSON.stringify({ version:4, scenarios:[scenario] }));
@@ -102,6 +104,14 @@ try {
   await emailPage.reload({ waitUntil:'networkidle' });
   await emailPage.locator('[data-email="0"]').click();
   assert.equal(await emailPage.locator('.scenario-email').count(), 1, 'A company-first opening email must render once, even when the active scenario projection recreates its step object');
+  await emailPage.locator('#openEmailReply').click();
+  await emailPage.locator('#emailInput').fill('First customer reply');
+  await emailPage.locator('#emailSend').click();
+  await emailPage.waitForFunction(() => document.querySelector('#stage')?.textContent?.includes('First company reply'));
+  await emailPage.locator('#openEmailReply').click();
+  await emailPage.locator('#emailInput').fill('Second customer reply');
+  await emailPage.locator('#emailSend').click();
+  await emailPage.waitForFunction(() => document.querySelector('#stage')?.textContent?.includes('Later company reply'));
   await emailContext.close();
   const livePreviewContext = await browser.newContext();
   const livePreviewPage = await livePreviewContext.newPage();
@@ -124,6 +134,10 @@ try {
   await livePreviewPage.waitForFunction(() => document.querySelector('#stage')?.textContent?.includes('Updated card title'));
   assert.ok(await livePreviewPage.locator('.rich-card, .card').count(), 'Focusing an RCS card editor must reveal its in-phone preview');
   assert.match(await livePreviewPage.locator('#stage').textContent(), /Live preview/, 'The preview should identify the message currently being edited');
+  const ctaPresentation = livePreviewPage.locator('[data-rcs-cta-presentation-step="live-rich-card"]');
+  await ctaPresentation.selectOption('reply');
+  await livePreviewPage.waitForFunction(() => document.querySelector('#stage .rcs-card-cta-action'));
+  assert.equal(await livePreviewPage.locator('#stage .rcs-card-cta-action').count(), 1, 'A rich-card CTA can match the centered reply-action treatment');
   await livePreviewContext.close();
   const context = await browser.newContext({ acceptDownloads:true, viewport:{ width:1440, height:960 } });
   const page = await context.newPage();

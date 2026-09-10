@@ -399,10 +399,32 @@ test('RCS card-only messages omit an empty bubble and keep suggested replies ins
 test('blank RCS card CTA labels remove the entire CTA row', () => {
   for (const marker of [
     "const cta=String(card.cta||'').trim()",
-    "action=cta?`<a href=",
-    '${action}${rcsActionMarkup(card.replyActions||[])}'
+    "action=cta&&!replyStyle?`<a href=",
+    '${action}${rcsActionMarkup(card.replyActions||[],ctaAction)}'
   ]) {
     assert.ok(html.includes(marker), `expected blank RCS CTA handling: ${marker}`);
+  }
+});
+
+test('RCS cards can present a CTA as a centered reply-style action', () => {
+  for (const marker of [
+    "card.ctaPresentation==='reply'",
+    'Match centered reply buttons',
+    'data-rcs-cta-presentation-step',
+    'rcs-card-cta-action'
+  ]) {
+    assert.ok(html.includes(marker), `expected configurable RCS CTA presentation: ${marker}`);
+  }
+});
+
+test('alternating email threads advance past a single unqualified company reply', () => {
+  for (const marker of [
+    'function isLinearEmailExchange',
+    "scenario?.channel==='email'",
+    "scenario.steps?.[set.end]?.author==='customer'",
+    'submitWithLinearEmailSequences'
+  ]) {
+    assert.ok(html.includes(marker), `expected linear email handoff behavior: ${marker}`);
   }
 });
 
