@@ -302,6 +302,18 @@ test('standalone downloads use only their embedded scenario, not shared file sto
   assert.ok(html.includes('if(isStandaloneExport){const saveState=$(\'#saveState\')'), 'exports must not overwrite shared localStorage when interactions occur');
 });
 
+test('standalone exports retry and validate every local visual asset before downloading', () => {
+  for (const marker of ['fetchStandaloneAsset', 'attempt<3', 'new URL(path,location.href)', 'Export could not embed every visual asset', 'assets\\/(?:avatars|gmail|logo-variations)']) {
+    assert.ok(html.includes(marker), `expected reliable standalone image export behavior: ${marker}`);
+  }
+});
+
+test('image upload controls include practical sizing and cropping guidance', () => {
+  for (const marker of ['function imageAssetGuidance', 'wide 5:2 image', 'wide 3:1 image', 'square 1:1 image', 'uploads under about 2 MB']) {
+    assert.ok(html.includes(marker), `expected image guidance: ${marker}`);
+  }
+});
+
 test('regenerating an AI draft returns to the editable prompt without auto-generating', () => {
   for (const marker of ['returnAiDraftToEditor', 'Draft cleared. Update the prompt', "state.setupMode='ai'", "ai.draft=null", 'regenerateAiDraft']) {
     assert.ok(html.includes(marker), `expected editable AI regeneration behavior: ${marker}`);

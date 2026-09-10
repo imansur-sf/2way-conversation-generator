@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { readFile } from 'node:fs/promises';
 import { chromium } from '@playwright/test';
 import axe from 'axe-core';
 
@@ -192,6 +193,8 @@ try {
   const download = await Promise.all([page.waitForEvent('download'), page.locator('#export').click()]).then(([value]) => value);
   const exported = `/private/tmp/${await download.suggestedFilename()}`;
   await download.saveAs(exported);
+  const exportedHtml = await readFile(exported, 'utf8');
+  assert.doesNotMatch(exportedHtml, /assets\/(?:avatars|gmail|logo-variations)\//, 'Standalone exports must embed all default profile and interface images');
   const exportedPage = await context.newPage();
   await exportedPage.goto(`file://${exported}`, { waitUntil:'load' });
   await exportedPage.waitForTimeout(100);
