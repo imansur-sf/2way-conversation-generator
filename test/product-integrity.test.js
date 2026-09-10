@@ -396,6 +396,16 @@ test('RCS card-only messages omit an empty bubble and keep suggested replies ins
   }
 });
 
+test('blank RCS card CTA labels remove the entire CTA row', () => {
+  for (const marker of [
+    "const cta=String(card.cta||'').trim()",
+    "action=cta?`<a href=",
+    '${action}${rcsActionMarkup(card.replyActions||[])}'
+  ]) {
+    assert.ok(html.includes(marker), `expected blank RCS CTA handling: ${marker}`);
+  }
+});
+
 test('company-first email opening is rendered only once', () => {
   for (const marker of [
     'bubbleWithoutDuplicateOpeningEmail',
