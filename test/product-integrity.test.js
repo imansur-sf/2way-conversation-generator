@@ -303,7 +303,7 @@ test('standalone downloads use only their embedded scenario, not shared file sto
 });
 
 test('standalone exports retry and identify every local visual asset before downloading', () => {
-  for (const marker of ['fetchStandaloneAsset', 'attempt<3', 'new URL(path,location.href)', 'standaloneAssetLabel', 'failure.exportAssetPath=path', 'Export paused: the ${label} could not be included.', 'assets\\/(?:avatars|gmail|logo-variations)']) {
+  for (const marker of ['fetchStandaloneAsset', 'attempt<3', 'new URL(path,location.href)', 'allowMissingAssets=false', 'Promise.allSettled', 'saveStandaloneHtml', 'Choose OK to download anyway.', 'Downloaded with missing ${missingAssetLabels(result.missingPaths)}', 'assets\\/(?:avatars|gmail|logo-variations)']) {
     assert.ok(html.includes(marker), `expected reliable standalone image export behavior: ${marker}`);
   }
 });

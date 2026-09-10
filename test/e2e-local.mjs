@@ -199,6 +199,16 @@ try {
   await exportedPage.goto(`file://${exported}`, { waitUntil:'load' });
   await exportedPage.waitForTimeout(100);
   assert.equal(await exportedPage.locator('.builder').isVisible(), false, 'Standalone export must hide the builder');
+  let fallbackPrompt = '';
+  await page.route('**/assets/avatars/company-avatar-sheet.png', route => route.abort());
+  page.once('dialog', async dialog => { fallbackPrompt = dialog.message(); await dialog.accept(); });
+  const fallbackDownload = await Promise.all([page.waitForEvent('download'), page.locator('#export').click()]).then(([value]) => value);
+  await page.unroute('**/assets/avatars/company-avatar-sheet.png');
+  assert.match(fallbackPrompt, /company profile image.*Download anyway/i, 'A failed visual asset must offer a named download-anyway choice');
+  const fallbackExported = `/private/tmp/fallback-${await fallbackDownload.suggestedFilename()}`;
+  await fallbackDownload.saveAs(fallbackExported);
+  const fallbackHtml = await readFile(fallbackExported, 'utf8');
+  assert.match(fallbackHtml, /assets\/avatars\/company-avatar-sheet\.png/, 'A user-confirmed fallback export may retain only the unavailable image path');
   const localPage = await context.newPage();
   await localPage.goto(`file://${process.cwd()}/interactive-simulator-builder.html`, { waitUntil:'load' });
   await localPage.waitForSelector('.v2-workspace-nav');
