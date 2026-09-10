@@ -121,7 +121,7 @@ try {
     const scenario = {
       id:'live-preview-journey', name:'Live preview journey', scenarioMode:'multi', channel:'rcs',
       variants:{ rcs:{ channel:'rcs', brandName:'Live Preview Co', smsAddress:'Live Preview Co', emailAddress:'', subject:'', emailBody:'', initials:'LP', avatar:'', steps:[
-        { id:'live-rich-card', author:'brand', kind:'rich', text:'Opening message', cardTitle:'Original card title', cardDescription:'Original description', cardImage:'', cardCta:'Learn more', cardUrl:'' },
+        { id:'live-rich-card', author:'brand', kind:'rich', text:'Opening message', cardTitle:'Original card title', cardDescription:'Original description', cardImage:'assets/avatars/company-avatar-sheet.png', cardCta:'Learn more', cardUrl:'' },
         { id:'live-customer', author:'customer', kind:'free', text:'', options:'', reusableSet:false },
         { id:'live-later-company', author:'brand', kind:'text', text:'Later response', matchTerms:'', allowRepeat:true }
       ] } }
@@ -139,6 +139,30 @@ try {
   await ctaPresentation.selectOption('reply');
   await livePreviewPage.waitForFunction(() => document.querySelector('#stage .rcs-card-cta-action'));
   assert.equal(await livePreviewPage.locator('#stage .rcs-card-cta-action').count(), 1, 'A rich-card CTA can match the centered reply-action treatment');
+  const adjustCardImage = livePreviewPage.locator('[data-image-asset][data-image-step="live-rich-card"][data-image-key="cardImage"] [data-image-adjust]');
+  await adjustCardImage.click();
+  const cropper = livePreviewPage.locator('.rcs-image-cropper');
+  await cropper.waitFor();
+  await cropper.locator('[data-rcs-crop-fit="contain"]').click();
+  await cropper.locator('[data-rcs-crop-zoom]').evaluate(input => { input.value = '1.4'; input.dispatchEvent(new Event('input', { bubbles:true })); });
+  const cropFrame = cropper.locator('[data-rcs-crop-frame]');
+  const cropBox = await cropFrame.boundingBox();
+  await livePreviewPage.mouse.move(cropBox.x + cropBox.width * 0.5, cropBox.y + cropBox.height * 0.5);
+  await livePreviewPage.mouse.down();
+  await livePreviewPage.mouse.move(cropBox.x + cropBox.width * 0.75, cropBox.y + cropBox.height * 0.35);
+  await livePreviewPage.mouse.up();
+  await livePreviewPage.waitForFunction(() => document.querySelector('#stage .card-img__asset')?.style.objectFit === 'contain');
+  const savedCrop = await livePreviewPage.evaluate(() => JSON.parse(localStorage.getItem('two-way-experience-studio-v2-scenarios')).scenarios[0].variants.rcs.steps.find(step => step.id === 'live-rich-card'));
+  assert.equal(savedCrop.imageFit, 'contain', 'The selected RCS image-fit mode must persist with the card');
+  assert.equal(savedCrop.imageScale, 1.4, 'The RCS image zoom must persist with the card');
+  assert.ok(savedCrop.imagePositionX > 70 && savedCrop.imagePositionY < 40, 'Dragging inside the 5:2 crop frame must persist the selected focal point');
+  await cropper.locator('[data-rcs-crop-done]').click();
+  const cropExport = await Promise.all([livePreviewPage.waitForEvent('download'), livePreviewPage.locator('#export').click()]).then(([value]) => value);
+  const cropExported = `/private/tmp/crop-${await cropExport.suggestedFilename()}`;
+  await cropExport.saveAs(cropExported);
+  const cropExportedHtml = await readFile(cropExported, 'utf8');
+  assert.match(cropExportedHtml, /"imageFit":"contain"/, 'Standalone HTML must retain the selected RCS image-fit mode');
+  assert.match(cropExportedHtml, /"imageScale":1\.4/, 'Standalone HTML must retain the selected RCS image zoom');
   await livePreviewContext.close();
   const context = await browser.newContext({ acceptDownloads:true, viewport:{ width:1440, height:960 } });
   const page = await context.newPage();

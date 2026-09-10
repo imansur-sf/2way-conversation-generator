@@ -314,6 +314,12 @@ test('image upload controls include practical sizing and cropping guidance', () 
   }
 });
 
+test('RCS cards support a persistent LinkedIn-style crop and focal-point editor', () => {
+  for (const marker of ['data-image-adjust', 'openRcsImageCropper', 'rcs-image-cropper__frame', 'Fill / crop', 'Fit / show whole image', 'imagePositionX', 'imagePositionY', 'imageScale', 'rcsCardMediaMarkup']) {
+    assert.ok(html.includes(marker), `expected RCS crop editor behavior: ${marker}`);
+  }
+});
+
 test('regenerating an AI draft returns to the editable prompt without auto-generating', () => {
   for (const marker of ['returnAiDraftToEditor', 'Draft cleared. Update the prompt', "state.setupMode='ai'", "ai.draft=null", 'regenerateAiDraft']) {
     assert.ok(html.includes(marker), `expected editable AI regeneration behavior: ${marker}`);
