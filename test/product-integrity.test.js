@@ -302,8 +302,8 @@ test('standalone downloads use only their embedded scenario, not shared file sto
   assert.ok(html.includes('if(isStandaloneExport){const saveState=$(\'#saveState\')'), 'exports must not overwrite shared localStorage when interactions occur');
 });
 
-test('standalone exports retry and validate every local visual asset before downloading', () => {
-  for (const marker of ['fetchStandaloneAsset', 'attempt<3', 'new URL(path,location.href)', 'Export could not embed every visual asset', 'assets\\/(?:avatars|gmail|logo-variations)']) {
+test('standalone exports retry and identify every local visual asset before downloading', () => {
+  for (const marker of ['fetchStandaloneAsset', 'attempt<3', 'new URL(path,location.href)', 'standaloneAssetLabel', 'failure.exportAssetPath=path', 'Export paused: the ${label} could not be included.', 'assets\\/(?:avatars|gmail|logo-variations)']) {
     assert.ok(html.includes(marker), `expected reliable standalone image export behavior: ${marker}`);
   }
 });
