@@ -473,3 +473,9 @@ test('company email responses support sandboxed custom HTML previews', () => {
   assert.ok(html.includes("if(!markup)return ''"), 'empty Custom HTML responses must not create an empty email preview');
   assert.ok(!html.includes('Paste your email HTML to preview it here.'), 'the Gmail preview must not show a Custom HTML placeholder');
 });
+
+test('email flow add controls are rebound after the enhanced email editor replaces its DOM', () => {
+  for (const marker of ['function bindFlowAddActions', "if(addEmailCustomer)addEmailCustomer.onclick=()=>add('customer')", "if(addEmailCompany)addEmailCompany.onclick=()=>add('brand')", 'steps.innerHTML=emailResponseEditor(scenario);wireBuilder();bindFlowAddActions()']) {
+    assert.ok(html.includes(marker), `expected working email flow add action: ${marker}`);
+  }
+});
