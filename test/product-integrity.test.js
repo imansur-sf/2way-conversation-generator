@@ -319,7 +319,7 @@ test('the bundled default user portrait is shared by WhatsApp and Gmail', () => 
 });
 
 test('interactive HTML downloads are standalone active-channel browser experiences', () => {
-  for (const marker of ['downloadStandaloneHtml', 'inlineStandaloneAssets', 'export-booting', 'releaseStandaloneExportBoot', 'export-channel-${esc(channel)}', 'html.replace(/<body\\b[^>]*>/i', 'scenarios:[selected]', 'emailPresentationHint', 'Gmail preview', 'full-screen, browser-tab Gmail experience', 'isStandaloneExport=document.body.classList.contains(\'export\')', 'if(!isStandaloneExport)try{saved=localStorage.getItem', 'if(isStandaloneExport){const saveState=$(\'#saveState\')', 'standalone-export-lock']) {
+  for (const marker of ['downloadStandaloneHtml', 'inlineStandaloneAssets', 'inlineStandaloneUiAssets', 'fetchStandaloneText', 'data-standalone-asset', 'assets/v2-modern.css', 'assets/v2/live-region.js', 'assets/v2-modern.js', 'export-booting', 'releaseStandaloneExportBoot', 'export-channel-${esc(channel)}', 'html.replace(/<body\\b[^>]*>/i', 'scenarios:[selected]', 'emailPresentationHint', 'Gmail preview', 'full-screen, browser-tab Gmail experience', 'isStandaloneExport=document.body.classList.contains(\'export\')', 'if(!isStandaloneExport)try{saved=localStorage.getItem', 'if(isStandaloneExport){const saveState=$(\'#saveState\')', 'standalone-export-lock']) {
     assert.ok(html.includes(marker), `expected standalone export behavior: ${marker}`);
   }
   assert.ok(html.includes(".export .builder,.export .appbar,.export .preview-info"), 'exports remove builder and presenter chrome');

@@ -3,9 +3,13 @@
   let lastRequirements = null;
   let jobStatus = '';
   const { createAnnouncer, createScenarioBackup } = window.TwoWayV2 || {};
-  if (!createAnnouncer || !createScenarioBackup) return;
+  if (!createAnnouncer) return;
   const announce = createAnnouncer();
-  const enableIndexedDbMirror = createScenarioBackup({ scenarioKey, announce });
+  // A downloaded interactive HTML bundles the workspace controls but deliberately
+  // omits the browser-profile backup service. Keep the controls usable there.
+  const enableIndexedDbMirror = typeof createScenarioBackup === 'function'
+    ? createScenarioBackup({ scenarioKey, announce })
+    : () => {};
   const htmlEscape = value => String(value || '').replace(/[&<>"]/g, character => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' })[character]);
 
   const hydrateLabels = root => {
@@ -164,13 +168,9 @@
       block?.querySelector('textarea,input,[contenteditable="true"]')?.focus({ preventScroll:true });
     });
   };
-  const hydratePreviewMode = root => {
-    const preview = root.querySelector('.preview');
-    if (!preview || preview.querySelector('.v2-preview-mode')) return;
-    const control = document.createElement('div');
-    control.className = 'v2-preview-mode';
-    control.setAttribute('aria-label', 'Preview actions');
-    control.innerHTML = '<button type="button" data-v2-preview-reset>Reset path</button><button type="button" data-v2-preview-focus>Focus mode</button><button type="button" data-v2-preview-present>Present</button>';
+  const bindPreviewMode = control => {
+    if (control.dataset.v2PreviewModeBound) return;
+    control.dataset.v2PreviewModeBound = 'true';
     control.addEventListener('click', event => {
       if (event.target.closest('[data-v2-preview-reset]')) document.querySelector('#reset')?.click();
       if (event.target.closest('[data-v2-preview-present]')) document.querySelector('#presentation')?.click();
@@ -182,7 +182,19 @@
         announce(enabled ? 'Focus mode on. The preview is enlarged.' : 'Focus mode off. The builder is visible again.');
       }
     });
-    preview.querySelector('.preview-info')?.before(control);
+  };
+  const hydratePreviewMode = root => {
+    const preview = root.querySelector('.preview');
+    if (!preview) return;
+    let control = preview.querySelector('.v2-preview-mode');
+    if (!control) {
+      control = document.createElement('div');
+      control.className = 'v2-preview-mode';
+      control.setAttribute('aria-label', 'Preview actions');
+      control.innerHTML = '<button type="button" data-v2-preview-reset>Reset path</button><button type="button" data-v2-preview-focus>Focus mode</button><button type="button" data-v2-preview-present>Present</button>';
+      preview.querySelector('.preview-info')?.before(control);
+    }
+    bindPreviewMode(control);
     const builder = root.querySelector('.builder');
     if (builder && !builder.querySelector('.v2-focus-rail')) {
       const exit = document.createElement('button');

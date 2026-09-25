@@ -336,10 +336,17 @@ try {
   await download.saveAs(exported);
   const exportedHtml = await readFile(exported, 'utf8');
   assert.doesNotMatch(exportedHtml, /assets\/(?:avatars|gmail|logo-variations)\//, 'Standalone exports must embed all default profile and interface images');
+  for (const asset of ['assets/v2-modern.css', 'assets/v2/live-region.js', 'assets/v2-modern.js']) assert.match(exportedHtml, new RegExp(`data-standalone-asset="${asset.replace(/[./]/g, '\\$&')}"`), `Standalone export must embed ${asset}`);
   const exportedPage = await context.newPage();
   await exportedPage.goto(`file://${exported}`, { waitUntil:'load' });
   await exportedPage.waitForTimeout(100);
   assert.equal(await exportedPage.locator('.builder').isVisible(), false, 'Standalone export must hide the builder');
+  await exportedPage.locator('[data-v2-preview-focus]').click();
+  await exportedPage.waitForFunction(() => document.body.classList.contains('v2-focus-mode'));
+  await exportedPage.locator('[data-v2-preview-present]').click();
+  await exportedPage.waitForFunction(() => document.body.classList.contains('presentation'));
+  await exportedPage.keyboard.press('Escape');
+  await exportedPage.waitForFunction(() => !document.body.classList.contains('presentation'));
   let fallbackPrompt = '';
   await page.route('**/assets/avatars/company-avatar-sheet.png', route => route.abort());
   page.once('dialog', async dialog => { fallbackPrompt = dialog.message(); await dialog.accept(); });
