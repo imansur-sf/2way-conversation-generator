@@ -246,6 +246,35 @@ try {
   await durableSavePage.reload({ waitUntil:'networkidle' });
   await durableSavePage.waitForFunction(() => document.querySelector('#identityFields [data-skey="brandName"]')?.value === 'Durable Save RCS');
   await durableSaveContext.close();
+  const channelIsolationContext = await browser.newContext();
+  const channelIsolationPage = await channelIsolationContext.newPage();
+  await channelIsolationPage.goto(baseUrl, { waitUntil:'networkidle' });
+  await channelIsolationPage.locator('[data-channel="rcs"]').click();
+  await channelIsolationPage.locator('#identityFields [data-skey="brandName"]').fill('RCS only brand');
+  let switchDialog = channelIsolationPage.waitForEvent('dialog');
+  await channelIsolationPage.locator('[data-channel="sms"]').click();
+  await (await switchDialog).accept();
+  await channelIsolationPage.locator('#identityFields [data-skey="smsAddress"]').fill('SMS only sender');
+  switchDialog = channelIsolationPage.waitForEvent('dialog');
+  await channelIsolationPage.locator('[data-channel="whatsapp"]').click();
+  await (await switchDialog).accept();
+  await channelIsolationPage.locator('#identityFields [data-skey="brandName"]').fill('WhatsApp only brand');
+  await channelIsolationPage.locator('#save').click();
+  await channelIsolationPage.waitForFunction(() => document.querySelector('#saveState')?.textContent.includes('Saved on this device'));
+  const isolatedRecord = await channelIsolationPage.evaluate(async () => new Promise((resolve, reject) => {
+    const request = indexedDB.open('two-way-experience-studio-scenarios-v1', 1);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const read = request.result.transaction('scenario-state', 'readonly').objectStore('scenario-state').get('current');
+      read.onerror = () => reject(read.error);
+      read.onsuccess = () => resolve(read.result);
+    };
+  }));
+  const isolatedScenario = isolatedRecord.scenarios.find(scenario => scenario.id === isolatedRecord.activeId);
+  assert.equal(isolatedScenario.variants.rcs.brandName, 'RCS only brand', 'RCS edits must remain in the RCS variant');
+  assert.equal(isolatedScenario.variants.sms.smsAddress, 'SMS only sender', 'SMS edits must remain in the SMS variant');
+  assert.equal(isolatedScenario.variants.whatsapp.brandName, 'WhatsApp only brand', 'WhatsApp edits must remain in the WhatsApp variant');
+  await channelIsolationContext.close();
   const context = await browser.newContext({ acceptDownloads:true, viewport:{ width:1440, height:960 } });
   const page = await context.newPage();
   const builderResponse = await page.goto(baseUrl, { waitUntil:'networkidle' });

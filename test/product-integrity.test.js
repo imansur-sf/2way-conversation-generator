@@ -62,6 +62,7 @@ test('one primary save protects every channel in the browser database and keeps 
     'durableScenarioDatabase',
     'openDurableScenarioStore',
     'durableWrite(durableScenarioRecord,record)',
+    'durableWriteQueue',
     'Create restore point',
     'maxRestorePoints=3',
     'storageFailureDetail',
