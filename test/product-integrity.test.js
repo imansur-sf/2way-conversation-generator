@@ -32,9 +32,10 @@ test('multi-channel scenarios preserve independent channel variants', () => {
 });
 
 test('builder edits synchronize the current variant into the live preview by stable step ID', () => {
-  for (const marker of ['currentPreviewStep', 'syncRuntimePreviewSteps', 'setLivePreviewStep', 'livePreviewStepId', 'wireBuilderWithLivePreview', 'Live draft preview']) {
+  for (const marker of ['currentPreviewStep', 'syncRuntimePreviewSteps', 'setLivePreviewStep', 'livePreviewStepId', 'wireBuilderWithLivePreview']) {
     assert.ok(html.includes(marker), `expected live builder preview support: ${marker}`);
   }
+  assert.ok(!html.includes('live-preview-note'), 'the realistic channel simulation must not expose a builder-only live-preview label');
 });
 
 test('versioned saves capture the active multi-channel variant before rendering', () => {

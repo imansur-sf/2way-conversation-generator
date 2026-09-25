@@ -139,7 +139,7 @@ try {
   await liveCardTitle.fill('Updated card title');
   await livePreviewPage.waitForFunction(() => document.querySelector('#stage')?.textContent?.includes('Updated card title'));
   assert.ok(await livePreviewPage.locator('.rich-card, .card').count(), 'Focusing an RCS card editor must reveal its in-phone preview');
-  assert.match(await livePreviewPage.locator('#stage').textContent(), /Live preview/, 'The preview should identify the message currently being edited');
+  assert.equal(await livePreviewPage.locator('.live-preview-note').count(), 0, 'The live editor must not add a builder-only label to the simulated conversation');
   const ctaPresentation = livePreviewPage.locator('[data-rcs-cta-presentation-step="live-rich-card"]');
   await ctaPresentation.selectOption('reply');
   await livePreviewPage.waitForFunction(() => document.querySelector('#stage .rcs-card-cta-action'));
