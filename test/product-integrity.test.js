@@ -36,6 +36,12 @@ test('multi-channel scenarios preserve independent channel variants', () => {
   assert.ok(html.includes('Switching never overwrites another channel’s flow.'), 'the builder explains independent channel editing');
 });
 
+test('switching an edited channel requires an explicit save decision', () => {
+  for (const marker of ['markChannelEditPending', 'hasPendingChannelEdits', 'flushFocusedBuilderEdit', 'switchJourneyChannelWithSaveGuard', 'Save your ${fromLabel} changes before switching to ${toLabel}']) {
+    assert.ok(html.includes(marker), `expected channel-switch save guard: ${marker}`);
+  }
+});
+
 test('builder edits synchronize the current variant into the live preview by stable step ID', () => {
   for (const marker of ['currentPreviewStep', 'syncRuntimePreviewSteps', 'setLivePreviewStep', 'livePreviewStepId', 'wireBuilderWithLivePreview']) {
     assert.ok(html.includes(marker), `expected live builder preview support: ${marker}`);
