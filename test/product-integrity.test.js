@@ -12,6 +12,11 @@ test('builder script parses without a JavaScript syntax error', () => {
   assert.doesNotThrow(() => new Function(script));
 });
 
+test('every avatar-initials field explains when it is used', () => {
+  assert.equal((html.match(/Avatar Initials \(fallback if no image\)/g) || []).length, 3);
+  assert.ok(!html.includes('Avatar initials fallback'));
+});
+
 test('starter scenarios consolidate into customer-first and company-first multi-channel journeys', () => {
   for (const marker of ['customer-initiated-initial-message', 'company-initiated-initial-message', 'Customer Initiated Initial Message — Multi-Channel', 'Company Initiated Initial Message — Multi-Channel', 'variants:{sms,rcs,whatsapp,email}', 'retiredStarterIds']) {
     assert.ok(html.includes(marker), `expected consolidated starter journey: ${marker}`);
