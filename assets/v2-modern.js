@@ -169,8 +169,11 @@
     });
   };
   const bindPreviewMode = control => {
-    if (control.dataset.v2PreviewModeBound) return;
-    control.dataset.v2PreviewModeBound = 'true';
+    // Keep the binding marker as a runtime property, not a data attribute.
+    // Downloaded HTML serializes data attributes, which would otherwise make
+    // its freshly loaded script incorrectly think these buttons were bound.
+    if (control.__v2PreviewModeBound) return;
+    control.__v2PreviewModeBound = true;
     control.addEventListener('click', event => {
       if (event.target.closest('[data-v2-preview-reset]')) document.querySelector('#reset')?.click();
       if (event.target.closest('[data-v2-preview-present]')) document.querySelector('#presentation')?.click();
