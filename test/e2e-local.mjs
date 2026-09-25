@@ -341,6 +341,10 @@ try {
   await exportedPage.goto(`file://${exported}`, { waitUntil:'load' });
   await exportedPage.waitForTimeout(100);
   assert.equal(await exportedPage.locator('.builder').isVisible(), false, 'Standalone export must hide the builder');
+  await exportedPage.locator('[data-thread], [data-email], [data-wa-thread]').first().click();
+  await exportedPage.locator('#stage .conversation, #stage .g-detail-scroll, #stage .wa-chat').waitFor();
+  await exportedPage.locator('[data-v2-preview-reset]').click();
+  await exportedPage.locator('#stage .message-list, #stage .g-list-scroll, #stage .wa-list').waitFor();
   await exportedPage.locator('[data-v2-preview-focus]').click();
   await exportedPage.waitForFunction(() => document.body.classList.contains('v2-focus-mode'));
   await exportedPage.locator('[data-v2-preview-present]').click();
