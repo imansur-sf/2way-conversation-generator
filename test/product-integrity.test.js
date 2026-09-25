@@ -37,7 +37,7 @@ test('multi-channel scenarios preserve independent channel variants', () => {
 });
 
 test('switching an edited channel requires an explicit save decision', () => {
-  for (const marker of ['markChannelEditPending', 'hasPendingChannelEdits', 'flushFocusedBuilderEdit', 'switchJourneyChannelWithSaveGuard', 'Save your ${fromLabel} changes before switching to ${toLabel}']) {
+  for (const marker of ['channelSaveSignature', 'rememberChannelSaveSignatures', 'markChannelEditPending', 'hasPendingChannelEdits', 'flushFocusedBuilderEdit', 'switchJourneyChannelWithSaveGuard', 'Save your ${fromLabel} changes before switching to ${toLabel}']) {
     assert.ok(html.includes(marker), `expected channel-switch save guard: ${marker}`);
   }
 });

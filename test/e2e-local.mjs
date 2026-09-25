@@ -208,7 +208,13 @@ try {
   assert.match(saveDialog.message(), /Save your RCS changes before switching to SMS/);
   await saveDialog.accept();
   await channelGuardPage.waitForFunction(() => document.querySelector('[data-channel="sms"]')?.classList.contains('active'));
+  await channelGuardPage.waitForFunction(() => document.querySelector('#saveState')?.textContent.includes('Saved on this device'));
+  let unnecessarySwitchPrompt = false;
+  channelGuardPage.once('dialog', async dialog => { unnecessarySwitchPrompt = true; await dialog.dismiss(); });
   await channelGuardPage.locator('[data-channel="rcs"]').click();
+  await channelGuardPage.waitForFunction(() => document.querySelector('[data-channel="rcs"]')?.classList.contains('active'));
+  await channelGuardPage.waitForTimeout(250);
+  assert.equal(unnecessarySwitchPrompt, false, 'Switching a channel with no unsaved changes must not ask for confirmation');
   await channelGuardName.waitFor();
   assert.equal(await channelGuardName.inputValue(), 'Guarded RCS Co', 'Saving on a channel switch must preserve the edited channel variant');
   await channelGuardName.fill('Stay on RCS');
