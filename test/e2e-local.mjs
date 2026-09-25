@@ -127,6 +127,10 @@ try {
       id:'live-preview-journey', name:'Live preview journey', scenarioMode:'multi', channel:'rcs',
       variants:{ rcs:{ channel:'rcs', brandName:'Live Preview Co', smsAddress:'Live Preview Co', emailAddress:'', subject:'', emailBody:'', initials:'LP', avatar:'', steps:[
         { id:'live-rich-card', author:'brand', kind:'rich', text:'Opening message', cardTitle:'Original card title', cardDescription:'Original description', cardImage:'assets/avatars/company-avatar-sheet.png', cardCta:'Learn more', cardUrl:'' },
+        { id:'live-carousel', author:'brand', kind:'carousel', text:'', cards:[
+          { id:'live-carousel-card-1', title:'Automated Bookkeeping', description:'A deliberately long card description confirms navigation never covers the copy.', image:'assets/avatars/company-avatar-sheet.png', cta:'Learn more', url:'' },
+          { id:'live-carousel-card-2', title:'Tax planning', description:'Second card', image:'assets/avatars/company-avatar-sheet.png', cta:'Learn more', url:'' }
+        ] },
         { id:'live-customer', author:'customer', kind:'free', text:'', options:'', reusableSet:false },
         { id:'live-later-company', author:'brand', kind:'text', text:'Later response', matchTerms:'', allowRepeat:true }
       ] } }
@@ -140,6 +144,29 @@ try {
   await livePreviewPage.waitForFunction(() => document.querySelector('#stage')?.textContent?.includes('Updated card title'));
   assert.ok(await livePreviewPage.locator('.rich-card, .card').count(), 'Focusing an RCS card editor must reveal its in-phone preview');
   assert.equal(await livePreviewPage.locator('.live-preview-note').count(), 0, 'The live editor must not add a builder-only label to the simulated conversation');
+  await livePreviewPage.locator('[data-carousel-step="live-carousel"][data-carousel-field="title"]').first().focus();
+  await livePreviewPage.waitForSelector('#stage [data-rcs-carousel="live-carousel"]');
+  assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.prev').count(), 0, 'The unavailable previous-card control must be hidden');
+  assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.next').count(), 1, 'The next-card control must remain available');
+  const navBox = await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.next').boundingBox();
+  const imageBox = await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .card-img').boundingBox();
+  assert.ok(navBox.y >= imageBox.y && navBox.y + navBox.height <= imageBox.y + imageBox.height, 'Carousel navigation must stay inside the card media area');
+  await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.next').click();
+  await livePreviewPage.waitForFunction(() => document.querySelector('#stage [data-rcs-carousel="live-carousel"] .carousel-track')?.style.transform === 'translateX(-100%)');
+  assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.next').count(), 0, 'The unavailable next-card control must be hidden');
+  assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.prev').count(), 1, 'The previous-card control must return after advancing');
+  const carouselWindow = await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-window').boundingBox();
+  await livePreviewPage.mouse.move(carouselWindow.x + carouselWindow.width * 0.25, carouselWindow.y + carouselWindow.height * 0.5);
+  await livePreviewPage.mouse.down();
+  await livePreviewPage.mouse.move(carouselWindow.x + carouselWindow.width * 0.7, carouselWindow.y + carouselWindow.height * 0.5);
+  await livePreviewPage.mouse.up();
+  await livePreviewPage.waitForFunction(() => document.querySelector('#stage [data-rcs-carousel="live-carousel"] .carousel-track')?.style.transform === 'translateX(-0%)');
+  const firstWindow = await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-window').boundingBox();
+  await livePreviewPage.mouse.move(firstWindow.x + firstWindow.width * 0.7, firstWindow.y + firstWindow.height * 0.5);
+  await livePreviewPage.mouse.down();
+  await livePreviewPage.mouse.move(firstWindow.x + firstWindow.width * 0.25, firstWindow.y + firstWindow.height * 0.5);
+  await livePreviewPage.mouse.up();
+  await livePreviewPage.waitForFunction(() => document.querySelector('#stage [data-rcs-carousel="live-carousel"] .carousel-track')?.style.transform === 'translateX(-100%)');
   const ctaPresentation = livePreviewPage.locator('[data-rcs-cta-presentation-step="live-rich-card"]');
   await ctaPresentation.selectOption('reply');
   await livePreviewPage.waitForFunction(() => document.querySelector('#stage .rcs-card-cta-action'));

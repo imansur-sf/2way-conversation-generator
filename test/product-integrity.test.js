@@ -441,6 +441,14 @@ test('RCS cards can present a CTA as a centered reply-style action', () => {
   }
 });
 
+test('RCS carousels keep navigation in the media area and support touch swipe', () => {
+  for (const marker of ['has-carousel-navigation', 'data-rcs-carousel', 'rcsCarouselMove', 'touch-action:pan-y']) {
+    assert.ok(html.includes(marker), `expected safe carousel navigation support: ${marker}`);
+  }
+  assert.ok(html.includes("index>0?`<button class=\"carousel-nav prev\""), 'the unavailable previous navigation control must not render');
+  assert.ok(html.includes("index<cards.length-1?`<button class=\"carousel-nav next\""), 'the unavailable next navigation control must not render');
+});
+
 test('alternating email threads advance past a single unqualified company reply', () => {
   for (const marker of [
     'function isLinearEmailExchange',
