@@ -218,6 +218,34 @@ try {
   await stayDialog.dismiss();
   assert.equal(await channelGuardPage.locator('[data-channel="rcs"]').evaluate(button => button.classList.contains('active')), true, 'Cancelling the save prompt must keep the user on the current channel');
   await channelGuardContext.close();
+  const durableSaveContext = await browser.newContext();
+  const durableSavePage = await durableSaveContext.newPage();
+  await durableSavePage.goto(baseUrl, { waitUntil:'networkidle' });
+  await durableSavePage.locator('[data-channel="rcs"]').click();
+  const durableBrand = durableSavePage.locator('#identityFields [data-skey="brandName"]');
+  await durableBrand.fill('Durable Save RCS');
+  await durableSavePage.locator('#save').click();
+  await durableSavePage.waitForFunction(() => document.querySelector('#saveState')?.textContent.includes('Saved on this device'));
+  const durableRecord = await durableSavePage.evaluate(async () => new Promise((resolve, reject) => {
+    const request = indexedDB.open('two-way-experience-studio-scenarios-v1', 1);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const read = request.result.transaction('scenario-state', 'readonly').objectStore('scenario-state').get('current');
+      read.onerror = () => reject(read.error);
+      read.onsuccess = () => resolve(read.result);
+    };
+  }));
+  const durableScenario = durableRecord.scenarios.find(scenario => scenario.id === durableRecord.activeId);
+  assert.equal(durableScenario.variants.rcs.brandName, 'Durable Save RCS', 'Save all changes must write the active RCS variant into the durable browser database');
+  assert.ok(await durableSavePage.locator('#createRestorePoint').count(), 'restore-point creation remains available as a secondary action');
+  assert.equal(await durableSavePage.locator('#saveVersion').count(), 0, 'the ambiguous standalone Save version button must be removed');
+  await durableSavePage.evaluate(() => {
+    localStorage.removeItem('two-way-experience-studio-v2-scenarios');
+    localStorage.removeItem('two-way-studio-v4');
+  });
+  await durableSavePage.reload({ waitUntil:'networkidle' });
+  await durableSavePage.waitForFunction(() => document.querySelector('#identityFields [data-skey="brandName"]')?.value === 'Durable Save RCS');
+  await durableSaveContext.close();
   const context = await browser.newContext({ acceptDownloads:true, viewport:{ width:1440, height:960 } });
   const page = await context.newPage();
   const builderResponse = await page.goto(baseUrl, { waitUntil:'networkidle' });

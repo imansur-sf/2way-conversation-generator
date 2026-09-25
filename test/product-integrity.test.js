@@ -55,6 +55,23 @@ test('versioned saves capture the active multi-channel variant before rendering'
   assert.ok(html.indexOf('captureJourneyVariant();if(isStandaloneExport)', finalPersist) === finalPersist + 'persist=function(){'.length, 'capture happens before export handling or writing the versioned scenario record');
 });
 
+test('one primary save protects every channel in the browser database and keeps restore points secondary', () => {
+  for (const marker of [
+    "Save all changes",
+    'function saveAllChanges()',
+    'durableScenarioDatabase',
+    'openDurableScenarioStore',
+    'durableWrite(durableScenarioRecord,record)',
+    'Create restore point',
+    'maxRestorePoints=3',
+    'storageFailureDetail',
+    'Your changes are still open in this tab, but they were not saved.'
+  ]) {
+    assert.ok(html.includes(marker), `expected durable all-channel save behavior: ${marker}`);
+  }
+  assert.ok(!html.includes('>Save version</button>'), 'the confusing standalone Save version control must not remain in the primary workflow');
+});
+
 test('AI applies to the active named scenario by default, with a separate-scenario escape hatch', () => {
   for (const marker of ['Apply to ${scenario?.name||\'this scenario\'}', 'createAiScenarioSeparately', 'Create separately', 'applyAiDraft=async function({separate=false}={})', 'destination=separate?', 'Object.keys(target).forEach(key=>delete target[key])', 'state.scenarios.push(journey)']) {
     assert.ok(html.includes(marker), `expected clear AI scenario destination behavior: ${marker}`);
