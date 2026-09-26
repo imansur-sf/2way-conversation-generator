@@ -264,6 +264,15 @@ try {
   switchDialog = channelIsolationPage.waitForEvent('dialog');
   await channelIsolationPage.locator('[data-channel="whatsapp"]').click();
   await (await switchDialog).accept();
+  const whatsappAvatar = channelIsolationPage.locator('[data-image-asset][data-image-key="avatar"]');
+  await whatsappAvatar.locator('[data-image-url-open]').click();
+  await whatsappAvatar.locator('.image-url-entry:not([hidden])').waitFor();
+  const whatsappAvatarDataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9qM0wAAAAASUVORK5CYII=';
+  await channelIsolationPage.route('**/api/asset?url=**', route => route.fulfill({ json:{ dataUrl:whatsappAvatarDataUrl } }));
+  await whatsappAvatar.locator('[data-image-url]').fill('https://images.example.test/whatsapp-company.png');
+  await whatsappAvatar.locator('[data-image-url-apply]').click();
+  await channelIsolationPage.locator('[data-image-asset][data-image-key="avatar"] [data-image-thumbnail]').waitFor();
+  await channelIsolationPage.unroute('**/api/asset?url=**');
   await channelIsolationPage.locator('#identityFields [data-skey="brandName"]').fill('WhatsApp only brand');
   await channelIsolationPage.locator('#save').click();
   await channelIsolationPage.waitForFunction(() => document.querySelector('#saveState')?.textContent.includes('Saved on this device'));
@@ -280,6 +289,8 @@ try {
   assert.equal(isolatedScenario.variants.rcs.brandName, 'RCS only brand', 'RCS edits must remain in the RCS variant');
   assert.equal(isolatedScenario.variants.sms.smsAddress, 'SMS only sender', 'SMS edits must remain in the SMS variant');
   assert.equal(isolatedScenario.variants.whatsapp.brandName, 'WhatsApp only brand', 'WhatsApp edits must remain in the WhatsApp variant');
+  assert.equal(isolatedScenario.variants.whatsapp.avatar, whatsappAvatarDataUrl, 'WhatsApp company avatar URLs must save in the WhatsApp variant');
+  assert.notEqual(isolatedScenario.variants.rcs.avatar, whatsappAvatarDataUrl, 'A WhatsApp company avatar must not overwrite the RCS variant');
   await channelIsolationContext.close();
   const context = await browser.newContext({ acceptDownloads:true, viewport:{ width:1440, height:960 } });
   const page = await context.newPage();
