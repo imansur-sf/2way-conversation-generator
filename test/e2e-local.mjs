@@ -342,6 +342,35 @@ try {
   const critical = axeResults.violations.filter(item => item.impact === 'critical');
   assert.equal(critical.length, 0, `No critical accessibility violations: ${critical.map(item => item.id).join(', ')}`);
 
+  async function verifyStandaloneChannelExport(channel) {
+    const exportContext = await browser.newContext({ acceptDownloads:true, viewport:{ width:1440, height:960 } });
+    const exportPage = await exportContext.newPage();
+    await exportPage.goto(baseUrl, { waitUntil:'networkidle' });
+    await exportPage.locator(`[data-channel="${channel}"]`).click();
+    await exportPage.waitForFunction(expected => document.querySelector('[data-channel].active')?.dataset.channel === expected, channel);
+    const download = await Promise.all([
+      exportPage.waitForEvent('download'),
+      exportPage.locator('#export').click()
+    ]).then(([value]) => value);
+    const exportedPath = `/private/tmp/${channel}-standalone-${await download.suggestedFilename()}`;
+    await download.saveAs(exportedPath);
+    const exportedHtml = await readFile(exportedPath, 'utf8');
+    assert.doesNotMatch(exportedHtml, /assets\/(?:avatars|gmail|logo-variations)\//, `${channel} standalone export must embed all of its rendered image assets`);
+
+    const errors = [];
+    const standalonePage = await exportContext.newPage();
+    standalonePage.on('pageerror', error => errors.push(error.message));
+    await standalonePage.goto(`file://${exportedPath}`, { waitUntil:'load' });
+    await standalonePage.waitForTimeout(150);
+    assert.equal(await standalonePage.locator('#bootstrapFailure').isVisible(), false, `${channel} standalone export must not show a builder startup failure`);
+    assert.equal(await standalonePage.locator('#bootstrapStatus').isVisible(), false, `${channel} standalone export must replace the startup placeholder with the channel preview`);
+    assert.equal(await standalonePage.locator('.builder').isVisible(), false, `${channel} standalone export must hide the builder`);
+    assert.equal(errors.length, 0, `${channel} standalone export must not raise a browser error: ${errors.join('; ')}`);
+    await exportContext.close();
+  }
+
+  for (const channel of ['sms', 'rcs', 'whatsapp', 'email']) await verifyStandaloneChannelExport(channel);
+
   const download = await Promise.all([page.waitForEvent('download'), page.locator('#export').click()]).then(([value]) => value);
   const exported = `/private/tmp/${await download.suggestedFilename()}`;
   await download.saveAs(exported);
