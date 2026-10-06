@@ -103,6 +103,9 @@ try {
     localStorage.setItem('two-way-experience-studio-v2-scenarios', JSON.stringify({ version:4, scenarios:[scenario] }));
   });
   await emailPage.reload({ waitUntil:'networkidle' });
+  const emailInboxOpening = await emailPage.locator('[data-email="0"]').textContent();
+  assert.match(emailInboxOpening, /Opening email copy/, 'The Gmail inbox preview must use the first company email response');
+  assert.doesNotMatch(emailInboxOpening, /This legacy body must not create a second email/, 'The Gmail inbox preview must not show a stale scenario-level email body');
   const emailFlowStartCount = await emailPage.locator('#steps article.block').count();
   await emailPage.locator('#emailAddReply').click();
   await emailPage.waitForFunction(count => document.querySelectorAll('#steps article.block').length === count + 1, emailFlowStartCount);
@@ -119,6 +122,26 @@ try {
   await emailPage.locator('#emailSend').click();
   await emailPage.waitForFunction(() => document.querySelector('#stage')?.textContent?.includes('Later company reply'));
   await emailContext.close();
+  const emailExportContext = await browser.newContext({ acceptDownloads:true });
+  const emailExportPage = await emailExportContext.newPage();
+  await emailExportPage.goto(baseUrl, { waitUntil:'networkidle' });
+  await emailExportPage.evaluate(() => {
+    localStorage.setItem('two-way-experience-studio-v2-scenarios', JSON.stringify({ version:4, scenarios:[{
+      id:'email-opening-preview-export', name:'Email opening preview export', channel:'email', brandName:'Preview Co', emailAddress:'hello@preview.example', subject:'One source of truth', emailBody:'Stale email body that must never appear in the inbox.', initials:'PC', avatar:'',
+      steps:[{ id:'custom-opening', author:'brand', kind:'text', text:'The customized opening email copy appears everywhere.', emailMode:'branded' }, { id:'email-customer', author:'customer', kind:'free', text:'' }]
+    }] }));
+  });
+  await emailExportPage.reload({ waitUntil:'networkidle' });
+  const customizedInbox = await emailExportPage.locator('[data-email="0"]').textContent();
+  assert.match(customizedInbox, /The customized opening email copy appears everywhere\./, 'The live Gmail inbox must mirror the customized opening company email');
+  const emailDownload = await Promise.all([emailExportPage.waitForEvent('download'), emailExportPage.locator('#export').click()]).then(([value]) => value);
+  const emailExportPath = `/private/tmp/email-opening-${await emailDownload.suggestedFilename()}`;
+  await emailDownload.saveAs(emailExportPath);
+  const exportedEmailPage = await emailExportContext.newPage();
+  await exportedEmailPage.goto(`file://${emailExportPath}`, { waitUntil:'load' });
+  assert.match(await exportedEmailPage.locator('[data-email="0"]').textContent(), /The customized opening email copy appears everywhere\./, 'The downloaded Gmail inbox must mirror the customized opening company email');
+  assert.doesNotMatch(await exportedEmailPage.locator('[data-email="0"]').textContent(), /Stale email body/, 'The downloaded Gmail inbox must not use a stale scenario-level email body');
+  await emailExportContext.close();
   const livePreviewContext = await browser.newContext();
   const livePreviewPage = await livePreviewContext.newPage();
   await livePreviewPage.goto(baseUrl, { waitUntil:'networkidle' });
