@@ -15,7 +15,7 @@ Implementation branch: `codex/quality-two-phase-2026-10-07`. Production main mus
 
 ## Phase 1 — Protect data and make playback/export reliable
 
-- [ ] Baseline and local-work checkpoints published and verified remotely.
+- [x] Baseline and local-work checkpoints published and verified remotely.
 - [ ] Truthful saving, revision-aware hydration, retained migration sources, atomic import, recoverable history.
 - [ ] Targeted asynchronous image updates and cancellable reply timers; independent channel content.
 - [ ] Safe branded HTML; hardened static/asset endpoints, bounded generation admission and request identity.
@@ -43,4 +43,8 @@ Code rollback is a deliberate release operation, not a reset of a dirty checkout
 - Baseline GitHub main verified at `d8d8e2d6ade2118c192f2cf053d59ae5ab19e32d`.
 - Heroku v180 verified current/succeeded and rollback-eligible.
 - Existing local HTML edit only changes export filenames to include the channel; preserved in the workspace snapshot.
+- Initial checkpoint tags and implementation branch published to GitHub. Workspace checkpoint commit: `762d8a3`. Production main/release remain unchanged.
+- Phase 1 candidate: 109 code-level tests passed before final independent-review repairs. Browser-specific state and export suites passed their scoped cases, but the long integrated browser run is not yet verified.
+- Local managed Chrome terminates automated debugging with `DevTools remote debugging is disallowed by the system admin`. No policy changes or bypasses were attempted. The feature branch adds a GitHub Actions test gate using Playwright's dedicated Chromium; production deployment is not part of that workflow.
+- Phase 1 review repairs completed: preserve unsupported future storage envelopes before legacy migration; warn about unsaved edits in read-only recovery; retain asynchronous RCS reply-action image ownership. The updated code-level suite passes **113/113**. Completion checkpoint still waits for the integrated browser gate.
 - Implementation/test results will be appended before each checkpoint.

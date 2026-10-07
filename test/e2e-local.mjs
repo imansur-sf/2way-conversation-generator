@@ -1,17 +1,34 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { chromium } from '@playwright/test';
 import axe from 'axe-core';
+import { browserOptions } from './browser-options.mjs';
 
 const port = 3182;
 const baseUrl = `http://127.0.0.1:${port}`;
-const chrome = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const exportDirectory = await mkdtemp(join(tmpdir(),'two-way-e2e-'));
 const server = spawn(process.execPath, ['server.js'], { env:{ ...process.env, PORT:String(port), APP_ENV:'test', APP_VERSION:'1.1.0-test' }, stdio:['ignore', 'pipe', 'pipe'] });
 let serverOutput = '';
+let browser;
 server.stdout.on('data', chunk => { serverOutput += chunk; });
 server.stderr.on('data', chunk => { serverOutput += chunk; });
+
+async function createContext(options) {
+  const context = await browser.newContext(options);
+  context.setDefaultTimeout(10000);
+  context.setDefaultNavigationTimeout(15000);
+  await context.route('https://**/*', route => route.abort());
+  return context;
+}
+
+async function enableManual(page) {
+  await page.evaluate(async () => { await window.__twoWayScenarioInitialization; });
+  if (await page.locator('#chooseManual').isVisible()) await page.locator('#chooseManual').click();
+}
 
 async function waitForServer() {
   for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -31,23 +48,25 @@ async function waitForServer() {
 
 try {
   await waitForServer();
-  const browser = await chromium.launch({ headless:true, executablePath:chrome });
-  const migrationContext = await browser.newContext();
+  browser = await chromium.launch(browserOptions);
+  const migrationContext = await createContext();
   const migrationPage = await migrationContext.newPage();
-  await migrationPage.goto(baseUrl, { waitUntil:'networkidle' });
-  await migrationPage.evaluate(() => {
+  await migrationContext.addInitScript(() => {
+    if (location.protocol === 'file:' || sessionStorage.getItem('fixture-seeded')) return;
+    sessionStorage.setItem('fixture-seeded', '1');
     localStorage.removeItem('two-way-experience-studio-v2-scenarios');
     localStorage.removeItem('two-way-experience-studio-v2-version-history');
     localStorage.setItem('two-way-studio-v4', JSON.stringify({ version:4, scenarios:[{ id:'v1-migration-check', name:'Migrated 1.0 scenario', channel:'sms', brandName:'Migration Co', smsAddress:'555-0100', emailAddress:'', subject:'', emailBody:'', initials:'MC', avatar:'', steps:[{ id:'v1-migration-step', author:'brand', kind:'text', text:'Migration check', options:'' }] }] }));
     localStorage.setItem('two-way-studio-version-history-v1', JSON.stringify([{ id:'v1-history-check', scenarioId:'v1-migration-check', label:'Before promotion', createdAt:1, snapshot:{ id:'v1-migration-check' } }]));
   });
-  await migrationPage.reload({ waitUntil:'networkidle' });
+  await migrationPage.goto(baseUrl, { waitUntil:'networkidle' });
+  await migrationPage.evaluate(async () => { await window.__twoWayScenarioInitialization; });
   await migrationPage.waitForFunction(() => Boolean(localStorage.getItem('two-way-experience-studio-v2-scenarios')));
   const migrated = await migrationPage.evaluate(() => ({ scenarios:JSON.parse(localStorage.getItem('two-way-experience-studio-v2-scenarios')).scenarios, history:JSON.parse(localStorage.getItem('two-way-experience-studio-v2-version-history')) }));
   assert.ok(migrated.scenarios.some(scenario => scenario.name === 'Migrated 1.0 scenario'), 'Valid 1.0 scenarios must migrate into the upgraded storage key');
   assert.equal(migrated.history[0].label, 'Before promotion', 'Valid 1.0 version history must migrate into the upgraded storage key');
   await migrationContext.close();
-  const manualRecoveryContext = await browser.newContext();
+  const manualRecoveryContext = await createContext();
   const manualRecoveryPage = await manualRecoveryContext.newPage();
   await manualRecoveryPage.goto(baseUrl, { waitUntil:'networkidle' });
   await manualRecoveryPage.evaluate(() => {
@@ -55,18 +74,20 @@ try {
     localStorage.setItem('two-way-studio-v4', JSON.stringify({ version:4, scenarios:[{ id:'legacy-broken', scenarioMode:'multi', channel:'email', variants:{ email:{ steps:[null] } } }] }));
   });
   await manualRecoveryPage.goto(`${baseUrl}?recover-local=1`, { waitUntil:'networkidle' });
-  await manualRecoveryPage.waitForSelector('#scenarioSelect option');
+  await manualRecoveryPage.evaluate(async () => { await window.__twoWayScenarioInitialization; });
+  await manualRecoveryPage.waitForSelector('#scenarioSelect option', {state:'attached'});
   assert.ok(await manualRecoveryPage.locator('#scenarioSelect option').count() >= 2, 'The visible recovery link must restore a usable builder from blank-state local data');
   const manualRecoveryState = await manualRecoveryPage.evaluate(() => ({ quarantined:localStorage.getItem('two-way-experience-studio-v2-quarantined-scenarios'), active:JSON.parse(localStorage.getItem('two-way-experience-studio-v2-scenarios')).scenarios, legacy:JSON.parse(localStorage.getItem('two-way-studio-v4')).scenarios, search:location.search }));
   assert.ok(manualRecoveryState.quarantined, 'Manual recovery must preserve a quarantine copy before resetting local scenarios');
-  assert.ok(manualRecoveryState.active.length >= 2, 'Manual recovery must save working starter journeys');
-  assert.ok(manualRecoveryState.legacy.length >= 2, 'Manual recovery must replace the legacy mirror with the new working starter journeys');
+  assert.ok(manualRecoveryState.active.some(scenario => scenario.id === 'broken'), 'Recovery must retain the original cache until the user explicitly saves the usable in-memory workspace');
+  assert.ok(manualRecoveryState.legacy.some(scenario => scenario.id === 'legacy-broken'), 'Recovery must retain the original legacy record instead of overwriting the only recovery source');
   assert.equal(manualRecoveryState.search, '', 'Manual recovery must remove its one-time recovery parameter from the address bar');
   await manualRecoveryContext.close();
-  const corruptJourneyContext = await browser.newContext();
+  const corruptJourneyContext = await createContext();
   const corruptJourneyPage = await corruptJourneyContext.newPage();
-  await corruptJourneyPage.goto(baseUrl, { waitUntil:'networkidle' });
-  await corruptJourneyPage.evaluate(() => {
+  await corruptJourneyContext.addInitScript(() => {
+    if (location.protocol === 'file:' || sessionStorage.getItem('fixture-seeded')) return;
+    sessionStorage.setItem('fixture-seeded', '1');
     const malformedJourney = {
       id:'customer-initiated-initial-message', name:'Recovered multi-channel journey', scenarioMode:'multi', channel:'rcs',
       brandName:'Recovery Co', smsAddress:'Recovery Co', emailAddress:'', subject:'', emailBody:'', initials:'RC', avatar:'',
@@ -74,35 +95,40 @@ try {
     };
     localStorage.setItem('two-way-experience-studio-v2-scenarios', JSON.stringify({ version:1, scenarios:[malformedJourney] }));
   });
-  await corruptJourneyPage.reload({ waitUntil:'networkidle' });
-  await corruptJourneyPage.waitForSelector('#scenarioSelect option');
+  await corruptJourneyPage.goto(baseUrl, { waitUntil:'networkidle' });
+  await enableManual(corruptJourneyPage);
+  await corruptJourneyPage.evaluate(async () => { await window.__twoWayScenarioInitialization; });
+  await corruptJourneyPage.waitForSelector('#scenarioSelect option', {state:'attached'});
   assert.ok(await corruptJourneyPage.locator('#scenarioSelect option').count() >= 2, 'An incomplete saved channel variant must recover to usable starter journeys instead of blanking the builder');
   assert.match(await corruptJourneyPage.locator('#stage').textContent(), /Recovered opening message/, 'The active channel must retain its valid root flow when its saved variant is incomplete');
   const repairedJourney = await corruptJourneyPage.evaluate(() => JSON.parse(localStorage.getItem('two-way-experience-studio-v2-scenarios')).scenarios.find(scenario => scenario.id === 'customer-initiated-initial-message'));
   assert.ok(Array.isArray(repairedJourney.variants.rcs.steps), 'The repaired channel variant must persist a steps array for future page loads');
   await corruptJourneyPage.locator('[data-channel="email"]').click();
-  await corruptJourneyPage.waitForSelector('#scenarioSelect option');
+  await corruptJourneyPage.waitForSelector('#scenarioSelect option', {state:'attached'});
   assert.ok(await corruptJourneyPage.locator('#scenarioSelect option').count() >= 2, 'A malformed inactive channel variant must not blank the app when opened');
   const normalizedEmailSteps = await corruptJourneyPage.evaluate(() => JSON.parse(localStorage.getItem('two-way-experience-studio-v2-scenarios')).scenarios.find(scenario => scenario.id === 'customer-initiated-initial-message').variants.email.steps);
   assert.ok(normalizedEmailSteps.every(step => step && typeof step === 'object'), 'Nested channel steps must be normalized before the editor renders them');
   await corruptJourneyContext.close();
-  const emailContext = await browser.newContext();
+  const emailContext = await createContext();
   const emailPage = await emailContext.newPage();
-  await emailPage.goto(baseUrl, { waitUntil:'networkidle' });
-  await emailPage.evaluate(() => {
+  await emailContext.addInitScript(() => {
+    if (location.protocol === 'file:' || sessionStorage.getItem('fixture-seeded')) return;
+    sessionStorage.setItem('fixture-seeded', '1');
     const scenario = {
       id:'company-first-email-once', name:'Company-first email once', channel:'email', brandName:'Example Co', smsAddress:'', emailAddress:'hello@example.com', subject:'One opening only', emailBody:'This legacy body must not create a second email.', initials:'EC', avatar:'',
       steps:[
         { id:'opening-email', author:'brand', kind:'text', text:'Opening email copy', emailMode:'branded' },
-        { id:'customer-reply', author:'customer', kind:'free', text:'' },
+        { id:'customer-reply', author:'customer', kind:'free', text:'', reusableSet:false },
         { id:'first-company-reply', author:'brand', kind:'text', text:'First company reply', emailMode:'branded' },
-        { id:'second-customer-reply', author:'customer', kind:'free', text:'' },
+        { id:'second-customer-reply', author:'customer', kind:'free', text:'', reusableSet:false },
         { id:'later-company-reply', author:'brand', kind:'text', text:'Later company reply', emailMode:'branded' }
       ]
     };
-    localStorage.setItem('two-way-experience-studio-v2-scenarios', JSON.stringify({ version:4, scenarios:[scenario] }));
+    localStorage.setItem('two-way-experience-studio-v2-scenarios', JSON.stringify({ version:2, scenarios:[scenario] }));
   });
-  await emailPage.reload({ waitUntil:'networkidle' });
+  await emailPage.goto(baseUrl, { waitUntil:'networkidle' });
+  await emailPage.evaluate(async () => { await window.__twoWayScenarioInitialization; });
+  if (await emailPage.locator('#chooseManual').isVisible()) await emailPage.locator('#chooseManual').click();
   const emailInboxOpening = await emailPage.locator('[data-email="0"]').textContent();
   assert.match(emailInboxOpening, /Opening email copy/, 'The Gmail inbox preview must use the first company email response');
   assert.doesNotMatch(emailInboxOpening, /This legacy body must not create a second email/, 'The Gmail inbox preview must not show a stale scenario-level email body');
@@ -120,32 +146,35 @@ try {
   await emailPage.locator('#openEmailReply').click();
   await emailPage.locator('#emailInput').fill('Second customer reply');
   await emailPage.locator('#emailSend').click();
-  await emailPage.waitForFunction(() => document.querySelector('#stage')?.textContent?.includes('Later company reply'));
+  await emailPage.waitForFunction(() => document.querySelector('#stage')?.textContent?.includes('Later company reply'),null,{timeout:5000}).catch(async error=>{console.error('Email conversation after second reply:',await emailPage.locator('#stage').innerText().catch(()=>'<page closed>'));throw error});
   await emailContext.close();
-  const emailExportContext = await browser.newContext({ acceptDownloads:true });
+  const emailExportContext = await createContext({ acceptDownloads:true });
   const emailExportPage = await emailExportContext.newPage();
-  await emailExportPage.goto(baseUrl, { waitUntil:'networkidle' });
-  await emailExportPage.evaluate(() => {
-    localStorage.setItem('two-way-experience-studio-v2-scenarios', JSON.stringify({ version:4, scenarios:[{
+  await emailExportContext.addInitScript(() => {
+    if (location.protocol === 'file:' || sessionStorage.getItem('fixture-seeded')) return;
+    sessionStorage.setItem('fixture-seeded', '1');
+    localStorage.setItem('two-way-experience-studio-v2-scenarios', JSON.stringify({ version:2, scenarios:[{
       id:'email-opening-preview-export', name:'Email opening preview export', channel:'email', brandName:'Preview Co', emailAddress:'hello@preview.example', subject:'One source of truth', emailBody:'Stale email body that must never appear in the inbox.', initials:'PC', avatar:'',
       steps:[{ id:'custom-opening', author:'brand', kind:'text', text:'The customized opening email copy appears everywhere.', emailMode:'branded' }, { id:'email-customer', author:'customer', kind:'free', text:'' }]
     }] }));
   });
-  await emailExportPage.reload({ waitUntil:'networkidle' });
+  await emailExportPage.goto(baseUrl, { waitUntil:'networkidle' });
+  await emailExportPage.evaluate(async () => { await window.__twoWayScenarioInitialization; });
   const customizedInbox = await emailExportPage.locator('[data-email="0"]').textContent();
   assert.match(customizedInbox, /The customized opening email copy appears everywhere\./, 'The live Gmail inbox must mirror the customized opening company email');
   const emailDownload = await Promise.all([emailExportPage.waitForEvent('download'), emailExportPage.locator('#export').click()]).then(([value]) => value);
-  const emailExportPath = `/private/tmp/email-opening-${await emailDownload.suggestedFilename()}`;
+  const emailExportPath = `${exportDirectory}/email-opening-${await emailDownload.suggestedFilename()}`;
   await emailDownload.saveAs(emailExportPath);
   const exportedEmailPage = await emailExportContext.newPage();
   await exportedEmailPage.goto(`file://${emailExportPath}`, { waitUntil:'load' });
   assert.match(await exportedEmailPage.locator('[data-email="0"]').textContent(), /The customized opening email copy appears everywhere\./, 'The downloaded Gmail inbox must mirror the customized opening company email');
   assert.doesNotMatch(await exportedEmailPage.locator('[data-email="0"]').textContent(), /Stale email body/, 'The downloaded Gmail inbox must not use a stale scenario-level email body');
   await emailExportContext.close();
-  const livePreviewContext = await browser.newContext();
+  const livePreviewContext = await createContext();
   const livePreviewPage = await livePreviewContext.newPage();
-  await livePreviewPage.goto(baseUrl, { waitUntil:'networkidle' });
-  await livePreviewPage.evaluate(() => {
+  await livePreviewContext.addInitScript(() => {
+    if (location.protocol === 'file:' || sessionStorage.getItem('fixture-seeded')) return;
+    sessionStorage.setItem('fixture-seeded', '1');
     const scenario = {
       id:'live-preview-journey', name:'Live preview journey', scenarioMode:'multi', channel:'rcs',
       variants:{ rcs:{ channel:'rcs', brandName:'Live Preview Co', smsAddress:'Live Preview Co', emailAddress:'', subject:'', emailBody:'', initials:'LP', avatar:'', steps:[
@@ -158,16 +187,21 @@ try {
         { id:'live-later-company', author:'brand', kind:'text', text:'Later response', matchTerms:'', allowRepeat:true }
       ] } }
     };
-    localStorage.setItem('two-way-experience-studio-v2-scenarios', JSON.stringify({ version:4, scenarios:[scenario] }));
+    localStorage.setItem('two-way-experience-studio-v2-scenarios', JSON.stringify({ version:2, scenarios:[scenario] }));
   });
-  await livePreviewPage.reload({ waitUntil:'networkidle' });
+  await livePreviewPage.goto(baseUrl, { waitUntil:'networkidle' });
+  await livePreviewPage.evaluate(async () => { await window.__twoWayScenarioInitialization; });
+  if (await livePreviewPage.locator('#chooseManual').isVisible()) await livePreviewPage.locator('#chooseManual').click();
   const liveCardTitle = livePreviewPage.locator('[data-step="live-rich-card"][data-field="cardTitle"]');
+  if (!(await liveCardTitle.isVisible())) await livePreviewPage.locator('[data-collapse-step="live-rich-card"]').click();
   await liveCardTitle.focus();
   await liveCardTitle.fill('Updated card title');
   await livePreviewPage.waitForFunction(() => document.querySelector('#stage')?.textContent?.includes('Updated card title'));
   assert.ok(await livePreviewPage.locator('.rich-card, .card').count(), 'Focusing an RCS card editor must reveal its in-phone preview');
   assert.equal(await livePreviewPage.locator('.live-preview-note').count(), 0, 'The live editor must not add a builder-only label to the simulated conversation');
-  await livePreviewPage.locator('[data-carousel-step="live-carousel"][data-carousel-field="title"]').first().focus();
+  const carouselTitle=livePreviewPage.locator('[data-carousel-step="live-carousel"][data-carousel-field="title"]').first();
+  if (!(await carouselTitle.isVisible())) await livePreviewPage.locator('[data-collapse-step="live-carousel"]').click();
+  await carouselTitle.focus();
   await livePreviewPage.waitForSelector('#stage [data-rcs-carousel="live-carousel"]');
   assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.prev').count(), 0, 'The unavailable previous-card control must be hidden');
   assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.next').count(), 1, 'The next-card control must remain available');
@@ -213,43 +247,47 @@ try {
   assert.ok(savedCrop.imagePositionX > 70 && savedCrop.imagePositionY < 40, 'Dragging inside the 5:2 crop frame must persist the selected focal point');
   await cropper.locator('[data-rcs-crop-done]').click();
   const cropExport = await Promise.all([livePreviewPage.waitForEvent('download'), livePreviewPage.locator('#export').click()]).then(([value]) => value);
-  const cropExported = `/private/tmp/crop-${await cropExport.suggestedFilename()}`;
+  const cropExported = `${exportDirectory}/crop-${await cropExport.suggestedFilename()}`;
   await cropExport.saveAs(cropExported);
   const cropExportedHtml = await readFile(cropExported, 'utf8');
   assert.match(cropExportedHtml, /"imageFit":"contain"/, 'Standalone HTML must retain the selected RCS image-fit mode');
   assert.match(cropExportedHtml, /"imageScale":1\.4/, 'Standalone HTML must retain the selected RCS image zoom');
   await livePreviewContext.close();
-  const channelGuardContext = await browser.newContext();
+  const channelGuardContext = await createContext();
   const channelGuardPage = await channelGuardContext.newPage();
   await channelGuardPage.goto(baseUrl, { waitUntil:'networkidle' });
+  await enableManual(channelGuardPage);
   await channelGuardPage.locator('[data-channel="rcs"]').click();
   const channelGuardName = channelGuardPage.locator('#identityFields [data-skey="brandName"]');
   await channelGuardName.fill('Guarded RCS Co');
-  const saveBeforeSwitch = channelGuardPage.waitForEvent('dialog');
+  const saveBeforeSwitch = channelGuardPage.waitForEvent('dialog').then(async dialog=>{
+    assert.match(dialog.message(), /Save your RCS changes before switching to SMS/);
+    await dialog.accept();
+  });
   await channelGuardPage.locator('[data-channel="sms"]').click();
-  const saveDialog = await saveBeforeSwitch;
-  assert.match(saveDialog.message(), /Save your RCS changes before switching to SMS/);
-  await saveDialog.accept();
+  await saveBeforeSwitch;
   await channelGuardPage.waitForFunction(() => document.querySelector('[data-channel="sms"]')?.classList.contains('active'));
   await channelGuardPage.waitForFunction(() => document.querySelector('#saveState')?.textContent.includes('Saved on this device'));
   let unnecessarySwitchPrompt = false;
-  channelGuardPage.once('dialog', async dialog => { unnecessarySwitchPrompt = true; await dialog.dismiss(); });
+  const unexpectedDialog=async dialog => { unnecessarySwitchPrompt = true; await dialog.dismiss(); };
+  channelGuardPage.on('dialog', unexpectedDialog);
   await channelGuardPage.locator('[data-channel="rcs"]').click();
   await channelGuardPage.waitForFunction(() => document.querySelector('[data-channel="rcs"]')?.classList.contains('active'));
   await channelGuardPage.waitForTimeout(250);
   assert.equal(unnecessarySwitchPrompt, false, 'Switching a channel with no unsaved changes must not ask for confirmation');
+  channelGuardPage.off('dialog', unexpectedDialog);
   await channelGuardName.waitFor();
   assert.equal(await channelGuardName.inputValue(), 'Guarded RCS Co', 'Saving on a channel switch must preserve the edited channel variant');
   await channelGuardName.fill('Stay on RCS');
-  const stayOnChannel = channelGuardPage.waitForEvent('dialog');
+  const stayOnChannel = channelGuardPage.waitForEvent('dialog').then(dialog=>dialog.dismiss());
   await channelGuardPage.locator('[data-channel="sms"]').click();
-  const stayDialog = await stayOnChannel;
-  await stayDialog.dismiss();
+  await stayOnChannel;
   assert.equal(await channelGuardPage.locator('[data-channel="rcs"]').evaluate(button => button.classList.contains('active')), true, 'Cancelling the save prompt must keep the user on the current channel');
   await channelGuardContext.close();
-  const durableSaveContext = await browser.newContext();
+  const durableSaveContext = await createContext();
   const durableSavePage = await durableSaveContext.newPage();
   await durableSavePage.goto(baseUrl, { waitUntil:'networkidle' });
+  await enableManual(durableSavePage);
   await durableSavePage.locator('[data-channel="rcs"]').click();
   const durableBrand = durableSavePage.locator('#identityFields [data-skey="brandName"]');
   await durableBrand.fill('Durable Save RCS');
@@ -275,18 +313,19 @@ try {
   await durableSavePage.reload({ waitUntil:'networkidle' });
   await durableSavePage.waitForFunction(() => document.querySelector('#identityFields [data-skey="brandName"]')?.value === 'Durable Save RCS');
   await durableSaveContext.close();
-  const channelIsolationContext = await browser.newContext();
+  const channelIsolationContext = await createContext();
   const channelIsolationPage = await channelIsolationContext.newPage();
   await channelIsolationPage.goto(baseUrl, { waitUntil:'networkidle' });
+  await enableManual(channelIsolationPage);
   await channelIsolationPage.locator('[data-channel="rcs"]').click();
   await channelIsolationPage.locator('#identityFields [data-skey="brandName"]').fill('RCS only brand');
-  let switchDialog = channelIsolationPage.waitForEvent('dialog');
+  let switchDialog = channelIsolationPage.waitForEvent('dialog').then(dialog=>dialog.accept());
   await channelIsolationPage.locator('[data-channel="sms"]').click();
-  await (await switchDialog).accept();
+  await switchDialog;
   await channelIsolationPage.locator('#identityFields [data-skey="smsAddress"]').fill('SMS only sender');
-  switchDialog = channelIsolationPage.waitForEvent('dialog');
+  switchDialog = channelIsolationPage.waitForEvent('dialog').then(dialog=>dialog.accept());
   await channelIsolationPage.locator('[data-channel="whatsapp"]').click();
-  await (await switchDialog).accept();
+  await switchDialog;
   const whatsappAvatar = channelIsolationPage.locator('[data-image-asset][data-image-key="avatar"]');
   await whatsappAvatar.locator('[data-image-url-open]').click();
   await whatsappAvatar.locator('.image-url-entry:not([hidden])').waitFor();
@@ -315,7 +354,7 @@ try {
   assert.equal(isolatedScenario.variants.whatsapp.avatar, whatsappAvatarDataUrl, 'WhatsApp company avatar URLs must save in the WhatsApp variant');
   assert.notEqual(isolatedScenario.variants.rcs.avatar, whatsappAvatarDataUrl, 'A WhatsApp company avatar must not overwrite the RCS variant');
   await channelIsolationContext.close();
-  const context = await browser.newContext({ acceptDownloads:true, viewport:{ width:1440, height:960 } });
+  const context = await createContext({ acceptDownloads:true, viewport:{ width:1440, height:960 } });
   const page = await context.newPage();
   const builderResponse = await page.goto(baseUrl, { waitUntil:'networkidle' });
   assert.equal(builderResponse.headers()['cache-control'], 'no-cache', 'The release-critical builder document must not be served from a stale browser cache');
@@ -366,39 +405,44 @@ try {
   assert.equal(critical.length, 0, `No critical accessibility violations: ${critical.map(item => item.id).join(', ')}`);
 
   async function verifyStandaloneChannelExport(channel) {
-    const exportContext = await browser.newContext({ acceptDownloads:true, viewport:{ width:1440, height:960 } });
+    const exportContext = await createContext({ acceptDownloads:true, viewport:{ width:1440, height:960 } });
     const exportPage = await exportContext.newPage();
     await exportPage.goto(baseUrl, { waitUntil:'networkidle' });
+    await enableManual(exportPage);
     await exportPage.locator(`[data-channel="${channel}"]`).click();
     await exportPage.waitForFunction(expected => document.querySelector('[data-channel].active')?.dataset.channel === expected, channel);
     const download = await Promise.all([
       exportPage.waitForEvent('download'),
       exportPage.locator('#export').click()
     ]).then(([value]) => value);
-    const exportedPath = `/private/tmp/${channel}-standalone-${await download.suggestedFilename()}`;
+    const exportedPath = `${exportDirectory}/${channel}-standalone-${await download.suggestedFilename()}`;
     await download.saveAs(exportedPath);
     const exportedHtml = await readFile(exportedPath, 'utf8');
-    assert.doesNotMatch(exportedHtml, /assets\/(?:avatars|gmail|logo-variations)\//, `${channel} standalone export must embed all of its rendered image assets`);
+    assert.match(exportedHtml, /id="standalone-asset-data"/, `${channel} standalone export must include its offline image registry`);
 
     const errors = [];
+    const dependencies = [];
     const standalonePage = await exportContext.newPage();
     standalonePage.on('pageerror', error => errors.push(error.message));
+    standalonePage.on('request', request => {if(request.resourceType()!=='document'&&!/^(data:|blob:|about:)/.test(request.url()))dependencies.push(request.url())});
     await standalonePage.goto(`file://${exportedPath}`, { waitUntil:'load' });
     await standalonePage.waitForTimeout(150);
     assert.equal(await standalonePage.locator('#bootstrapFailure').isVisible(), false, `${channel} standalone export must not show a builder startup failure`);
     assert.equal(await standalonePage.locator('#bootstrapStatus').isVisible(), false, `${channel} standalone export must replace the startup placeholder with the channel preview`);
     assert.equal(await standalonePage.locator('.builder').isVisible(), false, `${channel} standalone export must hide the builder`);
     assert.equal(errors.length, 0, `${channel} standalone export must not raise a browser error: ${errors.join('; ')}`);
+    assert.deepEqual(dependencies, [], `${channel} offline preview must not request external or local image dependencies`);
+    assert.equal(await standalonePage.locator('#stage img').evaluateAll(images=>images.every(image=>image.complete&&image.naturalWidth>0)),true,`${channel} visible offline images must decode`);
     await exportContext.close();
   }
 
   for (const channel of ['sms', 'rcs', 'whatsapp', 'email']) await verifyStandaloneChannelExport(channel);
 
   const download = await Promise.all([page.waitForEvent('download'), page.locator('#export').click()]).then(([value]) => value);
-  const exported = `/private/tmp/${await download.suggestedFilename()}`;
+  const exported = `${exportDirectory}/${await download.suggestedFilename()}`;
   await download.saveAs(exported);
   const exportedHtml = await readFile(exported, 'utf8');
-  assert.doesNotMatch(exportedHtml, /assets\/(?:avatars|gmail|logo-variations)\//, 'Standalone exports must embed all default profile and interface images');
+  assert.match(exportedHtml, /id="standalone-asset-data"/, 'Standalone exports must include the offline image registry');
   for (const asset of ['assets/v2-modern.css', 'assets/v2/live-region.js', 'assets/v2-modern.js']) assert.match(exportedHtml, new RegExp(`data-standalone-asset="${asset.replace(/[./]/g, '\\$&')}"`), `Standalone export must embed ${asset}`);
   const exportedPage = await context.newPage();
   await exportedPage.goto(`file://${exported}`, { waitUntil:'load' });
@@ -419,8 +463,8 @@ try {
   page.once('dialog', async dialog => { fallbackPrompt = dialog.message(); await dialog.accept(); });
   const fallbackDownload = await Promise.all([page.waitForEvent('download'), page.locator('#export').click()]).then(([value]) => value);
   await page.unroute('**/assets/avatars/company-avatar-sheet.png');
-  assert.match(fallbackPrompt, /company profile image.*Download anyway/i, 'A failed visual asset must offer a named download-anyway choice');
-  const fallbackExported = `/private/tmp/fallback-${await fallbackDownload.suggestedFilename()}`;
+  assert.match(fallbackPrompt, /(?:company profile image|Preview image company-avatar-sheet\.png).*download anyway/i, 'A failed visual asset must offer a named download-anyway choice');
+  const fallbackExported = `${exportDirectory}/fallback-${await fallbackDownload.suggestedFilename()}`;
   await fallbackDownload.saveAs(fallbackExported);
   const fallbackHtml = await readFile(fallbackExported, 'utf8');
   assert.match(fallbackHtml, /assets\/avatars\/company-avatar-sheet\.png/, 'A user-confirmed fallback export may retain only the unavailable image path');
@@ -431,6 +475,7 @@ try {
   await browser.close();
   console.log('2.0 browser, accessibility, and standalone-export smoke test: OK');
 } finally {
+  await browser?.close();
   server.kill('SIGTERM');
   await Promise.race([once(server, 'exit'), new Promise(resolve => setTimeout(resolve, 1_000))]);
 }

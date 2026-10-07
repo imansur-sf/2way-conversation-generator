@@ -6,6 +6,7 @@ const test = require('node:test');
 const root = path.resolve(__dirname, '..');
 const htmlPath = path.join(root, 'interactive-simulator-builder.html');
 const html = fs.readFileSync(htmlPath, 'utf8');
+const exportRuntime = fs.readFileSync(path.join(root, 'assets/export-runtime.js'), 'utf8');
 
 test('builder script parses without a JavaScript syntax error', () => {
   const script = html.slice(html.lastIndexOf('<script>') + 8, html.lastIndexOf('</script>'));
@@ -253,7 +254,7 @@ test('saved scenario data is versioned, validated, and automatically recoverable
 });
 
 test('startup validates saved scenarios before the first render and has a one-time reset fallback', () => {
-  for (const marker of ['recoverLocal', 'recover-local=1', 'quarantineAndResetScenarioState', 'bootstrapRecoveryFlag', 'bootstrapRecoverySkipLegacy', 'bootstrapRecoveryQuarantine', 'recoverFromBootstrapFailure', 'keys.forEach(key=>localStorage.removeItem(key))', "window.addEventListener('error'", 'reportBootstrapDiagnostic', 'bootstrapFailure', 'bootstrapStatus', 'bootstrapRendered=true', '__twoWayBootstrapGuardReady', 'line ${details.line}']) {
+  for (const marker of ['recoverLocal', 'recover-local=1', 'quarantineAndResetScenarioState', 'bootstrapRecoveryFlag', 'bootstrapRecoverySkipLegacy', 'bootstrapRecoveryQuarantine', 'recoverFromBootstrapFailure', 'Recovery bypasses saved records', "window.addEventListener('error'", 'reportBootstrapDiagnostic', 'bootstrapFailure', 'bootstrapStatus', 'bootstrapRendered=true', '__twoWayBootstrapGuardReady', 'line ${details.line}']) {
     assert.ok(html.includes(marker), 'expected refresh-time blank-state prevention: ' + marker);
   }
   assert.ok(html.indexOf('function bootstrapScenario') < html.indexOf('function renderBuilder()'), 'saved records are normalized before the first builder render');
@@ -303,8 +304,8 @@ test('conversation cards use one drag-and-drop reorderer across every channel', 
 test('guided sequences deliver every consecutive company message, while keyword routes choose one', () => {
   for (const marker of [
     'answers=routeByKeywords?[chooseResponse(set,text)].filter(Boolean):set.responses.filter(available)',
-    'const deliver=(index=0)=>{state.visible.push(answers[index])',
-    'if(index+1<answers.length){renderPreview();setTimeout(()=>deliver(index+1),900);return}',
+    'deliver=(index=0)=>{state.visible.push(answers[index])',
+    'scheduleRuntimeDelivery(()=>deliver(index+1),900,epoch)',
     "Guided sequence: ${replies.length} company ${replies.length===1?'message will':'messages will'} appear in order.",
     'every following company message appears in order'
   ]) assert.ok(html.includes(marker), `expected guided multi-message behavior: ${marker}`);
@@ -319,23 +320,25 @@ test('the bundled default user portrait is shared by WhatsApp and Gmail', () => 
 });
 
 test('interactive HTML downloads are standalone active-channel browser experiences', () => {
-  for (const marker of ['downloadStandaloneHtml', 'inlineStandaloneAssets', 'inlineStandaloneUiAssets', 'fetchStandaloneText', 'data-standalone-asset', 'assets/v2-modern.css', 'assets/v2/live-region.js', 'assets/v2-modern.js', 'export-booting', 'releaseStandaloneExportBoot', 'export-channel-${esc(channel)}', 'html.replace(/<body\\b[^>]*>/i', 'scenarios:[selected]', 'emailPresentationHint', 'Gmail preview', 'full-screen, browser-tab Gmail experience', 'isStandaloneExport=document.body.classList.contains(\'export\')', 'if(!isStandaloneExport)try{saved=localStorage.getItem', 'if(isStandaloneExport){const saveState=$(\'#saveState\')', 'standalone-export-lock']) {
-    assert.ok(html.includes(marker), `expected standalone export behavior: ${marker}`);
+  for (const marker of ['downloadStandaloneHtml', 'TwoWayStandalone.prepare', 'fetchStandaloneText', 'data-standalone-asset', 'assets/v2-modern.css', 'assets/v2/live-region.js', 'assets/v2-modern.js', 'export-booting', 'releaseStandaloneExportBoot', 'scenarios:[selected]', 'emailPresentationHint', 'Gmail preview', 'full-screen, browser-tab Gmail experience', 'isStandaloneExport=document.body.classList.contains(\'export\')', 'if(!isStandaloneExport)try{bootstrapRecoveryWasUsed', 'if(isStandaloneExport){const saveState=$(\'#saveState\')', 'standalone-export-lock']) {
+    assert.ok((html+exportRuntime).includes(marker), `expected standalone export behavior: ${marker}`);
   }
-  assert.ok(html.includes(".export .builder,.export .appbar,.export .preview-info"), 'exports remove builder and presenter chrome');
+  assert.ok(exportRuntime.includes(".export .builder,.export .appbar,.export .preview-info"), 'exports remove builder and presenter chrome');
   assert.ok(html.includes("document.body.classList.remove('presentation','email-presentation')"), 'leaving presentation removes email-only presentation state');
 });
 
 test('standalone downloads use only their embedded scenario, not shared file storage', () => {
   const exportBootstrap = html.slice(html.indexOf("isStandaloneExport=document.body.classList.contains('export')"), html.indexOf('function bootstrapScenario'));
-  assert.ok(!exportBootstrap.includes('saved=localStorage.getItem') || exportBootstrap.includes('if(!isStandaloneExport)try{saved=localStorage.getItem'), 'exports must skip shared localStorage during startup');
+  assert.ok(!exportBootstrap.includes('saved=localStorage.getItem') || exportBootstrap.includes('if(!isStandaloneExport)try{bootstrapRecoveryWasUsed'), 'exports must skip shared localStorage during startup');
   assert.ok(html.includes('if(isStandaloneExport){const saveState=$(\'#saveState\')'), 'exports must not overwrite shared localStorage when interactions occur');
 });
 
-test('standalone exports retry and identify every visible channel asset before downloading', () => {
-  for (const marker of ['fetchStandaloneAsset', 'attempt<3', 'new URL(path,location.href)', 'allowMissingAssets=false', 'Promise.allSettled', 'saveStandaloneHtml', 'Choose OK to download anyway.', 'Downloaded with missing ${missingAssetLabels(result.missingPaths)}', 'visibleStandaloneAssetPaths', 'stage?.outerHTML']) {
+test('standalone exports retry assets from a complete selected-channel manifest', () => {
+  for (const marker of ['fetchStandaloneAsset', 'attempt<3', 'new URL(path,location.href)', 'allowMissingAssets=false', 'saveStandaloneHtml', 'Choose OK to download anyway.', 'Downloaded with missing ${missingAssetLabels(result.missingPaths)}']) {
     assert.ok(html.includes(marker), `expected reliable standalone image export behavior: ${marker}`);
   }
+  assert.ok(exportRuntime.includes('rewriteData(selected)'));
+  assert.ok(exportRuntime.includes('exportAssetFailures'));
 });
 
 test('image upload controls include practical sizing and cropping guidance', () => {
@@ -387,7 +390,7 @@ test('conversation reordering is self-contained and preserves open editors', () 
 });
 
 test('the email company-avatar control reuses the selected email logo when no separate avatar exists', () => {
-  for (const marker of ["avatarValue=scenario.avatar||(!scenario.avatarDismissed&&scenario.channel==='email'?scenario.emailLogo:'')", 'scenario.avatarDismissed=!source', "label:'Company avatar'"]) {
+  for (const marker of ["avatarValue=scenario.avatar||(!scenario.avatarDismissed&&scenario.channel==='email'?scenario.emailLogo:'')", 'avatarDismissed=!source', "label:'Company avatar'"]) {
     assert.ok(html.includes(marker), `expected linked email avatar behavior: ${marker}`);
   }
 });
@@ -416,15 +419,16 @@ test('Email distinguishes the Gmail sender avatar from the branded-email header 
 });
 
 test('email image assets show their current rendered image and use the same reliable URL loader', () => {
-  for (const marker of ["const emailLogo=emailLogoAssetValue(s)", "emailAssetCard('emailLogo','Company logo',emailLogo,true)", 'imageAssetControlMarkup({id:`email-${key}`,key,value,label', 'bindImageAssetControls()', 'scenario.emailLogoDismissed=!source']) {
+  for (const marker of ["const emailLogo=emailLogoAssetValue(s)", "emailAssetCard('emailLogo','Company logo',emailLogo,true)", 'imageAssetControlMarkup({id:`email-${key}`,key,value,label', 'bindImageAssetControls()', 'emailLogoDismissed=!source']) {
     assert.ok(html.includes(marker), `expected reliable email image asset behavior: ${marker}`);
   }
 });
 
 test('server keeps request-size, timeout, and rate-limit safeguards enabled', () => {
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+  const security = fs.readFileSync(path.join(root, 'server/security.cjs'), 'utf8');
   for (const marker of ['requestLimitBytes', 'requestTimeoutMs', 'withinRateLimit', 'safeUrl', 'privateIp']) {
-    assert.ok(server.includes(marker), `expected server safeguard: ${marker}`);
+    assert.ok((server+security).includes(marker), `expected server safeguard: ${marker}`);
   }
 });
 

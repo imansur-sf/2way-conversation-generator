@@ -35,7 +35,7 @@
     const keys = ['two-way-experience-studio-v2-scenarios', 'two-way-studio-v4', 'two-way-studio-v3'];
     const snapshot = Object.fromEntries(keys.map(key => [key, localStorage.getItem(key)]).filter(([, value]) => value));
     if (Object.keys(snapshot).length) localStorage.setItem(quarantine, JSON.stringify({ recoveredAt:new Date().toISOString(), snapshot }));
-    keys.forEach(key => localStorage.removeItem(key));
+    // Recovery bypasses the original records rather than deleting them.
     sessionStorage.setItem(skipLegacy, '1');
     sessionStorage.setItem(idbFlag, '1');
   };

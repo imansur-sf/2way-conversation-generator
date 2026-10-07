@@ -1,9 +1,8 @@
 const http = require('node:http');
-const { createReadStream, stat } = require('node:fs');
-const { lookup } = require('node:dns').promises;
+const { createReadStream, stat, realpath } = require('node:fs');
 const { randomUUID, createHash } = require('node:crypto');
-const net = require('node:net');
 const path = require('node:path');
+const { clientIp:trustedClientIp, createRemoteFetcher, publicFilePath, supportedImageTypes, svgContentSecurityPolicy } = require('./server/security.cjs');
 
 const port = Number(process.env.PORT) || 3000;
 const root = __dirname;
@@ -29,89 +28,32 @@ const draftCache = new Map();
 const draftCacheTtlMs = 5 * 60_000;
 const generationJobTtlMs = 15 * 60_000;
 const generationJobLimit = 120;
+const generationConcurrency = Math.max(1,Math.min(8,Number.parseInt(process.env.GENERATION_CONCURRENCY,10) || 3));
+let activeGenerations = 0;
+const trustHeroku = Boolean(process.env.DYNO);
+const secureRemoteFetch = createRemoteFetcher({ timeoutMs:requestTimeoutMs });
 const generationMetrics = { started:0, completed:0, failed:0, fallback:0, totalDurationMs:0, lastCompletedAt:null, lastFailureAt:null };
-const mimeTypes = { '.css':'text/css; charset=utf-8', '.gif':'image/gif', '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.json':'application/json; charset=utf-8', '.jpg':'image/jpeg', '.jpeg':'image/jpeg', '.png':'image/png', '.svg':'image/svg+xml' };
+const mimeTypes = { '.css':'text/css; charset=utf-8', '.gif':'image/gif', '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.jpg':'image/jpeg', '.jpeg':'image/jpeg', '.png':'image/png', '.svg':'image/svg+xml', '.webp':'image/webp', '.avif':'image/avif', '.ico':'image/x-icon', '.woff':'font/woff', '.woff2':'font/woff2' };
 
 function sendJson(response, status, body, requestId = '') {
-  response.writeHead(status, { 'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store', ...(requestId ? { 'X-Request-Id':requestId } : {}) });
+  response.writeHead(status, { 'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store', 'X-Content-Type-Options':'nosniff', ...([429,503].includes(status) ? { 'Retry-After':'5' } : {}), ...(requestId ? { 'X-Request-Id':requestId } : {}) });
   response.end(JSON.stringify(requestId ? { ...body, requestId } : body));
 }
-function clientIp(request) { return request.headers['x-forwarded-for']?.split(',')[0]?.trim() || request.socket.remoteAddress || 'unknown'; }
-function withinRateLimit(request) {
-  const now = Date.now(), key = clientIp(request), bucket = rateBuckets.get(key);
+function clientIp(request) { return trustedClientIp(request,trustHeroku); }
+function withinRateLimit(request,category='generation',limit=perMinuteLimit) {
+  const now = Date.now(), key = `${category}:${clientIp(request)}`, bucket = rateBuckets.get(key);
   for (const [candidate, value] of rateBuckets) if (value.resetAt <= now) rateBuckets.delete(candidate);
-  if (!bucket || bucket.resetAt <= now) { rateBuckets.set(key, { count:1, resetAt:now + rateWindowMs }); return true; }
+  if (!bucket || bucket.resetAt <= now) { if (rateBuckets.size >= 5000) return false; rateBuckets.set(key, { count:1, resetAt:now + rateWindowMs }); return true; }
   bucket.count += 1;
-  return bucket.count <= perMinuteLimit;
-}
-function privateIp(address) {
-  if (net.isIP(address) === 4) return /^(0|10|127)\./.test(address) || /^169\.254\./.test(address) || /^192\.168\./.test(address) || /^172\.(1[6-9]|2\d|3[01])\./.test(address);
-  const value = String(address).toLowerCase();
-  return value === '::' || value === '::1' || value.startsWith('fe80:') || value.startsWith('fc') || value.startsWith('fd');
-}
-function blockedHost(hostname) {
-  const host = String(hostname || '').toLowerCase();
-  return !host || host === 'localhost' || host === 'metadata.google.internal' || host.endsWith('.local') || host.endsWith('.internal') || privateIp(host);
+  return bucket.count <= limit;
 }
 function normalizedWebsiteUrl(value) {
   const raw = String(value || '').trim();
   if (!raw) return '';
   return /^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : `https://${raw.replace(/^\/+/, '')}`;
 }
-async function safeUrl(value) {
-  let parsed;
-  try { parsed = new URL(normalizedWebsiteUrl(value)); } catch { throw Object.assign(new Error('invalid_url'), { code:'invalid_url' }); }
-  if (!['http:','https:'].includes(parsed.protocol) || parsed.username || parsed.password || blockedHost(parsed.hostname)) throw Object.assign(new Error('blocked_url'), { code:'blocked_url' });
-  const addresses = await lookup(parsed.hostname, { all:true, verbatim:true });
-  if (!addresses.length || addresses.some(item => privateIp(item.address))) throw Object.assign(new Error('blocked_host'), { code:'blocked_host' });
-  return parsed;
-}
 async function fetchRemote(value, maxBytes, allowPartial = false) {
-  let remote = await safeUrl(value);
-  for (let redirects = 0; redirects < 4; redirects += 1) {
-    const controller = new AbortController();
-    const deadline = Date.now() + requestTimeoutMs;
-    const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
-    try {
-      const upstream = await fetch(remote, { redirect:'manual', headers:{ 'User-Agent':'SaaSy-TwoWay-Experience-Studio/1.0', 'Accept':'text/html,application/xhtml+xml,image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8' }, signal:controller.signal });
-      if (upstream.status >= 300 && upstream.status < 400) {
-        const location = upstream.headers.get('location');
-        if (!location) throw Object.assign(new Error('bad_redirect'), { code:'bad_redirect' });
-        remote = await safeUrl(new URL(location, remote).toString());
-        continue;
-      }
-      if (!upstream.ok) throw Object.assign(new Error('upstream_status'), { code:'upstream_status', status:upstream.status });
-      if (!allowPartial && Number(upstream.headers.get('content-length') || 0) > maxBytes) throw Object.assign(new Error('too_large'), { code:'too_large' });
-      const reader = upstream.body?.getReader();
-      if (!reader) throw Object.assign(new Error('empty_body'), { code:'empty_body' });
-      const chunks = []; let total = 0;
-      while (true) {
-        const remainingMs = Math.max(1, deadline - Date.now());
-        const { done, value:chunk } = await new Promise((resolve,reject) => {
-          const readTimeout = setTimeout(() => {
-            controller.abort();
-            reject(Object.assign(new Error('request_timeout'), { code:'request_timeout' }));
-          }, remainingMs);
-          reader.read().then(value => { clearTimeout(readTimeout); resolve(value); }, error => { clearTimeout(readTimeout); reject(error); });
-        });
-        if (done) break;
-        const remaining = maxBytes - total;
-        if (chunk.length > remaining) {
-          if (!allowPartial) { try { await reader.cancel(); } catch {} throw Object.assign(new Error('too_large'), { code:'too_large' }); }
-          if (remaining > 0) chunks.push(chunk.subarray(0, remaining));
-          try { await reader.cancel(); } catch {}
-          return { url:remote.toString(), contentType:upstream.headers.get('content-type') || '', body:Buffer.concat(chunks), partial:true };
-        }
-        chunks.push(chunk); total += chunk.length;
-      }
-      return { url:remote.toString(), contentType:upstream.headers.get('content-type') || '', body:Buffer.concat(chunks), partial:false };
-    } catch (error) {
-      if (error?.name === 'AbortError') throw Object.assign(new Error('request_timeout'), { code:'request_timeout' });
-      if (!error?.code) throw Object.assign(new Error('website_fetch_failed'), { code:'website_fetch_failed' });
-      throw error;
-    } finally { clearTimeout(timeout); }
-  }
-  throw Object.assign(new Error('too_many_redirects'), { code:'too_many_redirects' });
+  return secureRemoteFetch(normalizedWebsiteUrl(value),maxBytes,allowPartial);
 }
 function absoluteUrl(value, base) { try { const url = new URL(value, base); return ['http:','https:'].includes(url.protocol) ? url.toString() : ''; } catch { return ''; } }
 function decodeEntities(value = '') { return value.replace(/&amp;/gi,'&').replace(/&quot;/gi,'"').replace(/&#39;|&apos;/gi,"'").replace(/&lt;/gi,'<').replace(/&gt;/gi,'>'); }
@@ -383,7 +325,8 @@ function requirementChecklist(draft, useCase) {
   return { story, items, initialSender:brief.initialSender || null, initialSenderSatisfied, expectedMessageCount:brief.expectedMessageCount || null, actualMessageCount:generatedTurns.length, countSatisfied, scriptedTurns:brief.scriptedTurns.length, scriptedTurnsSatisfied, complete:items.every(item => item.satisfied) && initialSenderSatisfied && countSatisfied && scriptedTurnsSatisfied };
 }
 function errorStatus(code) {
-  if (code === 'llm_not_configured') return 503;
+  if (['llm_not_configured','generation_busy','remote_busy'].includes(code)) return 503;
+  if (code === 'idempotency_conflict') return 409;
   if (['invalid_url','blocked_url','blocked_host','missing_required_fields','request_too_large','invalid_json'].includes(code)) return 400;
   if (code === 'rate_limited') return 429;
   return 502;
@@ -433,28 +376,46 @@ async function generateScenarioDraft(body, requestId) {
   const result = { draft, source:{ url:remote.url, title:evidence.title, imageCandidates:evidence.candidates, fallbackReason, brief:storyBrief(request.useCase,request.companyName) }, requirements };
   if (!fallbackReason) draftCache.set(cacheKey,{ expiresAt:Date.now()+draftCacheTtlMs, value:result });
   for (const [key,value] of draftCache) if (value.expiresAt <= Date.now()) draftCache.delete(key);
+  while (draftCache.size > generationJobLimit) draftCache.delete(draftCache.keys().next().value);
   return result;
 }
-function pruneGenerationJobs() {
+function pruneGenerationJobs(reserve = 0) {
   const threshold = Date.now() - generationJobTtlMs;
-  for (const [id, job] of generationJobs) if (job.createdAt < threshold) generationJobs.delete(id);
+  for (const [id, job] of generationJobs) if (job.completedAt && job.completedAt < threshold) generationJobs.delete(id);
+  for (const [id, job] of generationJobs) {
+    if (generationJobs.size + reserve <= generationJobLimit) break;
+    if (['completed','failed'].includes(job.status)) generationJobs.delete(id);
+  }
   for (const [key, id] of idempotencyJobs) if (!generationJobs.has(id)) idempotencyJobs.delete(key);
-  while (generationJobs.size > generationJobLimit) generationJobs.delete(generationJobs.keys().next().value);
 }
-function startGenerationJob(body, requestId, idempotencyKey = '') {
+function acquireGenerationSlot() {
+  if (activeGenerations >= generationConcurrency) throw Object.assign(new Error('generation_busy'),{code:'generation_busy'});
+  activeGenerations += 1;
+}
+function startGenerationJob(body, requestId, idempotencyKey = '', requester = '') {
+  const normalizedBody = validateDraftRequest(body);
+  const payloadHash = createHash('sha256').update(JSON.stringify(normalizedBody)).digest('hex');
+  const scopedKey = idempotencyKey ? createHash('sha256').update(`${requester}\0${idempotencyKey}`).digest('hex') : '';
   pruneGenerationJobs();
-  const existingId = idempotencyKey ? idempotencyJobs.get(idempotencyKey) : '';
+  const existingId = scopedKey ? idempotencyJobs.get(scopedKey) : '';
   const existing = existingId ? generationJobs.get(existingId) : null;
-  if (existing) return { job:existing, reused:true };
+  if (existing) {
+    if (existing.payloadHash !== payloadHash) throw Object.assign(new Error('idempotency_conflict'),{code:'idempotency_conflict'});
+    return { job:existing, reused:true };
+  }
+  if (activeGenerations >= generationConcurrency) throw Object.assign(new Error('generation_busy'),{code:'generation_busy'});
+  pruneGenerationJobs(1);
+  if (generationJobs.size >= generationJobLimit) throw Object.assign(new Error('generation_busy'),{code:'generation_busy'});
+  acquireGenerationSlot();
   const id = randomUUID();
-  const job = { id, requestId, createdAt:Date.now(), updatedAt:Date.now(), startedAt:null, completedAt:null, status:'queued', result:null, error:null };
+  const job = { id, requestId, payloadHash, createdAt:Date.now(), updatedAt:Date.now(), startedAt:null, completedAt:null, status:'queued', result:null, error:null };
   generationJobs.set(id,job);
-  if (idempotencyKey) idempotencyJobs.set(idempotencyKey,id);
+  if (scopedKey) idempotencyJobs.set(scopedKey,id);
   generationMetrics.started += 1;
   queueMicrotask(async () => {
     job.status='running'; job.startedAt=Date.now(); job.updatedAt=job.startedAt;
     try {
-      job.result = await generateScenarioDraft(body,requestId);
+      job.result = await generateScenarioDraft(normalizedBody,requestId);
       job.status='completed';
       generationMetrics.completed += 1;
       generationMetrics.totalDurationMs += Date.now() - job.startedAt;
@@ -468,7 +429,7 @@ function startGenerationJob(body, requestId, idempotencyKey = '') {
       generationMetrics.lastFailureAt = Date.now();
       console.error(JSON.stringify({ event:'scenario_draft_failed', requestId, code:job.error, status:error?.status || null, name:error?.name || null, message:String(error?.message || '').slice(0,240) }));
     }
-    finally { job.completedAt=Date.now(); job.updatedAt=job.completedAt; }
+    finally { job.completedAt=Date.now(); job.updatedAt=job.completedAt; activeGenerations -= 1; pruneGenerationJobs(); }
   });
   return { job, reused:false };
 }
@@ -479,17 +440,28 @@ function publicJob(job) {
   return response;
 }
 function sendFile(file,response) {
-  stat(file,(error,details) => {
-    if (error || !details.isFile()) { response.writeHead(404,{ 'Content-Type':'text/plain; charset=utf-8' }); response.end('Not found'); return; }
-    const releaseCritical = path.basename(file) === 'interactive-simulator-builder.html' || file.includes(`${path.sep}assets${path.sep}v2${path.sep}`) || file.endsWith(`${path.sep}assets${path.sep}v2-modern.css`) || file.endsWith(`${path.sep}assets${path.sep}v2-modern.js`);
-    response.writeHead(200,{ 'Content-Type':mimeTypes[path.extname(file).toLowerCase()] || 'application/octet-stream', 'Cache-Control':releaseCritical ? 'no-cache' : 'public, max-age=3600' });
-    createReadStream(file).pipe(response);
+  const missing = () => { response.writeHead(404,{ 'Content-Type':'text/plain; charset=utf-8' }); response.end('Not found'); };
+  realpath(file,(resolveError,resolved) => {
+    if (resolveError || !publicFilePath(root,path.relative(root,resolved))) { missing(); return; }
+    stat(resolved,(error,details) => {
+      if (error || !details.isFile()) { missing(); return; }
+      const releaseCritical = ['.html','.js','.css'].includes(path.extname(resolved).toLowerCase());
+      const contentType=mimeTypes[path.extname(resolved).toLowerCase()];
+      const stream=createReadStream(resolved);
+      response.on('close',() => stream.destroy());
+      stream.on('error',() => { if (!response.headersSent) missing(); else response.destroy(); });
+      stream.on('open',() => {
+        response.writeHead(200,{ 'Content-Type':contentType, 'Cache-Control':releaseCritical ? 'no-cache' : 'public, max-age=3600', 'X-Content-Type-Options':'nosniff', ...(contentType === 'image/svg+xml' ? { 'Content-Security-Policy':svgContentSecurityPolicy } : {}) });
+        stream.pipe(response);
+      });
+    });
   });
 }
 async function handleApi(request,response,url) {
   const requestId = request.headers['x-request-id']?.toString().slice(0,96) || randomUUID();
   if (request.method === 'GET' && url.pathname === '/api/health') { sendJson(response,200,{ ok:true, service:'two-way-experience-studio', version:appVersion, environment:appEnvironment, aiConfigured:Boolean(geminiApiKey), jobs:{ transient:true, retentionMinutes:generationJobTtlMs / 60_000, metrics:publicGenerationMetrics() } },requestId); return true; }
   if (request.method === 'POST' && url.pathname === '/api/client-diagnostic') {
+    if (!withinRateLimit(request,'diagnostic',20)) { sendJson(response,429,{ error:'rate_limited' },requestId); return true; }
     try {
       const body = await readJson(request);
       const safeText = value => String(value || '').replace(/[\r\n\t]/g,' ').slice(0,400);
@@ -508,6 +480,7 @@ async function handleApi(request,response,url) {
   }
   const jobMatch = url.pathname.match(/^\/api\/scenario-jobs\/([0-9a-f-]{36})$/i);
   if (request.method === 'GET' && jobMatch) {
+    pruneGenerationJobs();
     const job = generationJobs.get(jobMatch[1]);
     if (!job) sendJson(response,404,{ error:'job_not_found' },requestId);
     else sendJson(response,200,publicJob(job),requestId);
@@ -519,24 +492,36 @@ async function handleApi(request,response,url) {
       const body = await readJson(request);
       validateDraftRequest(body);
       const idempotencyKey = String(request.headers['x-idempotency-key'] || request.headers['x-request-id'] || '').trim().slice(0,128);
-      const { job, reused } = startGenerationJob(body,requestId,idempotencyKey);
+      const { job, reused } = startGenerationJob(body,requestId,idempotencyKey,clientIp(request));
       sendJson(response,202,{ id:job.id, status:job.status, poll:`/api/scenario-jobs/${job.id}`, reused },requestId);
     } catch (error) { sendJson(response,errorStatus(error?.code),{ error:error?.code || 'scenario_generation_failed' },requestId); }
     return true;
   }
   if (request.method === 'GET' && url.pathname === '/api/asset') {
+    if (!withinRateLimit(request,'asset',120)) { sendJson(response,429,{ error:'rate_limited' },requestId); return true; }
     const requested = url.searchParams.get('url');
     if (!requested) { sendJson(response,400,{ error:'missing_url' }); return true; }
-    try { const asset = await fetchRemote(requested,imageLimitBytes); if (!asset.contentType.toLowerCase().startsWith('image/')) throw Object.assign(new Error('not_an_image'),{ code:'not_an_image' }); if (url.searchParams.get('raw') === '1') { response.writeHead(200,{ 'Content-Type':asset.contentType.split(';')[0], 'Cache-Control':'private, max-age=300', 'X-Content-Type-Options':'nosniff' }); response.end(asset.body); } else sendJson(response,200,{ dataUrl:`data:${asset.contentType.split(';')[0]};base64,${asset.body.toString('base64')}` }); }
-    catch (error) { sendJson(response,502,{ error:error.code || 'asset_fetch_failed' }); }
+    try {
+      const asset = await fetchRemote(requested,imageLimitBytes);
+      const contentType=asset.contentType.split(';')[0].trim().toLowerCase();
+      if (!supportedImageTypes.has(contentType)) throw Object.assign(new Error('not_an_image'),{ code:'not_an_image' });
+      if (url.searchParams.get('raw') === '1') {
+        response.writeHead(200,{ 'Content-Type':contentType, 'Cache-Control':'private, max-age=300', 'X-Content-Type-Options':'nosniff', ...(contentType === 'image/svg+xml' ? { 'Content-Security-Policy':svgContentSecurityPolicy } : {}) });
+        response.end(asset.body);
+      } else sendJson(response,200,{ dataUrl:`data:${contentType};base64,${asset.body.toString('base64')}` });
+    } catch (error) { sendJson(response,errorStatus(error.code),{ error:error.code || 'asset_fetch_failed' },requestId); }
     return true;
   }
   if (request.method === 'POST' && url.pathname === '/api/scenario-draft') {
     if (!withinRateLimit(request)) { sendJson(response,429,{ error:'rate_limited' },requestId); return true; }
+    let admitted=false;
     try {
-      const result = await generateScenarioDraft(await readJson(request),requestId);
+      const body=validateDraftRequest(await readJson(request));
+      acquireGenerationSlot(); admitted=true;
+      const result = await generateScenarioDraft(body,requestId);
       sendJson(response,200,result,requestId);
     } catch (error) { const code=error?.code || 'scenario_generation_failed'; console.error(JSON.stringify({ event:'scenario_draft_failed', requestId, code, status:error?.status || null, name:error?.name || null, message:String(error?.message || '').slice(0,240) })); sendJson(response,errorStatus(code),{ error:code },requestId); }
+    finally { if (admitted) activeGenerations -= 1; }
     return true;
   }
   return false;
@@ -547,7 +532,8 @@ http.createServer(async (request,response) => {
   try { if (url.pathname.startsWith('/api/') && await handleApi(request,response,url)) return; } catch { sendJson(response,500,{ error:'server_error' }); return; }
   let relativePath;
   try { relativePath = url.pathname === '/' ? 'interactive-simulator-builder.html' : decodeURIComponent(url.pathname).replace(/^\/+/, ''); } catch { response.writeHead(400); response.end('Invalid path'); return; }
-  const file = path.resolve(root,relativePath);
-  if (!file.startsWith(`${root}${path.sep}`)) { response.writeHead(400); response.end('Invalid path'); return; }
+  if (!['GET','HEAD'].includes(request.method)) { response.writeHead(405,{ Allow:'GET, HEAD' }); response.end(); return; }
+  const file = publicFilePath(root,relativePath);
+  if (!file) { response.writeHead(404); response.end('Not found'); return; }
   sendFile(file,response);
 }).listen(port,() => console.log(`Two-Way Experience Studio ${appVersion} is running on port ${port} (${appEnvironment}); AI setup: ${geminiApiKey ? 'configured':'needs GEMINI_API_KEY'}`));
