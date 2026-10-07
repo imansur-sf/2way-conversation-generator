@@ -27,6 +27,20 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --ignore-scripts
+        id: dependencies
       - run: npx playwright install --with-deps chromium
-      - run: npm test
-      - run: npm run test:browser
+        id: browser
+      - name: Code-level regression tests
+        run: npm test
+      - name: Browser security
+        if: ${{ !cancelled() && steps.browser.outcome == 'success' }}
+        run: node test/security-browser.mjs
+      - name: Browser state reliability
+        if: ${{ !cancelled() && steps.browser.outcome == 'success' }}
+        run: node test/state-browser.mjs
+      - name: Downloaded export integrity
+        if: ${{ !cancelled() && steps.browser.outcome == 'success' }}
+        run: node test/export-browser.mjs
+      - name: Integrated builder and playback
+        if: ${{ !cancelled() && steps.browser.outcome == 'success' }}
+        run: node test/e2e-local.mjs

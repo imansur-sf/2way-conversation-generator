@@ -19,10 +19,12 @@ const base=`http://127.0.0.1:${server.address().port}`;
 const browser=await chromium.launch(browserOptions);
 const key='two-way-experience-studio-v2-scenarios';
 const scenario=(id,text=`${id} delayed reply`)=>({id,name:id,channel:'sms',schemaVersion:2,brandName:id,smsAddress:id,initials:id,avatar:'',steps:[{id:`${id}-input`,author:'customer',kind:'free',text:'',options:'',reusableSet:false},{id:`${id}-reply`,author:'brand',kind:'text',text,matchTerms:'',allowRepeat:true}]});
+let latestPage=null,latestErrors=[];
 async function fresh(){
   const context=await browser.newContext();
   await context.route('**/*',route=>new URL(route.request().url()).origin===base?route.continue():route.abort());
   const page=await context.newPage();page.setDefaultTimeout(10000);const errors=[];page.on('pageerror',error=>errors.push(error.message));
+  latestPage=page;latestErrors=errors;
   await page.goto(`${base}/seed`);return {context,page,errors};
 }
 async function seed(page,scenarios,{savedAt=200,durable=null}={}){
@@ -35,6 +37,13 @@ async function seed(page,scenarios,{savedAt=200,durable=null}={}){
 async function boot(page,url=base){await page.goto(url,{waitUntil:'domcontentloaded'});await page.evaluate(()=>window.__twoWayScenarioInitialization);assert.equal(await page.locator('.builder').evaluate(node=>node.inert),false)}
 async function manual(page){if(await page.locator('#chooseManual').isVisible())await page.locator('#chooseManual').click()}
 async function record(page){return page.evaluate(key=>JSON.parse(localStorage.getItem(key)),key)}
+async function failureDiagnostics(){
+  if(!latestPage||latestPage.isClosed())return {pageClosed:true,pageErrors:latestErrors};
+  try{return {pageErrors:latestErrors,...await latestPage.evaluate(key=>{
+    let cached=null;try{cached=JSON.parse(localStorage.getItem(key)||'null')}catch{}
+    return {path:location.pathname,hasShareHash:location.hash.includes('scenario='),builderInert:document.querySelector('.builder')?.inert,saveState:document.querySelector('#saveState')?.textContent,saveDetail:document.querySelector('#storageNotice')?.textContent,bootstrapFailure:document.querySelector('#bootstrapFailure')?.textContent,selectedScenario:document.querySelector('#scenarioName')?.value,primaryLoaded:Boolean(window.__twoWayPrimaryScenarioLoaded),edited:Boolean(window.__twoWayScenarioEdited),cache:cached?{version:cached.version,savedAt:cached.savedAt,activeId:cached.activeId,scenarios:cached.scenarios?.map(item=>({id:item.id,name:item.name,mode:item.scenarioMode,channel:item.channel}))}:null};
+  },key)}}catch(error){return {pageErrors:latestErrors,diagnosticsError:error.message}}
+}
 const results=[];
 const selected=name=>!process.argv[2]||process.argv[2]===name;
 try{
@@ -56,7 +65,10 @@ try{
     await boot(page,`${base}/#scenario=${payload}`);
     await page.waitForFunction(()=>document.querySelector('#saveState')?.textContent==='Saved on this device');
     assert.match(await page.locator('#scenarioName').inputValue(),/Shared import.*shared/);
-    assert.ok((await record(page)).scenarios.some(item=>item.id==='existing'));
+    const sharedRecord=await record(page);
+    assert.ok(sharedRecord.scenarios.some(item=>item.id==='existing'));
+    const savedShared=sharedRecord.scenarios.find(item=>item.id===sharedRecord.activeId);
+    assert.match(savedShared.name,/Shared import.*shared/);assert.equal(savedShared.scenarioMode,'single','the saved shared revision includes render-time normalization');
     await boot(page);assert.match(await page.locator('#scenarioName').inputValue(),/Shared import.*shared/);
     assert.deepEqual(errors,[]);results.push('delayed hydration retains shared-link import and existing scenarios');await context.close();
   }
@@ -111,5 +123,5 @@ try{
     results.push('saved and shared malicious IDs are normalized before rendering');await context.close();
   }
   console.log(JSON.stringify({passed:results.length,results},null,2));
-}catch(error){console.error(JSON.stringify({completed:results,error:error.message},null,2));throw error;
+}catch(error){console.error(JSON.stringify({completed:results,error:error.message,diagnostics:await failureDiagnostics()},null,2));throw error;
 }finally{await browser.close();await new Promise(resolve=>server.close(resolve))}

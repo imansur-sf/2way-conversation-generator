@@ -159,6 +159,34 @@ test('late hydration does not replace work changed while reading', async () => {
   assert.equal(context.state.activeId,'shared');assert.equal(context.state.scenarios.length,2);
 });
 
+test('shared-link startup saves the fully normalized rendered revision after delayed hydration', async () => {
+  let releaseRead;const writes=[],shared=scenario('Shared import'),existing=scenario('existing');
+  const context=environment({
+    saved:JSON.stringify({version:2,savedAt:200,scenarios:[existing]}),storedScenarios:[existing],
+    durableRead:key=>key==='current'?new Promise(resolve=>releaseRead=resolve):Promise.resolve(null),
+    durableWrite:(key,value)=>{writes.push({key,value:clone(value)});return Promise.resolve()},
+    location:{hash:`#scenario=${encodeURIComponent(Buffer.from(JSON.stringify(shared)).toString('base64'))}`,pathname:'/',search:''},
+    history:{replaceState(){}},URLSearchParams,atob,escape,sessionStorage:storage(),
+    supportedScenarioChannels:new Set(['sms','rcs','whatsapp','email']),scenarioMigrationDirty:false,
+    builderDuringStartup:null,bootstrapRendered:false,bootstrapPhase:'startup',bootstrapRecoveryFlag:'recovery',releaseStandaloneExportBoot(){},
+    showBootstrapFailure(error){throw new Error(error.message)},reportBootstrapDiagnostic(){},
+  });
+  context.state.scenarios=[clone(existing)];context.state.activeId='existing';
+  installJourneys(context);installPersistence(context);
+  vm.runInContext(['normalizeScenario','ensureJourneyState','hydrateDurableScenarioState','loadSharedScenario','migrateRcsCardActions'].map(fn).join('\n'),context);
+  context.renderAll=()=>context.ensureJourneyState();
+  vm.runInContext(source('window.__twoWayScenarioInitialization=(async()=>{'),context);
+  assert.equal(context.state.scenarios.length,1,'share import waits behind hydration');
+  releaseRead({version:2,savedAt:300,activeId:'existing',scenarios:[existing]});
+  await context.window.__twoWayScenarioInitialization;await tick();
+  assert.equal(context.bootstrapRendered,true);assert.equal(context.state.scenarios.length,2);assert.equal(context.state.scenarios[0].id,'existing');
+  assert.match(context.active().name,/Shared import.*shared/);assert.equal(context.active().scenarioMode,'single');
+  const stored=writes.filter(write=>write.key==='current').at(-1).value;
+  assert.deepEqual(stored.scenarios,clone(context.state.scenarios),'durable acknowledgement must describe the post-render revision');
+  assert.deepEqual(JSON.parse(context.localStorage.getItem('current')).scenarios,stored.scenarios);
+  assert.equal(context.state.unsavedScenarioChanges,false);assert.equal(context.notices.at(-1).outcome,'saved');
+});
+
 test('recovery bypasses durable state and retains it for preservation', async () => {
   const original={version:2,scenarios:[scenario('old')]};
   const context=environment({bootstrapRecoveryWasUsed:true,durableRead:key=>Promise.resolve(key==='current'?original:null)});installJourneys(context);
