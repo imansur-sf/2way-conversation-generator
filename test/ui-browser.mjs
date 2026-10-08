@@ -53,7 +53,7 @@ async function metrics(page){return page.evaluate(()=>{
 })}
 async function emailReadingBounds(page){return page.evaluate(()=>{
   const mail=document.querySelector('#stage .mailview');if(!mail)return null;
-  const chain=['.gmail','.mail-pane','.g-detail-scroll'].map(selector=>{const node=document.querySelector(`#stage ${selector}`),box=node.getBoundingClientRect();return {selector,left:box.left,right:box.right,width:box.width,clientWidth:node.clientWidth,scrollWidth:node.scrollWidth}});
+  const chain=['.gmail','.g-main','.mail-pane','.g-detail-scroll'].map(selector=>{const node=document.querySelector(`#stage ${selector}`),box=node.getBoundingClientRect(),style=getComputedStyle(node);return {selector,left:box.left,right:box.right,width:box.width,clientWidth:node.clientWidth,scrollWidth:node.scrollWidth,gridTemplateColumns:style.gridTemplateColumns,minWidth:style.minWidth,overflowX:style.overflowX}});
   const left=Math.max(...chain.map(box=>box.left)),right=Math.min(...chain.map(box=>box.right)),violations=[];
   const record=(kind,label,box)=>{if(box.width>0&&(box.left<left-1||box.right>right+1))violations.push({kind,label,left:box.left,right:box.right})};
   for(const node of [mail,...mail.querySelectorAll('*')])if(node.getClientRects().length)record('element',node.className||node.tagName,node.getBoundingClientRect());

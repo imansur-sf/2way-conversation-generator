@@ -214,12 +214,13 @@ try {
     const bounds=element=>{if(!element)return null;const rect=element.getBoundingClientRect();return {x:rect.x,y:rect.y,width:rect.width,height:rect.height};};
     const snapshot=window.__emailSequenceSnapshot=()=>{
       const input=document.querySelector('#emailInput'),send=document.querySelector('#emailSend'),stage=document.querySelector('#stage'),rect=send?.getBoundingClientRect(),hit=rect&&document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2);
-      return {input:input?.value??null,initialInput:input?.defaultValue??null,inputHandler:typeof input?.oninput,sendHandler:typeof send?.onclick,focused:document.activeElement?.id,send:bounds(send),hit:hit?.closest('button')?.id||hit?.tagName,scroll:document.querySelector('#stage .g-detail-scroll')?.scrollTop,firstCompany:stage?.textContent.includes('First company reply'),secondCustomer:stage?.textContent.includes('Second customer reply'),lastCompany:stage?.textContent.includes('Later company reply')};
+      return {input:input?.value??null,initialInput:input?.defaultValue??null,inputHandler:typeof input?.oninput,sendHandler:typeof send?.onclick,focused:document.activeElement?.id||document.activeElement?.tagName,deviceParent:document.querySelector('#stage .gmail')?.parentElement?.className,send:bounds(send),hit:hit?.closest('button')?.id||hit?.tagName,scroll:document.querySelector('#stage .g-detail-scroll')?.scrollTop,firstCompany:stage?.textContent.includes('First company reply'),secondCustomer:stage?.textContent.includes('Second customer reply'),lastCompany:stage?.textContent.includes('Later company reply')};
     };
     const record=(type,target)=>{trace.push({type,target,...snapshot()});if(trace.length>24)trace.shift();};
-    for(const type of ['input','pointerdown','pointerup','click'])document.addEventListener(type,event=>{if(!event.target.closest('#stage'))return;const target=event.target.closest('button,textarea')?.id||event.target.tagName;record(type,target);if(type==='input'||type==='click')queueMicrotask(()=>record(`${type}:after`,target));},true);
+    for(const type of ['focusin','focusout','beforeinput','input','pointerdown','pointerup','click'])document.addEventListener(type,event=>{if(!event.target.closest('#stage')&&event.target.id!=='emailInput')return;const target=event.target.closest('button,textarea')?.id||event.target.tagName;record(type,target);if(type==='input'||type==='click')queueMicrotask(()=>record(`${type}:after`,target));},true);
     new MutationObserver(()=>record('preview-mutation','stage')).observe(document.querySelector('#stage'),{childList:true,subtree:true});
   });
+  try{
   await emailPage.locator('[data-email="0"]').click();
   assert.equal(await emailPage.locator('.scenario-email').count(), 1, 'A company-first opening email must render once, even when the active scenario projection recreates its step object');
   await emailPage.locator('#openEmailReply').click();
@@ -230,8 +231,21 @@ try {
   await emailPage.locator('#emailInput').fill('Second customer reply');
   assert.equal(await emailPage.locator('#emailInput').inputValue(),'Second customer reply','The second draft must exist before sending');
   await emailPage.locator('#emailSend').click();
-  await emailPage.waitForFunction(() => document.querySelector('#stage')?.textContent?.includes('Later company reply'),null,{timeout:5000}).catch(async error=>{console.error('Email sequence diagnostics:',JSON.stringify(await emailPage.evaluate(()=>({current:window.__emailSequenceSnapshot?.(),trace:window.__emailSequenceTrace})).catch(()=>'<page closed>')));console.error('Email conversation after second reply:',await emailPage.locator('#stage').innerText().catch(()=>'<page closed>'));throw error});
+  await emailPage.waitForFunction(() => document.querySelector('#stage')?.textContent?.includes('Later company reply'),null,{timeout:5000});
   assert.match(await emailPage.locator('#stage').innerText(),/Second customer reply/,'The second submitted customer message must remain in the thread');
+  await emailPage.locator('#openEmailReply').click();
+  await emailPage.locator('#emailInput').fill('Keep this draft and selection');
+  await emailPage.locator('#stage .v2-preview-canvas').waitFor({state:'attached'});
+  const retainedDraft=await emailPage.evaluate(async()=>{
+    const input=document.querySelector('#emailInput'),handler=input.oninput,canvas=document.querySelector('#stage .v2-preview-canvas'),device=canvas.querySelector('.gmail');
+    // Recreate the unwrapped device produced by renderEmail, then focus before
+    // the queued fit frame exactly as a fast user or input automation can.
+    canvas.before(device);canvas.remove();input.focus();input.setSelectionRange(5,15,'backward');
+    window.TwoWayV2.refreshPreviewFit();await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+    return {value:input.value,focused:document.activeElement===input,selection:[input.selectionStart,input.selectionEnd,input.selectionDirection],sameHandler:input.oninput===handler};
+  });
+  assert.deepEqual(retainedDraft,{value:'Keep this draft and selection',focused:true,selection:[5,15,'backward'],sameHandler:true},'The asynchronous fit wrapper must retain a live email draft, caret and input handler');
+  }catch(error){console.error('Email sequence diagnostics:',JSON.stringify(await emailPage.evaluate(()=>({current:window.__emailSequenceSnapshot?.(),trace:window.__emailSequenceTrace})).catch(()=>'<page closed>')));console.error('Email conversation after second reply:',await emailPage.locator('#stage').innerText().catch(()=>'<page closed>'));throw error;}
   await emailContext.close();
   });
   await runCase('email-export',async()=>{

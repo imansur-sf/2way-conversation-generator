@@ -349,6 +349,8 @@ dialog.rcs-image-cropper::backdrop { background:transparent; }
   .appbar :is(.top-quiet,.top-primary) { padding-inline:8px; }
   body .preview .stage { padding:12px; border-radius:12px; }
   .rcs-crop-position { grid-template-columns:1fr; }
+  body #stage .gmail.g-source-gmail { grid-template-columns:minmax(0,1fr); }
+  body #stage .gmail > .gmail-top { min-width:0; max-width:100%; overflow-x:auto; }
   body #stage .gmail :is(.g-main,.mail-pane,.g-detail-scroll,.mailview) { min-width:0; max-width:100%; }
   body #stage .gmail :is(.mail-pane,.g-detail-scroll,.mailview) { width:100%; }
   body #stage .gmail .g-detail-toolbar { flex-wrap:wrap; height:auto; max-width:100%; padding-inline:8px; }

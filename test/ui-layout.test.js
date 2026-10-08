@@ -29,6 +29,24 @@ test('focus enlarges within bounds while every manual zoom remains exact',()=>{
   env.classes.clear();env.context.mode='auto';env.context.window.TwoWayV2.refreshPreviewFit();env.flush();assert.equal(Number(env.values.get('--v2-device-scale')),1);
 });
 
+test('initial fit retains a focused textarea draft, caret and handlers without stealing other focus',()=>{
+  for(const mode of ['focused','outside','removed','redirected']){
+    const frames=[],oninput=()=>{},outside={};let focusCalls=0;
+    const body={classList:{contains:()=>false}},document={readyState:'complete',body,addEventListener(){}};
+    const input={value:'Second customer reply',selectionStart:7,selectionEnd:15,selectionDirection:'backward',isConnected:true,oninput,focus(options){assert.equal(options.preventScroll,true);focusCalls++;document.activeElement=this;},setSelectionRange(start,end,direction){this.selectionStart=start;this.selectionEnd=end;this.selectionDirection=direction;}};
+    document.activeElement=mode==='outside'?outside:input;
+    const canvas={style:{},append(){if(mode==='outside')return;document.activeElement=mode==='redirected'?outside:body;if(mode==='removed')input.isConnected=false;input.selectionStart=0;input.selectionEnd=0;input.selectionDirection='none';}};
+    const device={offsetWidth:700,offsetHeight:600,classList:{contains:()=>true},style:{setProperty(){}},contains:element=>element===input,before(){}};
+    const stage={clientWidth:800,clientHeight:700,style:{setProperty(){}},dataset:{},classList:{remove(){}},closest:()=>null,querySelector:selector=>selector==='.phone,.gmail'?device:null};
+    document.querySelector=selector=>selector==='#stage'?stage:{value:'auto',addEventListener(){}};document.createElement=()=>canvas;
+    const context={document,window:{addEventListener(){}},getComputedStyle:()=>({paddingLeft:'0',paddingRight:'0',paddingTop:'0',paddingBottom:'0'}),ResizeObserver:class{observe(){}},MutationObserver:class{observe(){}},requestAnimationFrame:callback=>frames.push(callback)};
+    vm.runInNewContext(fitSource,context);frames.splice(0).forEach(callback=>callback());
+    assert.equal(input.value,'Second customer reply');assert.equal(input.oninput,oninput);
+    if(mode==='focused'){assert.equal(document.activeElement,input);assert.deepEqual([input.selectionStart,input.selectionEnd,input.selectionDirection],[7,15,'backward']);assert.equal(focusCalls,1);}
+    else{assert.equal(document.activeElement,mode==='removed'?body:outside);assert.equal(focusCalls,0);}
+  }
+});
+
 test('crop dialog wraps both Tab boundaries, skips hidden/disabled controls and leaves interior Tab native',()=>{
   const html=fs.readFileSync(require.resolve('../interactive-simulator-builder.html'),'utf8');
   const source=html.slice(html.indexOf('    function trapRcsCropTab('),html.indexOf('    function openRcsImageCropper('));

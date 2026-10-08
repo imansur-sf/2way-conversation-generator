@@ -12,7 +12,19 @@
     const width = Math.max(1, stage.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight));
     const height = Math.max(1, stage.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom));
     let canvas = stage.querySelector('.v2-preview-canvas');
-    if (!canvas) { canvas = document.createElement('div'); canvas.className = 'v2-preview-canvas'; device.before(canvas); canvas.append(device); }
+    if (!canvas) {
+      // Moving a focused subtree detaches its active control. The fit pass runs
+      // on a later frame, so a viewer may already be typing into this device.
+      const focused = device.contains(document.activeElement) ? document.activeElement : null;
+      const selection = focused && typeof focused.selectionStart === 'number'
+        ? [focused.selectionStart, focused.selectionEnd, focused.selectionDirection]
+        : null;
+      canvas = document.createElement('div'); canvas.className = 'v2-preview-canvas'; device.before(canvas); canvas.append(device);
+      if (focused?.isConnected && (!document.activeElement || document.activeElement === document.body)) {
+        focused.focus({ preventScroll:true });
+        if (selection && document.activeElement === focused) focused.setSelectionRange(...selection);
+      }
+    }
     const email = device.classList.contains('gmail');
     if (email) {
       device.style.setProperty('width', `${Math.max(360, width)}px`, 'important');
