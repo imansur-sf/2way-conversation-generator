@@ -159,7 +159,7 @@ try {
     }] }));
   });
   await emailExportPage.goto(baseUrl, { waitUntil:'networkidle' });
-  await emailExportPage.evaluate(async () => { await window.__twoWayScenarioInitialization; });
+  await enableManual(emailExportPage);
   const customizedInbox = await emailExportPage.locator('[data-email="0"]').textContent();
   assert.match(customizedInbox, /The customized opening email copy appears everywhere\./, 'The live Gmail inbox must mirror the customized opening company email');
   const emailDownload = await Promise.all([emailExportPage.waitForEvent('download'), emailExportPage.locator('#export').click()]).then(([value]) => value);

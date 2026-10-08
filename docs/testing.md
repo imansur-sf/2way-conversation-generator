@@ -11,7 +11,7 @@ npm test
 
 ## Browser gate
 
-The **Studio quality gate** GitHub Actions workflow installs Playwright's dedicated Chromium, then runs `npm run test:browser`. It runs on pull requests and `codex/**` branches, without production credentials or a deployment step.
+The **Studio quality gate** GitHub Actions workflow installs Playwright's dedicated Chromium, then runs the browser suites as independent steps. A failed suite does not prevent the remaining suites from producing results. It runs on pull requests and `codex/**` branches, without production credentials or a deployment step.
 
 The browser gate runs these suites in order:
 
