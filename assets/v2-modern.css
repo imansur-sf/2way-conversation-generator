@@ -210,6 +210,15 @@ body.presentation #presentationReset,
 body.presentation #presentationNotes,
 body.presentation #presentationNotePanel { display: none !important; }
 
+.v2-preview-mode { flex-wrap:wrap; max-width:calc(100% - 38px); }
+.v2-preview-mode [hidden] { display:none!important; }
+.v2-presentation-hint { padding:7px 9px; color:#fff; font-size:12px; line-height:1.5; }
+.v2-presentation-hint > span { white-space:nowrap; }
+.v2-presentation-hint b { font-variant-numeric:tabular-nums; }
+body.presentation.v2-presentation-bar-hidden .v2-preview-mode,
+body.presentation.v2-presentation-bar-hidden .preview-info,
+body.presentation.v2-presentation-bar-hidden #emailPresentationHint { display:none!important; }
+
 @media (min-width: 951px) {
   body.v2-focus-mode .studio { grid-template-columns: 74px minmax(0, 1fr) !important; transition: grid-template-columns .28s ease; }
   body.v2-focus-mode .builder { padding: 12px 8px; overflow: hidden; }

@@ -200,15 +200,77 @@
     document.querySelectorAll('.phone .status,.phone-side,.card-img__shade,.crop-safe-area').forEach(node => node.setAttribute('aria-hidden','true'));
     syncWorkspaceLayout();
   };
+  const bindPresentationControls = control => {
+    const button = control.querySelector('[data-v2-preview-present]');
+    if (!button) return;
+    const hint = document.createElement('span');
+    hint.className = 'v2-presentation-hint';
+    hint.hidden = true;
+    hint.setAttribute('role', 'status');
+    hint.innerHTML = 'To exit out of full screen, press Escape <span aria-hidden="true">— hiding in <b data-v2-hide-countdown>5</b>s</span>';
+    button.after(hint);
+    const counter = hint.querySelector('[data-v2-hide-countdown]');
+    let timer = null, wasPresenting = false;
+    const stopCountdown = () => {
+      if (timer !== null) clearInterval(timer);
+      timer = null;
+    };
+    const focusPreview = () => {
+      const stage = document.querySelector('#stage');
+      if (!stage) return;
+      if (!stage.hasAttribute('tabindex')) stage.setAttribute('tabindex', '-1');
+      stage.focus({ preventScroll:true });
+    };
+    // Observe the shared presentation class: header controls, exports and the
+    // existing Escape handlers can all enter/leave presentation independently.
+    const syncPresentation = () => {
+      const presenting = document.body.classList.contains('presentation');
+      const label = presenting ? 'Hide bar' : 'Present';
+      if (button.textContent !== label) button.textContent = label;
+      if (!presenting) {
+        stopCountdown();
+        hint.hidden = true;
+        button.hidden = false;
+        if (document.body.classList.contains('v2-presentation-bar-hidden')) document.body.classList.remove('v2-presentation-bar-hidden');
+        if (wasPresenting) button.focus({ preventScroll:true });
+      }
+      wasPresenting = presenting;
+    };
+    new MutationObserver(syncPresentation).observe(document.body, { attributes:true, attributeFilter:['class'] });
+    button.addEventListener('click', () => {
+      if (!document.body.classList.contains('presentation')) {
+        document.querySelector('#presentation')?.click();
+        syncPresentation();
+        return;
+      }
+      if (timer !== null || document.body.classList.contains('v2-presentation-bar-hidden')) return;
+      const deadline = Date.now() + 5000;
+      counter.textContent = '5';
+      button.hidden = true;
+      hint.hidden = false;
+      focusPreview();
+      timer = setInterval(() => {
+        if (!document.body.classList.contains('presentation')) { syncPresentation(); return; }
+        const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+        if (!remaining) {
+          stopCountdown();
+          if (control.contains(document.activeElement)) focusPreview();
+          hint.hidden = true;
+          document.body.classList.add('v2-presentation-bar-hidden');
+        } else if (counter.textContent !== String(remaining)) counter.textContent = String(remaining);
+      }, 100);
+    });
+    syncPresentation();
+  };
   const bindPreviewMode = control => {
     // Keep the binding marker as a runtime property, not a data attribute.
     // Downloaded HTML serializes data attributes, which would otherwise make
     // its freshly loaded script incorrectly think these buttons were bound.
     if (control.__v2PreviewModeBound) return;
     control.__v2PreviewModeBound = true;
+    bindPresentationControls(control);
     control.addEventListener('click', event => {
       if (event.target.closest('[data-v2-preview-reset]')) document.querySelector('#reset')?.click();
-      if (event.target.closest('[data-v2-preview-present]')) document.querySelector('#presentation')?.click();
       const focus = event.target.closest('[data-v2-preview-focus]');
       if (focus) {
         const enabled = document.body.classList.toggle('v2-focus-mode');

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
 import { browserOptions } from './browser-options.mjs';
 import { checkThreadRow, companyNames } from './thread-row-checks.mjs';
+import { checkPresentationToolbar } from './presentation-checks.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const port = Number(process.env.EXPORT_TEST_PORT || 3186);
@@ -105,10 +106,7 @@ async function controls(page, channel, thread) {
   await page.locator('#previewScale').selectOption('auto',{force:true});
   await page.locator('[data-v2-preview-focus]').click();
   assert.equal(await page.locator('body').evaluate(node => node.classList.contains('v2-focus-mode')), false);
-  await page.locator('[data-v2-preview-present]').click();
-  await page.waitForFunction(() => document.body.classList.contains('presentation'));
-  await page.keyboard.press('Escape');
-  await page.waitForFunction(() => !document.body.classList.contains('presentation'));
+  await checkPresentationToolbar(page, { cancelEarly:channel === 'sms' });
 }
 
 try {

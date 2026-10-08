@@ -112,3 +112,11 @@ The carousel test now waits for settled fitted geometry, reacquires and checks h
 Final candidate `daa7d06a77185a46b270bf1655105e8e5a88e7d2` passed every group in [run 37724679765](https://github.com/imansur-sf/2way-conversation-generator/actions/runs/37724679765): code, browser security, state reliability, downloaded exports, integrated playback, mocked AI application and responsive editing. All ten exact-name preview cases passed. Both long-name cases retained one timestamp text line, an 8 px sender/time gap and sender ellipsis; screenshots were reviewed. Actual downloaded SMS/RCS files also passed offline at desktop and narrow viewport sizes. Existing downloads are unchanged and must be regenerated.
 
 Heroku build `7a885c18-c714-42e8-b42f-dc608cb5d95e` deployed that exact source to staging **v54**, release `5498c659-afbd-4b57-baab-09dc464ddf39`. The web dyno was verified up on v54 and its `/api/health` returned HTTP 200, `ok: true`, environment `staging`, version `2.0.0` and configured model `gemini-3.5-flash`. No live AI requests were made for this CSS-only runtime change. Production main and release remained unchanged at `d8d8e2d` / v180. The annotated follow-up tag was pushed and remotely verified; the Phase 2/v53 rollback point remains intact.
+
+## Approved follow-up — clean presentation toolbar
+
+The user requested this adjustment before production promotion. The published inbox-layout tag / staging v54 is the pre-change rollback point. TaskCreate/TaskUpdate tools are unavailable; this ledger tracks the work instead.
+
+- [x] Share Present → Hide bar behavior between the builder and all standalone exports. Show an inline five-second Escape instruction before hiding the toolbar and information button; no popup.
+- [ ] Verify countdown progression, Escape cancellation/restoration, repeat entry, header entry, four channels, narrow layout and actual offline exports.
+- [ ] Pass code and browser gates, publish a checkpoint and deploy only to staging. Production remains unchanged pending approval.

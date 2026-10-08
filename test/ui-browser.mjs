@@ -8,6 +8,7 @@ import { chromium } from '@playwright/test';
 import axe from 'axe-core';
 import { browserOptions } from './browser-options.mjs';
 import { checkThreadRow, companyNames } from './thread-row-checks.mjs';
+import { checkPresentationToolbar } from './presentation-checks.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const output=path.join(root,'test-results/ui');await mkdir(output,{recursive:true});
@@ -106,6 +107,24 @@ try{
       }
       for(const [mode,scale] of [['.85',.85],['.7',.7],['1',1]]){await page.locator('#previewScale').selectOption(mode);await settle(page);assert.equal((await metrics(page)).scale,scale,'Manual zoom must remain exact')}
     })}finally{await context.close()}
+  });
+  for(const [name,viewport] of Object.entries({desktop:{width:1440,height:1000},narrow:{width:390,height:844}}))await run(`presentation-hide-bar-${name}`,async()=>{
+    const {context,page,errors}=await fresh(viewport);
+    try{
+      for(const channel of ['sms','rcs','whatsapp','email']){
+        await panel(page,'editor');await page.locator(`[data-channel="${channel}"]`).click();await panel(page,'preview');await settle(page);
+        await checkPresentationToolbar(page,{
+          enterFromHeader:name==='desktop',cancelEarly:name==='desktop'&&channel==='sms',
+          onCountdown:async()=>{
+            const screenshot=`presentation-${name}-${channel}-countdown.png`;await page.screenshot({path:path.join(output,screenshot)});manifest.push({name:'presentation-countdown',viewport,channel,screenshot});
+          },
+          onHidden:async()=>{
+            await settle(page);const value=await metrics(page),screenshot=`presentation-${name}-${channel}-hidden.png`;assertFit(value);await page.screenshot({path:path.join(output,screenshot)});manifest.push({name:'presentation-hidden',viewport,channel,...value,screenshot});
+          }
+        });
+      }
+      assert.deepEqual(errors,[]);
+    }finally{await context.close()}
   });
   await run('long-sender-timestamp-and-chevron',async()=>{
     const scenario=structuredClone(fixture);
