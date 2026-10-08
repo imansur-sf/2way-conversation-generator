@@ -69,7 +69,7 @@ try{
   for(const [name,viewport] of Object.entries({desktop:{width:1440,height:1000},laptop:{width:1280,height:720},tablet:{width:820,height:1180},narrow:{width:390,height:844},landscape:{width:844,height:390}}))await run(`fit-${name}`,async()=>{
     const {context,page,errors}=await fresh(viewport);
     try{for(const channel of ['sms','rcs','whatsapp','email'])await run(`fit-${name}-${channel}`,async()=>{
-      await panel(page,'editor');await page.locator(`[data-channel="${channel}"]`).click();await page.locator('#previewScale').selectOption('auto');await panel(page,'preview');await settle(page);
+      await panel(page,'editor');await page.locator(`[data-channel="${channel}"]`).click();await page.locator('#previewScale').selectOption('auto');await panel(page,'preview');await page.locator('[data-v2-preview-reset]').click();await settle(page);
       const value=await metrics(page),row={name,viewport,channel,...value,errors:[...errors],screenshot:`${name}-${channel}.png`};manifest.push(row);
       await page.screenshot({path:path.join(output,row.screenshot)});assertFit(value);assert.deepEqual(errors,[]);
       if(channel==='sms'){row.axe=await scopedAxe(page,['.appbar','.v2-workspace-tabs','.v2-preview-mode']);assert.deepEqual(row.axe.violations,[],'Changed workspace controls must pass the scoped automated rules')}
