@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
 import axe from 'axe-core';
 import { browserOptions } from './browser-options.mjs';
+import { checkThreadRow, companyNames } from './thread-row-checks.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const output=path.join(root,'test-results/ui');await mkdir(output,{recursive:true});
@@ -15,6 +16,8 @@ const key='two-way-experience-studio-v2-scenarios';
 const image=`data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="600"><rect width="1500" height="600" fill="#165c84"/><circle cx="750" cy="300" r="220" fill="#b8e6ed"/><text x="750" y="320" text-anchor="middle" font-size="80" fill="#153b55">Preview fixture</text></svg>')}`;
 const variants=Object.fromEntries(['sms','rcs','whatsapp','email'].map(channel=>[channel,{channel,brandName:'Example Company',smsAddress:'Example Company',emailAddress:'hello@example.test',initials:'EC',avatar:'',subject:'Your next step',emailBody:'A deterministic email preview.',steps:[{id:`${channel}-opening`,author:'brand',kind:channel==='rcs'?'rich':'text',text:'Welcome. How can we help?',cardTitle:'Explore the next step',cardDescription:'A deterministic image and editable card.',cardImage:channel==='rcs'?image:'',cardCta:'',cardUrl:'',matchTerms:'',options:''},{id:`${channel}-input`,author:'customer',kind:'free',text:'',options:'',reusableSet:false},{id:`${channel}-reply`,author:'brand',kind:'text',text:'We can help with that.',matchTerms:'',options:''}]}]));
 const fixture={id:'ui-fixture',name:'UI regression fixture',schemaVersion:2,scenarioMode:'multi',variants,...variants.sms};
+for(const channel of ['sms','rcs'])Object.assign(fixture.variants[channel],{brandName:companyNames.example,smsAddress:companyNames.example});
+Object.assign(fixture,fixture.variants.sms);
 const server=createServer(async(request,response)=>{
   const pathname=new URL(request.url,'http://localhost').pathname;
   if(pathname==='/seed'){response.setHeader('Content-Type','text/html');response.end('<!doctype html><title>UI fixture</title>');return}
@@ -25,14 +28,14 @@ const server=createServer(async(request,response)=>{
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 const base=`http://127.0.0.1:${server.address().port}`;
 const browser=await chromium.launch(browserOptions),manifest=[],failures=[];
-async function fresh(viewport={width:1440,height:1000}){
+async function fresh(viewport={width:1440,height:1000},scenario=fixture){
   const context=await browser.newContext({viewport,reducedMotion:'reduce'}),page=await context.newPage(),errors=[];
   page.setDefaultTimeout(10000);page.on('pageerror',error=>errors.push(error.message));
   await context.route('**/*',route=>!/^https?:/.test(route.request().url())||new URL(route.request().url()).origin===base?route.continue():route.abort());
-  await page.goto(`${base}/seed`);await page.evaluate(({key,fixture})=>localStorage.setItem(key,JSON.stringify({version:2,savedAt:200,activeId:fixture.id,scenarios:[fixture]})),{key,fixture});
+  await page.goto(`${base}/seed`);await page.evaluate(({key,fixture})=>localStorage.setItem(key,JSON.stringify({version:2,savedAt:200,activeId:fixture.id,scenarios:[fixture]})),{key,fixture:scenario});
   await page.goto(base);await page.evaluate(()=>window.__twoWayScenarioInitialization);
   if(await page.locator('#chooseManual').isVisible())await page.locator('#chooseManual').click();
-  await page.locator('#scenarioSelect').selectOption(fixture.id);
+  await page.locator('#scenarioSelect').selectOption(scenario.id);
   return {context,page,errors};
 }
 async function settle(page){
@@ -81,6 +84,7 @@ try{
     try{for(const channel of ['sms','rcs','whatsapp','email'])await run(`fit-${name}-${channel}`,async()=>{
       await panel(page,'editor');await page.locator(`[data-channel="${channel}"]`).click();await page.locator('#previewScale').selectOption('auto');await panel(page,'preview');await page.locator('[data-v2-preview-reset]').click();await settle(page);
       const value=await metrics(page),row={name,viewport,channel,...value,errors:[...errors],screenshot:`${name}-${channel}.png`};manifest.push(row);
+      if(['sms','rcs'].includes(channel))row.messageList=await checkThreadRow(page,companyNames.example);
       await page.screenshot({path:path.join(output,row.screenshot)});assertFit(value);assert.deepEqual(errors,[]);
       if(channel==='sms'){row.axe=await scopedAxe(page,['.appbar','.v2-workspace-tabs','.v2-preview-mode']);assert.deepEqual(row.axe.violations,[],'Changed workspace controls must pass the scoped automated rules')}
       if(name==='desktop'&&['rcs','email'].includes(channel)){
@@ -102,6 +106,20 @@ try{
       }
       for(const [mode,scale] of [['.85',.85],['.7',.7],['1',1]]){await page.locator('#previewScale').selectOption(mode);await settle(page);assert.equal((await metrics(page)).scale,scale,'Manual zoom must remain exact')}
     })}finally{await context.close()}
+  });
+  await run('long-sender-timestamp-and-chevron',async()=>{
+    const scenario=structuredClone(fixture);
+    for(const channel of ['sms','rcs'])Object.assign(scenario.variants[channel],{brandName:companyNames.stress,smsAddress:companyNames.stress});
+    Object.assign(scenario,scenario.variants.sms);
+    const {context,page,errors}=await fresh(undefined,scenario);
+    try{
+      for(const channel of ['sms','rcs']){
+        await page.locator(`[data-channel="${channel}"]`).click();await page.locator('[data-v2-preview-reset]').click();await settle(page);
+        const value=await checkThreadRow(page,companyNames.stress,{requireTruncation:true,proveBaselineWrap:true});
+        const screenshot=`long-sender-${channel}.png`;manifest.push({name:'long-sender-timestamp',channel,...value,screenshot});await page.screenshot({path:path.join(output,screenshot)});
+      }
+      assert.deepEqual(errors,[]);
+    }finally{await context.close()}
   });
   await run('tabs-keyboard-and-phone-keys',async()=>{
     const {context,page,errors}=await fresh({width:390,height:844});
@@ -154,6 +172,7 @@ try{
       const file=path.join(exportDirectory,`standalone-${channel}.html`);await download.saveAs(file);
       const exported=await context.newPage(),exportErrors=[],dependencies=[];exported.on('pageerror',error=>exportErrors.push(error.message));exported.on('request',request=>{if(/^(https?:|file:)/.test(request.url())&&request.url()!==`file://${file}`)dependencies.push(request.url())});
       await exported.goto(`file://${file}`);await exported.evaluate(()=>window.__twoWayScenarioInitialization);await exported.setViewportSize({width:390,height:600});await settle(exported);
+      if(['sms','rcs'].includes(channel))await checkThreadRow(exported,companyNames.example);
       const value=await metrics(exported);manifest.push({name:'standalone',viewport:{width:390,height:600},channel,...value,errors:exportErrors,dependencies});assertFit(value);assert.deepEqual(exportErrors,[]);assert.deepEqual(dependencies,[],'Standalone UI must remain offline');await exported.screenshot({path:path.join(output,`standalone-${channel}.png`)});await exported.close();
       assert.deepEqual(errors,[])}finally{await context.close()}
   });

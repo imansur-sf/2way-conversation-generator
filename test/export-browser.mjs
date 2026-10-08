@@ -7,6 +7,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
 import { browserOptions } from './browser-options.mjs';
+import { checkThreadRow, companyNames } from './thread-row-checks.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const port = Number(process.env.EXPORT_TEST_PORT || 3186);
@@ -118,6 +119,7 @@ try {
   }
   for (const channel of ['sms','rcs','whatsapp']) {
     const scenario = fixture(channel);
+    if(['sms','rcs'].includes(channel))Object.assign(scenario,{brandName:companyNames.stress,smsAddress:companyNames.stress});
     if (channel === 'sms') {
       scenario.scenarioMode = 'multi';
       scenario.variants = { sms:JSON.parse(JSON.stringify(scenario)), email:{ channel:'email', steps:[{ id:'other-channel-step', author:'brand', kind:'text', text:'UNSELECTED_CHANNEL_CONTENT' }] } };
@@ -130,6 +132,12 @@ try {
       assert.equal(result.data.scenarios[0].id, await builder.locator('#scenarioSelect').inputValue(), 'export retains the builder-selected, validated scenario ID');
       assert.ok(!result.html.includes('UNSELECTED_CHANNEL_CONTENT'));
       const thread = channel === 'whatsapp' ? '[data-wa-thread="wa-main"]' : '[data-thread="sms-main"]';
+      if(['sms','rcs'].includes(channel)){
+        await checkThreadRow(page,companyNames.stress,{requireTruncation:true});
+        await page.setViewportSize({width:390,height:844});
+        await checkThreadRow(page,companyNames.stress,{requireTruncation:true});
+        await page.setViewportSize({width:1600,height:1100});
+      }
       await page.locator(thread).click();
       assert.ok((await page.locator('#transcript').innerText()).includes(literal));
       await page.locator('#phoneInput').fill('CUSTOMER_MARKER');

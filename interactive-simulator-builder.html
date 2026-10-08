@@ -110,6 +110,8 @@
     /* The unread dot sits in the left gutter; it never participates in the row layout. */
     .phone-screen .threads .thread{padding-left:11px}
     .phone-screen .threads .thread-unread{position:absolute;left:0;top:50%;z-index:1;margin:0;transform:translateY(-50%)}
+    /* Reserve one line for the timestamp and chevron; the sender can truncate instead. */
+    .phone-screen .thread-top time{flex:0 0 auto;white-space:nowrap}
   </style>
   <style id="phone-native-scroll">
     /* Native touch scrolling, with browser scrollbars suppressed inside every phone view. */

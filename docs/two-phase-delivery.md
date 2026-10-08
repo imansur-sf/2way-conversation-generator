@@ -93,3 +93,13 @@ Code rollback is a deliberate release operation, not a reset of a dirty checkout
 - Export important scenarios as JSON before a production update. No tests reset real user storage. Local browser saving remains local, not a cloud backup.
 - Keep live-provider latency and generated claims visible in release decisions. Existing async jobs use a bounded two-attempt provider policy; no timeout increase was made. Future deadline work should coordinate UI, server and smoke budgets: browser polling currently has no per-fetch timeout, and a response-body abort can be classified as bad JSON. The legacy synchronous generation route is not the preferred path for work that can exceed a router's request window.
 - CI passed with advisories about older action runtimes and an upcoming `ubuntu-latest` image change. Pin/update those dependencies in a separately verified maintenance change; they did not fail this candidate's gate.
+
+## Approved follow-up — message-list timestamp wrapping
+
+The user's pre-change screenshot exposed an SMS/RCS inbox-row edge not fixed in either original phase: a long company name can squeeze the timestamp until the chevron wraps below `Now`. The Phase 2 tag / staging v53 remains the pre-fix rollback checkpoint; this is a narrow follow-up, not another implementation phase.
+
+- [x] Keep the timestamp and chevron non-shrinking on one line; retain sender-name ellipsis. The same inline rule is carried into standalone HTML exports.
+- [ ] Verify exact `Online Trading Academy` rows across five preview viewport sizes, longer-name truncation, and actual offline SMS/RCS downloads. A disposable-browser negative control restores the old rules to prove the fixture reproduces the original wrapping.
+- [ ] Publish the reviewed candidate, pass the full CI gate, and update staging only; record the exact deployment. Production promotion still requires approval.
+
+Local code checks remain **192/192**; browser verification and deployment of this follow-up are pending. No saved user data, AI behavior or production configuration changes are included.
