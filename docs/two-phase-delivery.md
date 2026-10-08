@@ -2,7 +2,7 @@
 
 Approved October 7, 2026. This execution plan consolidates the audit into **two phases**. Internal commits and tests are checkpoints, not additional delivery phases.
 
-**Current status — 2026-10-08 04:43 UTC:** both implementation phases, the SMS/RCS inbox-layout follow-up and clean-presentation controls have passed automated acceptance. The verified code is `35bf1fb1e6486d4a194a01f77dcb66c9bc6672bc`, deployed **only to staging v55** and protected by the presentation tag. Production main remains `d8d8e2d` / Heroku v180. The user approved the preceding staging work and requested this final adjustment before production promotion; production has not been updated. Later ledger-only commits do not change the deployed/tested source.
+**Current status — October 8, 2026: LIVE IN PRODUCTION.** Both implementation phases, the SMS/RCS inbox-layout follow-up and clean-presentation controls have passed automated acceptance. At the user's explicit request, exact tested source `35bf1fb1e6486d4a194a01f77dcb66c9bc6672bc` was promoted to production main and automatically deployed as **Heroku v181**. The production web process is up and its health endpoint returned HTTP 200 / `ok: true`. Staging remains v55 on the same source. Production v180 remains rollback-eligible and is protected by the new pre-production tag. Later ledger-only commits on the implementation branch do not change the deployed/tested source.
 
 ## Rollback checkpoints
 
@@ -15,6 +15,7 @@ Approved October 7, 2026. This execution plan consolidates the audit into **two 
 | Phase 2 complete | `rollback/quality-phase2-2026-10-07` at `75cb87037ee8ab89f0e14fc38e79f3cb5a9fbb22` | Staging **v53**, succeeded; release ID `bdfc0d28-8e30-459b-ba9a-fb14e23c4f08`; production unchanged v180 | 192 code tests, all browser groups and two live AI samples passed; tag published and verified remotely |
 | Approved inbox-layout follow-up | `rollback/quality-inbox-layout-2026-10-07` at `daa7d06a77185a46b270bf1655105e8e5a88e7d2` | Staging **v54**, succeeded; release ID `5498c659-afbd-4b57-baab-09dc464ddf39`; production unchanged v180 | 192 code tests and all browser groups passed; staging health passed; tag published and verified remotely. Pre-fix v53 was verified rollback-eligible immediately before deployment |
 | Approved clean-presentation follow-up | `rollback/quality-presentation-2026-10-07` at `35bf1fb1e6486d4a194a01f77dcb66c9bc6672bc` | Staging **v55**, succeeded; release ID `230f1a2e-44bf-4e45-b9b4-159c467fa4c1`; production unchanged v180 | 192 code tests and all browser groups passed; staging health passed; tag published and verified remotely. Pre-change v54 was verified rollback-eligible immediately before deployment |
+| Before authorized production promotion | `rollback/pre-production-quality-2026-10-08` at `d8d8e2d6ade2118c192f2cf053d59ae5ab19e32d` | Production **v180**, release ID `bb8ab77b-991b-48f7-904f-5595aa5a9be0` | Published and remotely verified before main advanced; still rollback-eligible after v181 deployed |
 
 Implementation branch: `codex/quality-two-phase-2026-10-07`. Production main must not advance automatically while either phase is unverified. Checkpoints are annotated Git tags pushed to GitHub; tags alone do not change the deployed main branch.
 
@@ -91,7 +92,7 @@ Code rollback is a deliberate release operation, not a reset of a dirty checkout
 
 ## Remaining acceptance and operational follow-ups
 
-- Open [staging](https://twoway-studio-v2-staging-e6a463379b1d.azalea-virginia.herokuapp-internal.com/) from an authorized browser and review representative real work before approving promotion. This agent's managed-browser policy prevented a live UI visit; isolated CI Chromium and screenshots provide the automated UI evidence, not Safari/Firefox, real-device or screen-reader certification.
+- The user approved production promotion after reviewing the tool. This agent's managed-browser policy prevented a live UI visit; isolated CI Chromium and screenshots provide the automated UI evidence, not Safari/Firefox, real-device or screen-reader certification. Continue representative real-work checks from an authorized browser after deployment.
 - Export important scenarios as JSON before a production update. No tests reset real user storage. Local browser saving remains local, not a cloud backup.
 - Keep live-provider latency and generated claims visible in release decisions. Existing async jobs use a bounded two-attempt provider policy; no timeout increase was made. Future deadline work should coordinate UI, server and smoke budgets: browser polling currently has no per-fetch timeout, and a response-body abort can be classified as bad JSON. The legacy synchronous generation route is not the preferred path for work that can exceed a router's request window.
 - CI passed with advisories about older action runtimes and an upcoming `ubuntu-latest` image change. Pin/update those dependencies in a separately verified maintenance change; they did not fail this candidate's gate.
@@ -129,3 +130,17 @@ Blocked nested iframe/object/embed elements are removed from the rendered email 
 Final source `35bf1fb1e6486d4a194a01f77dcb66c9bc6672bc` passed all groups in [run 37728121797](https://github.com/imansur-sf/2way-conversation-generator/actions/runs/37728121797): 192 code checks, security, state reliability, actual offline exports, integrated playback, mocked AI application and responsive UI. Screenshots were reviewed at desktop and narrow widths; the inline notice replaces Hide bar, then the controls/info/email hint disappear and the stage recovers the space. Tests cover cancelling before five seconds, entering again past the cancelled deadline, restoring focus with Escape, and Escape after clicking inside Custom HTML. First candidate run 37727265256 also passed; intermediate run 37727916183 was superseded/cancelled by the final reviewed fix and is not claimed as a full pass.
 
 Build `b341672b-cc35-4c68-b90c-935988a1c3bd` deployed the verified source to staging **v55**, release `230f1a2e-44bf-4e45-b9b4-159c467fa4c1`. Web dyno `web-fbcbd568d-lk9dr` was up on v55, and its loopback `/api/health` returned HTTP 200, `ok: true`, environment `staging`, version `2.0.0`, model `gemini-3.5-flash`. No live AI requests or configuration changes were made. The new checkpoint is published and remotely verified; production main/v180 and the earlier rollback points remain unchanged. Existing downloaded HTML must be regenerated to include the new controls.
+
+## Authorized production promotion — October 8, 2026
+
+The user explicitly requested production promotion. TaskCreate/TaskUpdate are unavailable; progress is recorded here.
+
+- [x] Verify the source and passing gate: `35bf1fb1e6486d4a194a01f77dcb66c9bc6672bc`, CI run 37728121797, still current on staging v55. Production remains v180 / `d8d8e2d6`, with a running web process and confirmed rollback eligibility at preflight.
+- [x] Publish a fresh pre-production rollback reference and fast-forward production main to the exact tested commit; retain production environment configuration.
+- [x] Confirm the actual Heroku release and running process, perform a read-only health check, and record the final deployment. Do not treat a GitHub push alone as deployment success.
+
+The annotated tag `rollback/pre-production-quality-2026-10-08` was published and verified at `d8d8e2d6ade2118c192f2cf053d59ae5ab19e32d` before the non-forced fast-forward push of `35bf1fb1e6486d4a194a01f77dcb66c9bc6672bc` to GitHub main. Heroku's GitHub integration automatically created build `7342d5cc-3596-455c-b03d-ccbdb03dfe79` at 2026-10-08T06:29:53Z. It succeeded and deployed production **v181**, release `d55b76d3-7cd2-47b0-bc1a-048824cc09b8`, verified current/succeeded with description `Deploy 35bf1fb1`.
+
+The old v180 web process drained; the sole production web process `web-58c76446b7-dn5vz` was verified up on v181. Its loopback `/api/health` returned HTTP 200, `ok: true`, environment `production`, version `1.1.0`, configured model `gemini-3.5-flash`, and `aiConfigured: true`. Production v180 remained eligible for rollback, and no other builds were pending. No configuration/credential changes, live AI generation requests or user-storage resets were performed.
+
+The new main-branch [run 37737908249](https://github.com/imansur-sf/2way-conversation-generator/actions/runs/37737908249) also passed every group on the exact deployed source, including code, browser security/state, actual offline exports, integrated playback, mocked AI application and responsive/accessible controls. Staging v55 remains unchanged. Existing downloaded HTML files must be regenerated to include the updated behavior.
