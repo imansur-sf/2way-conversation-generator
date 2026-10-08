@@ -241,7 +241,7 @@
       const current = visible.reduce((closest, section) => Math.abs(section.getBoundingClientRect().top - builderTop) < Math.abs(closest.getBoundingClientRect().top - builderTop) ? section : closest, visible[0]);
       const index = sections.indexOf(current);
       if (index < 0) return;
-      nav.querySelectorAll('button').forEach(item => item.toggleAttribute('aria-current', Number(item.dataset.v2Section) === index));
+      nav.querySelectorAll('button').forEach(item => Number(item.dataset.v2Section) === index ? item.setAttribute('aria-current', 'step') : item.removeAttribute('aria-current'));
     };
     builder.addEventListener('scroll', updateActiveSection, { passive:true });
     if (!document.documentElement.dataset.v2KeyboardNavigation) {

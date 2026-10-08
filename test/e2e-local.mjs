@@ -14,20 +14,78 @@ const exportDirectory = await mkdtemp(join(tmpdir(),'two-way-e2e-'));
 const server = spawn(process.execPath, ['server.js'], { env:{ ...process.env, PORT:String(port), APP_ENV:'test', APP_VERSION:'1.1.0-test' }, stdio:['ignore', 'pipe', 'pipe'] });
 let serverOutput = '';
 let browser;
+const caseFailures=[];
+let activeCaseContexts=null;
 server.stdout.on('data', chunk => { serverOutput += chunk; });
 server.stderr.on('data', chunk => { serverOutput += chunk; });
 
 async function createContext(options) {
   const context = await browser.newContext(options);
+  activeCaseContexts?.push(context);
   context.setDefaultTimeout(10000);
   context.setDefaultNavigationTimeout(15000);
   await context.route('https://**/*', route => route.abort());
   return context;
 }
 
+async function runCase(name,work) {
+  const previousContexts=activeCaseContexts,contexts=[];
+  activeCaseContexts=contexts;
+  console.log(`START integrated: ${name}`);
+  try { await work(); console.log(`PASS integrated: ${name}`); }
+  catch(error) { caseFailures.push(new Error(`${name}: ${error.message}`,{cause:error})); console.error(`FAIL integrated: ${name}\n${error.stack||error}`); }
+  finally {
+    await Promise.all(contexts.map(context=>context.close().catch(error=>{caseFailures.push(new Error(`${name} cleanup: ${error.message}`,{cause:error}));})));
+    activeCaseContexts=previousContexts;
+  }
+}
+
 async function enableManual(page) {
   await page.evaluate(async () => { await window.__twoWayScenarioInitialization; });
   if (await page.locator('#chooseManual').isVisible()) await page.locator('#chooseManual').click();
+}
+
+async function waitForAcknowledgedSave(page) {
+  await page.waitForFunction(() => document.querySelector('#saveState')?.textContent === 'Saved on this device');
+}
+
+async function pauseScenarioSaveAcknowledgements(page) {
+  await page.evaluate(() => {
+    if (!window.__testScenarioSaveAcknowledgements) {
+      const gate = window.__testScenarioSaveAcknowledgements = { paused:false, pending:[] };
+      const original = IDBDatabase.prototype.transaction;
+      IDBDatabase.prototype.transaction = function (...args) {
+        const transaction = original.apply(this,args);
+        if (this.name === 'two-way-experience-studio-scenarios-v1' && args[1] === 'readwrite') {
+          let oncomplete = null;
+          Object.defineProperty(transaction,'oncomplete',{ configurable:true, get:() => oncomplete, set:handler => { oncomplete=handler; } });
+          transaction.addEventListener('complete',event => {
+            const handler=oncomplete;
+            if (typeof handler !== 'function') return;
+            const acknowledge=() => handler.call(transaction,event);
+            if (gate.paused) gate.pending.push(acknowledge);
+            else acknowledge();
+          },{ once:true });
+        }
+        return transaction;
+      };
+    }
+    window.__testScenarioSaveAcknowledgements.paused=true;
+  });
+}
+
+async function waitForHeldScenarioSave(page) {
+  await page.waitForFunction(() => window.__testScenarioSaveAcknowledgements?.pending.length > 0);
+  assert.equal(await page.locator('#saveState').textContent(),'Saving…','The guard fixture must hold an unacknowledged edit, not an already saved edit');
+}
+
+async function releaseScenarioSaveAcknowledgements(page) {
+  await page.evaluate(() => {
+    const gate=window.__testScenarioSaveAcknowledgements;
+    gate.paused=false;
+    gate.pending.splice(0).forEach(acknowledge => acknowledge());
+  });
+  await waitForAcknowledgedSave(page);
 }
 
 async function waitForServer() {
@@ -49,6 +107,7 @@ async function waitForServer() {
 try {
   await waitForServer();
   browser = await chromium.launch(browserOptions);
+  await runCase('legacy-migration',async()=>{
   const migrationContext = await createContext();
   const migrationPage = await migrationContext.newPage();
   await migrationContext.addInitScript(() => {
@@ -66,6 +125,8 @@ try {
   assert.ok(migrated.scenarios.some(scenario => scenario.name === 'Migrated 1.0 scenario'), 'Valid 1.0 scenarios must migrate into the upgraded storage key');
   assert.equal(migrated.history[0].label, 'Before promotion', 'Valid 1.0 version history must migrate into the upgraded storage key');
   await migrationContext.close();
+  });
+  await runCase('manual-recovery',async()=>{
   const manualRecoveryContext = await createContext();
   const manualRecoveryPage = await manualRecoveryContext.newPage();
   await manualRecoveryPage.goto(baseUrl, { waitUntil:'networkidle' });
@@ -83,6 +144,8 @@ try {
   assert.ok(manualRecoveryState.legacy.some(scenario => scenario.id === 'legacy-broken'), 'Recovery must retain the original legacy record instead of overwriting the only recovery source');
   assert.equal(manualRecoveryState.search, '', 'Manual recovery must remove its one-time recovery parameter from the address bar');
   await manualRecoveryContext.close();
+  });
+  await runCase('corrupt-journey-recovery',async()=>{
   const corruptJourneyContext = await createContext();
   const corruptJourneyPage = await corruptJourneyContext.newPage();
   await corruptJourneyContext.addInitScript(() => {
@@ -109,6 +172,8 @@ try {
   const normalizedEmailSteps = await corruptJourneyPage.evaluate(() => JSON.parse(localStorage.getItem('two-way-experience-studio-v2-scenarios')).scenarios.find(scenario => scenario.id === 'customer-initiated-initial-message').variants.email.steps);
   assert.ok(normalizedEmailSteps.every(step => step && typeof step === 'object'), 'Nested channel steps must be normalized before the editor renders them');
   await corruptJourneyContext.close();
+  });
+  await runCase('email-sequence',async()=>{
   const emailContext = await createContext();
   const emailPage = await emailContext.newPage();
   await emailContext.addInitScript(() => {
@@ -148,6 +213,8 @@ try {
   await emailPage.locator('#emailSend').click();
   await emailPage.waitForFunction(() => document.querySelector('#stage')?.textContent?.includes('Later company reply'),null,{timeout:5000}).catch(async error=>{console.error('Email conversation after second reply:',await emailPage.locator('#stage').innerText().catch(()=>'<page closed>'));throw error});
   await emailContext.close();
+  });
+  await runCase('email-export',async()=>{
   const emailExportContext = await createContext({ acceptDownloads:true });
   const emailExportPage = await emailExportContext.newPage();
   await emailExportContext.addInitScript(() => {
@@ -170,6 +237,8 @@ try {
   assert.match(await exportedEmailPage.locator('[data-email="0"]').textContent(), /The customized opening email copy appears everywhere\./, 'The downloaded Gmail inbox must mirror the customized opening company email');
   assert.doesNotMatch(await exportedEmailPage.locator('[data-email="0"]').textContent(), /Stale email body/, 'The downloaded Gmail inbox must not use a stale scenario-level email body');
   await emailExportContext.close();
+  });
+  await runCase('live-preview-carousel-crop',async()=>{
   const livePreviewContext = await createContext();
   const livePreviewPage = await livePreviewContext.newPage();
   await livePreviewContext.addInitScript(() => {
@@ -217,13 +286,28 @@ try {
   await livePreviewPage.mouse.down();
   await livePreviewPage.mouse.move(carouselWindow.x + carouselWindow.width * 0.7, carouselWindow.y + carouselWindow.height * 0.5);
   await livePreviewPage.mouse.up();
-  await livePreviewPage.waitForFunction(() => document.querySelector('#stage [data-rcs-carousel="live-carousel"] .carousel-track')?.style.transform === 'translateX(-0%)');
+  await livePreviewPage.waitForFunction(() => {
+    const track=document.querySelector('#stage [data-rcs-carousel="live-carousel"] .carousel-track');
+    if(!track)return false;
+    const transform=getComputedStyle(track).transform;
+    return Math.abs(transform==='none'?0:new DOMMatrixReadOnly(transform).m41)<0.5;
+  }).catch(async error=>{
+    const diagnostics=await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"]').evaluate(carousel=>{
+      const track=carousel.querySelector('.carousel-track'),computed=getComputedStyle(track).transform,offset=computed==='none'?0:new DOMMatrixReadOnly(computed).m41;
+      return {inlineTransform:track.style.transform,computedTransform:computed,trackWidth:track.offsetWidth,visualIndex:track.offsetWidth?-offset/track.offsetWidth:null,previousButtons:carousel.querySelectorAll('.carousel-nav.prev').length,nextButtons:carousel.querySelectorAll('.carousel-nav.next').length};
+    }).catch(()=>'<carousel or page unavailable>');
+    console.error('Carousel after rightward swipe:',diagnostics);throw error;
+  });
+  assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.prev').count(),0,'A rightward swipe must return to the first card');
+  assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.next').count(),1,'The next-card control must return after swiping to the first card');
   const firstWindow = await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-window').boundingBox();
   await livePreviewPage.mouse.move(firstWindow.x + firstWindow.width * 0.7, firstWindow.y + firstWindow.height * 0.5);
   await livePreviewPage.mouse.down();
   await livePreviewPage.mouse.move(firstWindow.x + firstWindow.width * 0.25, firstWindow.y + firstWindow.height * 0.5);
   await livePreviewPage.mouse.up();
   await livePreviewPage.waitForFunction(() => document.querySelector('#stage [data-rcs-carousel="live-carousel"] .carousel-track')?.style.transform === 'translateX(-100%)');
+  assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.prev').count(),1,'A leftward swipe must advance back to the second card');
+  assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.next').count(),0,'The next-card control must disappear on the last card after swiping');
   const ctaPresentation = livePreviewPage.locator('[data-rcs-cta-presentation-step="live-rich-card"]');
   await ctaPresentation.selectOption('reply');
   await livePreviewPage.waitForFunction(() => document.querySelector('#stage .rcs-card-cta-action'));
@@ -253,19 +337,26 @@ try {
   assert.match(cropExportedHtml, /"imageFit":"contain"/, 'Standalone HTML must retain the selected RCS image-fit mode');
   assert.match(cropExportedHtml, /"imageScale":1\.4/, 'Standalone HTML must retain the selected RCS image zoom');
   await livePreviewContext.close();
+  });
+  await runCase('channel-save-guard',async()=>{
   const channelGuardContext = await createContext();
   const channelGuardPage = await channelGuardContext.newPage();
   await channelGuardPage.goto(baseUrl, { waitUntil:'networkidle' });
   await enableManual(channelGuardPage);
   await channelGuardPage.locator('[data-channel="rcs"]').click();
+  await waitForAcknowledgedSave(channelGuardPage);
+  await pauseScenarioSaveAcknowledgements(channelGuardPage);
   const channelGuardName = channelGuardPage.locator('#identityFields [data-skey="brandName"]');
   await channelGuardName.fill('Guarded RCS Co');
+  await waitForHeldScenarioSave(channelGuardPage);
   const saveBeforeSwitch = channelGuardPage.waitForEvent('dialog').then(async dialog=>{
     assert.match(dialog.message(), /Save your RCS changes before switching to SMS/);
     await dialog.accept();
   });
+  saveBeforeSwitch.catch(()=>{}); // Context cleanup must not leave an unhandled wait if a preceding action fails.
   await channelGuardPage.locator('[data-channel="sms"]').click();
   await saveBeforeSwitch;
+  await releaseScenarioSaveAcknowledgements(channelGuardPage);
   await channelGuardPage.waitForFunction(() => document.querySelector('[data-channel="sms"]')?.classList.contains('active'));
   await channelGuardPage.waitForFunction(() => document.querySelector('#saveState')?.textContent.includes('Saved on this device'));
   let unnecessarySwitchPrompt = false;
@@ -278,12 +369,21 @@ try {
   channelGuardPage.off('dialog', unexpectedDialog);
   await channelGuardName.waitFor();
   assert.equal(await channelGuardName.inputValue(), 'Guarded RCS Co', 'Saving on a channel switch must preserve the edited channel variant');
+  await waitForAcknowledgedSave(channelGuardPage);
+  await pauseScenarioSaveAcknowledgements(channelGuardPage);
   await channelGuardName.fill('Stay on RCS');
+  await waitForHeldScenarioSave(channelGuardPage);
   const stayOnChannel = channelGuardPage.waitForEvent('dialog').then(dialog=>dialog.dismiss());
+  stayOnChannel.catch(()=>{});
   await channelGuardPage.locator('[data-channel="sms"]').click();
   await stayOnChannel;
   assert.equal(await channelGuardPage.locator('[data-channel="rcs"]').evaluate(button => button.classList.contains('active')), true, 'Cancelling the save prompt must keep the user on the current channel');
+  await releaseScenarioSaveAcknowledgements(channelGuardPage);
+  assert.equal(await channelGuardName.inputValue(),'Stay on RCS','Cancelling navigation must retain the current edit');
+  console.log('PASS integrated: pending channel-save accept/cancel and prompt-free saved switching');
   await channelGuardContext.close();
+  });
+  await runCase('durable-save-reload',async()=>{
   const durableSaveContext = await createContext();
   const durableSavePage = await durableSaveContext.newPage();
   await durableSavePage.goto(baseUrl, { waitUntil:'networkidle' });
@@ -313,19 +413,25 @@ try {
   await durableSavePage.reload({ waitUntil:'networkidle' });
   await durableSavePage.waitForFunction(() => document.querySelector('#identityFields [data-skey="brandName"]')?.value === 'Durable Save RCS');
   await durableSaveContext.close();
+  });
+  await runCase('channel-isolation',async()=>{
   const channelIsolationContext = await createContext();
   const channelIsolationPage = await channelIsolationContext.newPage();
   await channelIsolationPage.goto(baseUrl, { waitUntil:'networkidle' });
   await enableManual(channelIsolationPage);
+  const isolationDialogs=[];
+  channelIsolationPage.on('dialog',async dialog => { isolationDialogs.push(dialog.message()); await dialog.dismiss(); });
   await channelIsolationPage.locator('[data-channel="rcs"]').click();
   await channelIsolationPage.locator('#identityFields [data-skey="brandName"]').fill('RCS only brand');
-  let switchDialog = channelIsolationPage.waitForEvent('dialog').then(dialog=>dialog.accept());
+  await waitForAcknowledgedSave(channelIsolationPage);
   await channelIsolationPage.locator('[data-channel="sms"]').click();
-  await switchDialog;
+  await channelIsolationPage.waitForFunction(() => document.querySelector('[data-channel="sms"]')?.classList.contains('active'));
+  assert.deepEqual(isolationDialogs,[],'An acknowledged RCS edit must switch to SMS without a save prompt');
   await channelIsolationPage.locator('#identityFields [data-skey="smsAddress"]').fill('SMS only sender');
-  switchDialog = channelIsolationPage.waitForEvent('dialog').then(dialog=>dialog.accept());
+  await waitForAcknowledgedSave(channelIsolationPage);
   await channelIsolationPage.locator('[data-channel="whatsapp"]').click();
-  await switchDialog;
+  await channelIsolationPage.waitForFunction(() => document.querySelector('[data-channel="whatsapp"]')?.classList.contains('active'));
+  assert.deepEqual(isolationDialogs,[],'An acknowledged SMS edit must switch to WhatsApp without a save prompt');
   const whatsappAvatar = channelIsolationPage.locator('[data-image-asset][data-image-key="avatar"]');
   await whatsappAvatar.locator('[data-image-url-open]').click();
   await whatsappAvatar.locator('.image-url-entry:not([hidden])').waitFor();
@@ -353,7 +459,11 @@ try {
   assert.equal(isolatedScenario.variants.whatsapp.brandName, 'WhatsApp only brand', 'WhatsApp edits must remain in the WhatsApp variant');
   assert.equal(isolatedScenario.variants.whatsapp.avatar, whatsappAvatarDataUrl, 'WhatsApp company avatar URLs must save in the WhatsApp variant');
   assert.notEqual(isolatedScenario.variants.rcs.avatar, whatsappAvatarDataUrl, 'A WhatsApp company avatar must not overwrite the RCS variant');
+  assert.deepEqual(isolationDialogs,[],'Saved channel-isolation checks must not require save confirmations');
+  console.log('PASS integrated: acknowledged per-channel edits and durable image isolation');
   await channelIsolationContext.close();
+  });
+  await runCase('workspace-and-standalone-exports',async()=>{
   const context = await createContext({ acceptDownloads:true, viewport:{ width:1440, height:960 } });
   const page = await context.newPage();
   const builderResponse = await page.goto(baseUrl, { waitUntil:'networkidle' });
@@ -463,7 +573,8 @@ try {
   page.once('dialog', async dialog => { fallbackPrompt = dialog.message(); await dialog.accept(); });
   const fallbackDownload = await Promise.all([page.waitForEvent('download'), page.locator('#export').click()]).then(([value]) => value);
   await page.unroute('**/assets/avatars/company-avatar-sheet.png');
-  assert.match(fallbackPrompt, /(?:company profile image|Preview image company-avatar-sheet\.png).*download anyway/i, 'A failed visual asset must offer a named download-anyway choice');
+  assert.match(fallbackPrompt, /(?:company profile image|Preview image company-avatar-sheet\.png)/i, 'A failed visual asset must name the unavailable image');
+  assert.match(fallbackPrompt, /Choose OK to download anyway/i, 'A failed visual asset must offer an explicit download-anyway choice');
   const fallbackExported = `${exportDirectory}/fallback-${await fallbackDownload.suggestedFilename()}`;
   await fallbackDownload.saveAs(fallbackExported);
   const fallbackHtml = await readFile(fallbackExported, 'utf8');
@@ -472,6 +583,8 @@ try {
   await localPage.goto(`file://${process.cwd()}/interactive-simulator-builder.html`, { waitUntil:'load' });
   await localPage.waitForSelector('.v2-workspace-nav');
   assert.ok(await localPage.locator('[data-v2-preview-focus]').count(), 'Local file mode must retain the 2.0 workspace enhancements');
+  });
+  if(caseFailures.length)throw new AggregateError(caseFailures,`${caseFailures.length} integrated case(s) failed; see named results above`);
   await browser.close();
   console.log('2.0 browser, accessibility, and standalone-export smoke test: OK');
 } finally {

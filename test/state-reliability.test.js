@@ -211,6 +211,28 @@ test('reset cancels every delayed company reply and clears focused-step preview'
   callback();assert.equal(context.state.visible.length,0);assert.equal(timers.size,0);assert.equal(context.state.livePreviewStepId,null);
 });
 
+test('carousel pointer gestures move from second to first card and back', () => {
+  const handlers={},carousel={dataset:{rcsCarousel:'carousel'},addEventListener:(type,handler)=>handlers[type]=handler,setPointerCapture(){}};
+  const context=environment({document:{querySelectorAll:()=>[carousel]},wirePhone(){}});
+  context.state.scenarios[0].steps=[{id:'carousel',kind:'carousel',cards:[{id:'first'},{id:'second'}]}];context.state.carouselIndexes={carousel:1};
+  vm.runInContext(fn('ensureCarouselCards')+fn('rcsCarouselMove')+source('const wirePhoneWithRcsCarouselSwipe='),context);context.wirePhone();
+  handlers.pointerdown({clientX:25,pointerId:1,target:{closest:()=>null}});handlers.pointerup({clientX:70});
+  assert.equal(context.state.carouselIndexes.carousel,0,'rightward swipe returns to the first card');
+  handlers.pointerdown({clientX:70,pointerId:2,target:{closest:()=>null}});handlers.pointerup({clientX:25});
+  assert.equal(context.state.carouselIndexes.carousel,1,'leftward swipe advances to the second card');
+});
+
+test('scroll-selected workspace navigation retains an explicit aria-current step token', () => {
+  const modern=fs.readFileSync(path.join(root,'assets/v2-modern.js'),'utf8'),update=modern.match(/const updateActiveSection = \(\) => \{[\s\S]*?\n    \};/)[0];
+  let positions=[200,12,500];
+  const sections=positions.map((_,index)=>({hidden:false,getBoundingClientRect:()=>({top:positions[index]})}));
+  const buttons=positions.map((_,index)=>({dataset:{v2Section:String(index)},attributes:new Map(),setAttribute(name,value){this.attributes.set(name,value)},removeAttribute(name){this.attributes.delete(name)},toggleAttribute(name,enabled){enabled?this.attributes.set(name,''):this.attributes.delete(name)}}));
+  const context=vm.createContext({sections,nav:{querySelectorAll:()=>buttons},builder:{getBoundingClientRect:()=>({top:0})}});
+  vm.runInContext(update+'this.updateActiveSection=updateActiveSection;',context);context.updateActiveSection();
+  assert.equal(buttons[1].attributes.get('aria-current'),'step');assert.equal(buttons[0].attributes.has('aria-current'),false);
+  positions=[2,200,500];context.updateActiveSection();assert.equal(buttons[0].attributes.get('aria-current'),'step');assert.equal(buttons[1].attributes.has('aria-current'),false);
+});
+
 test('image completions retain their initiating scenario and removal cancels older operations', () => {
   const context=environment();installJourneys(context);
   vm.runInContext(['normalizeImageSource','imageAssetTarget','beginImageAssetOperation','resetRcsImageCrop','setImageAssetValue'].map(fn).join('\n'),context);

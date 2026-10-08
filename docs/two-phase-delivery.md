@@ -8,6 +8,7 @@ Approved October 7, 2026. This execution plan consolidates the audit into **two 
 | --- | --- | --- | --- |
 | Production before Phase 1 | `rollback/quality-baseline-2026-10-07` at `d8d8e2d6ade2118c192f2cf053d59ae5ab19e32d` | `saasysolutions-2way-generator` release **v180**, succeeded; release ID `bb8ab77b-991b-48f7-904f-5595aa5a9be0`; eligible for rollback | Verified 2026-10-07T23:22Z |
 | Existing local work before Phase 1 | `rollback/quality-workspace-2026-10-07` | Not deployed | Snapshot includes existing export-filename change and audit report |
+| Staging before candidate verification | Existing staging code `aba6c237` (release description) | `twoway-studio-v2-staging` release **v47**, succeeded/current; release ID `0eed1c0c-0912-48d7-809d-e4c31214678b`; eligible for rollback | Verified 2026-10-08 UTC; no staging deployment performed yet |
 | Phase 1 complete / before Phase 2 | `rollback/quality-phase1-2026-10-07` | Record staging/production release if deployed | Pending verification |
 | Phase 2 complete | `rollback/quality-phase2-2026-10-07` | Record staging/production release if deployed | Pending verification |
 
