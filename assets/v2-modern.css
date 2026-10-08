@@ -309,8 +309,9 @@ body :is(.builder,.preview)[hidden] { display:none!important; }
 .v2-local-save button { padding:5px 7px; border:1px solid #9ed7ff; border-radius:5px; background:#073677; color:#fff; font-size:11px; }
 body :is(.appbar,.v2-workspace-tabs,.v2-preview-mode,.rcs-image-cropper) :is(button,summary,select,input):focus-visible { outline:3px solid #ffcf50; outline-offset:3px; }
 body .builder :is(.block,.image-asset-control,.v2-flow-map,.v2-scenario-qa) :is(button,input,textarea,select,[contenteditable]):focus-visible { outline:3px solid #075eab; outline-offset:2px; }
-body .builder .image-asset-hint { color:#c9e5ff; }
-body .builder :is(.block,.image-asset-control) :is(small,.helper,.image-asset-copy,.image-asset-hint) { color:#435d77; }
+body .builder :is(.block,.image-asset-control) :is(small,.helper,.image-asset-copy) { color:#435d77; }
+body .builder .image-asset-control > .image-asset-guidance { color:#c9e5ff; }
+body .builder :is(.block,.email-asset,.email-asset-card,.email-designer) .image-asset-guidance { color:#435d77; }
 body .builder input::placeholder,body .builder textarea::placeholder { color:#596a7a; opacity:1; }
 body .phone-keyboard .keyboard-key--return { color:#202732; }
 body .builder .scenario-enhancements .restore-point-help { color:#c9e5ff; }
@@ -348,4 +349,17 @@ dialog.rcs-image-cropper::backdrop { background:transparent; }
   .appbar :is(.top-quiet,.top-primary) { padding-inline:8px; }
   body .preview .stage { padding:12px; border-radius:12px; }
   .rcs-crop-position { grid-template-columns:1fr; }
+  body #stage .gmail :is(.g-main,.mail-pane,.g-detail-scroll,.mailview) { min-width:0; max-width:100%; }
+  body #stage .gmail :is(.mail-pane,.g-detail-scroll,.mailview) { width:100%; }
+  body #stage .gmail .g-detail-toolbar { flex-wrap:wrap; height:auto; max-width:100%; padding-inline:8px; }
+  body #stage .gmail .sender { flex-wrap:wrap; gap:8px; }
+  body #stage .gmail .sender-avatar { flex:0 0 42px; }
+  body #stage .gmail .sender-meta { flex:1 1 160px; min-width:0; overflow-wrap:anywhere; }
+  body #stage .gmail .sender .date { flex:0 0 100%; margin-left:0; padding-left:50px; overflow-wrap:anywhere; }
+  body #stage .gmail :is(.mailbody,.email-thread-response,.scenario-email) { min-width:0; max-width:100%; overflow-wrap:anywhere; }
+  body #stage .gmail .scenario-email-header { flex-wrap:wrap; gap:6px; padding-inline:18px; }
+  body #stage .gmail .scenario-email-identity { flex:1 1 100%; }
+  body #stage .gmail .scenario-email-header > .scenario-email-preheader { flex:1 1 100%; margin-left:0; white-space:normal; }
+  body #stage .gmail :is(.scenario-email-copy,.scenario-email-footer) { padding-inline:18px; }
+  body #stage .gmail .scenario-email img { max-width:100%; }
 }

@@ -50,6 +50,9 @@ async function fresh(makeResponse){
   await page.evaluate(key=>localStorage.setItem(key,JSON.stringify({version:2,savedAt:1,activeId:'ai-target',scenarios:[{id:'ai-target',name:'Original destination',channel:'sms',brandName:'Original Co',smsAddress:'Original Co',steps:[{id:'original-company',author:'brand',kind:'text',text:'ORIGINAL_CONTENT',reusableSet:true},{id:'original-customer',author:'customer',kind:'free',text:'',reusableSet:false}]}]})),key);
   await page.goto(base,{waitUntil:'domcontentloaded'});await page.evaluate(()=>window.__twoWayScenarioInitialization);
   if(await page.locator('#chooseManual').isVisible())await page.locator('#chooseManual').click();
+  // The seed starts in the legacy browser backup. Establish an acknowledged
+  // durable baseline through the real save control before testing AI mutations.
+  await page.locator('#save').click();await saved(page);
   await page.locator('#switchToAi').click();await page.locator('.v2-generation-controls').waitFor();
   return {context,page,requests,errors};
 }

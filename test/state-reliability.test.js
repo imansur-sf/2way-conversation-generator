@@ -292,6 +292,26 @@ test('reset cancels every delayed company reply and clears focused-step preview'
   callback();assert.equal(context.state.visible.length,0);assert.equal(timers.size,0);assert.equal(context.state.livePreviewStepId,null);
 });
 
+test('actual email reply handlers deliver two sequential replies across preview re-renders', () => {
+  for(const firstAuthor of ['brand','customer']){
+    const timers=new Map();let nextTimer=0,nodes={};
+    const stage={set innerHTML(markup){nodes={};for(const match of markup.matchAll(/\bid="([^"]+)"/g))nodes[`#${match[1]}`]={};const input=nodes['#emailInput'];if(input)input.value=markup.match(/<textarea id="emailInput"[^>]*>([\s\S]*?)<\/textarea>/)?.[1]||'';}};
+    const context=environment({setTimeout:callback=>{timers.set(++nextTimer,callback);return nextTimer},clearTimeout:id=>timers.delete(id),$:selector=>selector==='#stage'?stage:nodes[selector],document:{querySelectorAll:()=>[]},esc:value=>String(value??''),link:value=>String(value??''),gmailRows:main=>[main],gmailShell:value=>value,gmailIcon:()=>'',avatar:()=>'',bubble:step=>step.text||'',openingEmailPreviewBody:scenario=>scenario.steps[0]?.text||'',defaultUserPortrait:''});
+    Object.assign(context.active(),{channel:'email',brandName:'Example Co',steps:[...(firstAuthor==='brand'?[{id:'opening',author:'brand',kind:'text',text:'Opening email copy'}]:[]),{id:'first-customer',author:'customer',kind:'free',text:'',reusableSet:false},{id:'first-company',author:'brand',kind:'text',text:'First company reply'},{id:'second-customer',author:'customer',kind:'free',text:'',reusableSet:false},{id:'last-company',author:'brand',kind:'text',text:'Later company reply'}]});
+    vm.runInContext(['responseSetAt','hasTerms','matchesTerms','chooseResponse','scheduleRuntimeDelivery','resetRuntime','advance','submit','isLinearEmailExchange','currentPreviewStep','syncRuntimePreviewSteps'].map(fn).join('\n')+source('const submitWithLinearEmailSequences=')+source('renderEmail=function(){const s=active(),main=')+fn('customerFirstEmailThread'),context);
+    context.state.view='email';context.renderPreview=()=>{context.syncRuntimePreviewSteps();if(firstAuthor==='customer')context.customerFirstEmailThread(context.active());else context.renderEmail();};
+    context.resetRuntime();
+    for(const [text,expectedReply] of [['First customer reply','First company reply'],['Second customer reply','Later company reply']]){
+      nodes['#openEmailReply'].onclick();nodes['#emailInput'].value=text;nodes['#emailInput'].oninput({target:nodes['#emailInput']});
+      // A delayed render must reconstruct the field from the live draft, not its initial textarea markup.
+      context.renderPreview();assert.equal(nodes['#emailInput'].value,text);nodes['#emailSend'].onclick();
+      assert.equal(context.state.visible.at(-1).text,text);assert.equal(context.state.emailCompose,false);
+      const [id,deliver]=timers.entries().next().value;timers.delete(id);deliver();assert.equal(context.state.visible.at(-1).text,expectedReply);assert.equal(context.state.typing,false);
+    }
+    assert.equal(context.state.visible.filter(step=>step.text==='Second customer reply').length,1);assert.equal(timers.size,0);
+  }
+});
+
 test('carousel pointer gestures move from second to first card and back', () => {
   const handlers={},carousel={dataset:{rcsCarousel:'carousel'},addEventListener:(type,handler)=>handlers[type]=handler,setPointerCapture(){}};
   const context=environment({document:{querySelectorAll:()=>[carousel]},wirePhone(){}});

@@ -51,6 +51,16 @@ async function metrics(page){return page.evaluate(()=>{
   const stage=document.querySelector('#stage'),device=stage.querySelector('.phone,.gmail'),header=document.querySelector('.appbar'),rect=node=>{const r=node.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,right:r.right,bottom:r.bottom}},style=getComputedStyle(stage);
   return {stage:rect(stage),device:rect(device),natural:{width:device.offsetWidth,height:device.offsetHeight},padding:{x:parseFloat(style.paddingLeft),y:parseFloat(style.paddingTop)},scale:Number(stage.dataset.previewScale),mode:stage.dataset.previewFit,computedTransform:getComputedStyle(device).transform,inlineTransform:device.style.transform,scaleVariable:style.getPropertyValue('--v2-device-scale'),selectedPanel:document.querySelector('[data-workspace-panel][aria-selected="true"]')?.dataset.workspacePanel,canvasCount:stage.querySelectorAll('.v2-preview-canvas').length,horizontalOverflow:document.documentElement.scrollWidth-innerWidth,headerOverflow:header?header.scrollWidth-header.clientWidth:0};
 })}
+async function emailReadingBounds(page){return page.evaluate(()=>{
+  const mail=document.querySelector('#stage .mailview');if(!mail)return null;
+  const chain=['.gmail','.mail-pane','.g-detail-scroll'].map(selector=>{const node=document.querySelector(`#stage ${selector}`),box=node.getBoundingClientRect();return {selector,left:box.left,right:box.right,width:box.width,clientWidth:node.clientWidth,scrollWidth:node.scrollWidth}});
+  const left=Math.max(...chain.map(box=>box.left)),right=Math.min(...chain.map(box=>box.right)),violations=[];
+  const record=(kind,label,box)=>{if(box.width>0&&(box.left<left-1||box.right>right+1))violations.push({kind,label,left:box.left,right:box.right})};
+  for(const node of [mail,...mail.querySelectorAll('*')])if(node.getClientRects().length)record('element',node.className||node.tagName,node.getBoundingClientRect());
+  const walker=document.createTreeWalker(mail,NodeFilter.SHOW_TEXT);let node;
+  while(node=walker.nextNode()){if(!node.textContent.trim()||['SCRIPT','STYLE'].includes(node.parentElement?.tagName))continue;const range=document.createRange();range.selectNodeContents(node);for(const box of range.getClientRects())record('text',node.textContent.trim().slice(0,50),box)}
+  return {chain,left,right,count:violations.length,violations:violations.slice(0,20)};
+})}
 function assertFit(value){
   assert.equal(value.canvasCount,1,'There must be one sizing canvas');assert.ok(value.horizontalOverflow<=1,'The workspace must not overflow horizontally');assert.ok(value.headerOverflow<=1,'Header controls must remain in the viewport');
   assert.ok(value.device.width>0&&value.device.height>0,'The selected preview must be visible');
@@ -73,11 +83,21 @@ try{
       const value=await metrics(page),row={name,viewport,channel,...value,errors:[...errors],screenshot:`${name}-${channel}.png`};manifest.push(row);
       await page.screenshot({path:path.join(output,row.screenshot)});assertFit(value);assert.deepEqual(errors,[]);
       if(channel==='sms'){row.axe=await scopedAxe(page,['.appbar','.v2-workspace-tabs','.v2-preview-mode']);assert.deepEqual(row.axe.violations,[],'Changed workspace controls must pass the scoped automated rules')}
-      if(name==='desktop'&&channel==='rcs'){row.imageHintsAxe=await scopedAxe(page,['.builder .image-asset-hint']);assert.deepEqual(row.imageHintsAxe.violations,[],'Image guidance must remain readable on its own surface')}
+      if(name==='desktop'&&['rcs','email'].includes(channel)){
+        if(channel==='rcs'){const disclosure=page.locator('[data-collapse-step="rcs-opening"]');if(await disclosure.getAttribute('aria-expanded')==='false'){await disclosure.click();await saved(page)}}
+        const outer='.builder [data-image-scope="scenario"][data-image-key="avatar"] > .image-asset-guidance',inner=channel==='rcs'?'.builder [data-image-step="rcs-opening"] > .image-asset-guidance':'.builder [data-email-asset-card="emailLogo"] .image-asset-guidance';
+        row.imageGuidance=[];
+        for(const [selector,color,surface] of [[outer,'rgb(201, 229, 255)','navy builder'],[inner,'rgb(67, 93, 119)','light card']]){
+          const guidance=page.locator(selector);assert.equal(await guidance.count(),1,`Expected one ${surface} guidance element`);await guidance.waitFor({state:'visible'});
+          const appearance=await guidance.evaluate(node=>({text:node.textContent,color:getComputedStyle(node).color}));assert.match(appearance.text,/Best fit:/);assert.equal(appearance.color,color,`Guidance color must match the ${surface} surface`);row.imageGuidance.push({surface,...appearance});
+        }
+        row.imageGuidanceAxe=await scopedAxe(page,[outer,inner]);assert.deepEqual(row.imageGuidanceAxe.violations,[],'Visible image guidance on navy and light-card surfaces must pass the scoped automated rules');
+      }
       if(['desktop','narrow','landscape'].includes(name)){
         await page.locator(channel==='email'?'[data-email="0"]':channel==='whatsapp'?'[data-wa-thread="wa-main"]':'[data-thread="sms-main"]').click();await settle(page);
-        const conversation={name:`${name}-conversation`,viewport,channel,...await metrics(page),contentOverflow:await page.locator('#stage .mailview,#stage .mailbody,#stage .scenario-email-header,#stage .transcript,#stage .wa-chat-body').evaluateAll(nodes=>nodes.map(node=>({className:node.className,overflow:node.scrollWidth-node.clientWidth}))),screenshot:`${name}-${channel}-conversation.png`};manifest.push(conversation);
+        const conversation={name:`${name}-conversation`,viewport,channel,...await metrics(page),contentOverflow:await page.locator('#stage .mailview,#stage .mailbody,#stage .scenario-email-header,#stage .transcript,#stage .wa-chat-body').evaluateAll(nodes=>nodes.map(node=>({className:node.className,overflow:node.scrollWidth-node.clientWidth}))),emailReadingBounds:channel==='email'?await emailReadingBounds(page):null,screenshot:`${name}-${channel}-conversation.png`};manifest.push(conversation);
         await page.screenshot({path:path.join(output,conversation.screenshot)});assertFit(conversation);assert.ok(conversation.contentOverflow.every(item=>item.overflow<=1),`Conversation content must fit horizontally: ${JSON.stringify(conversation.contentOverflow)}`);
+        if(channel==='email')assert.equal(conversation.emailReadingBounds.count,0,`Email body descendants and text must fit the visible reading pane: ${JSON.stringify(conversation.emailReadingBounds)}`);
         if(channel==='rcs')await page.locator('#stage .card-img__asset').waitFor();
       }
       for(const [mode,scale] of [['.85',.85],['.7',.7],['1',1]]){await page.locator('#previewScale').selectOption(mode);await settle(page);assert.equal((await metrics(page)).scale,scale,'Manual zoom must remain exact')}
