@@ -155,11 +155,13 @@ function validateAndNormalizeDraft(raw, request, evidence, brief = storyBrief(re
   const add = (code, message, channel) => issues.push(issue(code, message, channel));
   if (!object(raw) || raw.schemaVersion !== 2 || !object(raw.scenarios)) throw failure('draft_invalid', [issue('invalid_schema', 'Provider did not return a version 2 draft with channel scenarios.')]);
   const sources = allowedSources(request, evidence);
-  const url = (value, field, channel) => {
+  const imageSources = new Set(generationPolicy(request,evidence,brief).imageUrls.filter(Boolean));
+  const url = (value, field, channel, allowed = sources.urls) => {
     if (value === undefined || value === '') return '';
-    if (typeof value !== 'string' || !httpUrl(value) || !sources.urls.has(httpUrl(value))) {add('unlisted_url', `${field} must use a supplied or page-listed HTTP(S) URL.`, channel);return '';}
+    if (typeof value !== 'string' || !httpUrl(value) || !allowed.has(httpUrl(value))) {add('unlisted_url', allowed===imageSources?`${field} must use a supplied or discovered image URL (HTTP(S)).`:`${field} must use a supplied or page-listed HTTP(S) URL.`, channel);return '';}
     return httpUrl(value);
   };
+  const imageUrl = (value, field, channel) => url(value,field,channel,imageSources);
   const string = (value, field, channel, required = false, maximum = MAX_TEXT) => {
     if (value === undefined && !required) return '';
     if (typeof value !== 'string' || value.length > maximum || required && !value.trim()) {add('invalid_text', `${field} must be ${required ? 'nonempty ' : ''}text of at most ${maximum} characters.`, channel);return '';}
@@ -202,13 +204,13 @@ function validateAndNormalizeDraft(raw, request, evidence, brief = storyBrief(re
           if (p.kind === 'card' && cards.length !== 1 || p.kind === 'carousel' && (cards.length < 2 || cards.length > 4)) add('invalid_cards', 'A card needs one item; a carousel needs 2 to 4.', channel);
           next.presentation = {kind:p.kind, cards:cards.map(card => {
             if (!object(card)) {add('invalid_cards', 'Card must be an object.', channel);return {};}
-            const item = {title:string(card.title, 'Card title', channel, true, 160), description:string(card.description, 'Card description', channel, false, 600), imageUrl:url(card.imageUrl, 'Card image', channel), ctaLabel:string(card.ctaLabel, 'Card CTA', channel, false, 100), ctaUrl:url(card.ctaUrl, 'Card CTA URL', channel)};
+            const item = {title:string(card.title, 'Card title', channel, true, 160), description:string(card.description, 'Card description', channel, false, 600), imageUrl:imageUrl(card.imageUrl, 'Card image', channel), ctaLabel:string(card.ctaLabel, 'Card CTA', channel, false, 100), ctaUrl:url(card.ctaUrl, 'Card CTA URL', channel)};
             if (Boolean(item.ctaLabel) !== Boolean(item.ctaUrl)) add('invalid_cta', 'A card CTA requires both label and URL.', channel);
             return item;
           })};
         } else {
           if (channel !== 'email' || !['plain', 'branded'].includes(p.mode) || brief.plainRequested && p.mode !== 'plain') add('unsupported_presentation', 'Email presentation must match the requested channel and plain/branded mode.', channel);
-          next.presentation = {kind:'email', mode:p.mode, preheader:string(p.preheader, 'Email preheader', channel, false, 300), heroImageUrl:url(p.heroImageUrl, 'Email image', channel), ctaLabel:string(p.ctaLabel, 'Email CTA', channel, false, 100), ctaUrl:url(p.ctaUrl, 'Email CTA URL', channel)};
+          next.presentation = {kind:'email', mode:p.mode, preheader:string(p.preheader, 'Email preheader', channel, false, 300), heroImageUrl:imageUrl(p.heroImageUrl, 'Email image', channel), ctaLabel:string(p.ctaLabel, 'Email CTA', channel, false, 100), ctaUrl:url(p.ctaUrl, 'Email CTA URL', channel)};
           if (Boolean(next.presentation.ctaLabel) !== Boolean(next.presentation.ctaUrl)) add('invalid_cta', 'An email CTA requires both label and URL.', channel);
         }
         if (p?.bodyText !== undefined || p?.bodyHtml !== undefined || p?.customHtml !== undefined) add('competing_body', 'Message text is the only supported body source.', channel);
@@ -241,7 +243,8 @@ function validateAndNormalizeDraft(raw, request, evidence, brief = storyBrief(re
   if (!['company', 'customer'].includes(raw.initialSender)) add('invalid_sender', 'Draft opening sender is required.');
   const initialSender = brief.initialSender || raw.initialSender;
   for (const [channel, config] of Object.entries(scenarios)) if (config.turns[0]?.speaker !== initialSender) add('sender_mismatch', 'Channel opening speaker disagrees with the shared opening sender.', channel);
-  const draft = {schemaVersion:2, companyName, persona:copy(brief.persona), initials:text(raw.initials).replace(/[^\p{L}\p{N}]/gu, '').slice(0,3), emailAddress:'', logoUrl:url(raw.logoUrl, 'Brand logo'), heroImageUrl:scenarios.email?.turns.find(turn => turn.presentation?.heroImageUrl)?.presentation.heroImageUrl || '', brandColor:/^#[0-9a-f]{6}$/i.test(raw.brandColor) ? raw.brandColor.toUpperCase() : '#0176D3', brandSecondaryColor:/^#[0-9a-f]{6}$/i.test(raw.brandSecondaryColor) ? raw.brandSecondaryColor.toUpperCase() : '#032D60', initialSender, scenarios};
+  imageUrl(raw.heroImageUrl,'Brand hero'); // Validate provider metadata; displayed hero still comes only from the actual email turn.
+  const draft = {schemaVersion:2, companyName, persona:copy(brief.persona), initials:text(raw.initials).replace(/[^\p{L}\p{N}]/gu, '').slice(0,3), emailAddress:'', logoUrl:imageUrl(raw.logoUrl, 'Brand logo'), heroImageUrl:scenarios.email?.turns.find(turn => turn.presentation?.heroImageUrl)?.presentation.heroImageUrl || '', brandColor:/^#[0-9a-f]{6}$/i.test(raw.brandColor) ? raw.brandColor.toUpperCase() : '#0176D3', brandSecondaryColor:/^#[0-9a-f]{6}$/i.test(raw.brandSecondaryColor) ? raw.brandSecondaryColor.toUpperCase() : '#032D60', initialSender, scenarios};
   if (text(raw.emailAddress)) {
     if (sources.emails.has(folded(raw.emailAddress))) draft.emailAddress = text(raw.emailAddress);
     else warnings.push('The proposed sender email was not supplied or found in page context and was omitted.');

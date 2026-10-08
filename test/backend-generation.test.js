@@ -222,6 +222,43 @@ test('image enum overflow retains every explicit source in the prompt and final 
     assert.equal(rejected.calls.length,2);assert.equal(rejected.draftCache.size,0);
   }
 });
+test('final image allowlist rejects page and navigation URLs even if provider ignores the empty-image schema',async()=>{
+  const noImages=async()=>({url:'https://example.com/',contentType:'text/html',body:Buffer.from('<title>Example</title><a href="/details">Details</a>')});
+  const clean=draft(CHANNELS);clean.logoUrl='';
+  clean.scenarios.rcs.turns[0].presentation={kind:'card',cards:[{title:'Details',imageUrl:'',ctaLabel:'Visit website',ctaUrl:'https://example.com/'}]};
+  clean.scenarios.email.turns[0].presentation={kind:'email',mode:'branded',heroImageUrl:'',ctaLabel:'Details',ctaUrl:'https://example.com/details'};
+  clean.scenarios.sms.turns[0].text='See https://example.com/details';
+  const changes=[
+    raw=>{raw.logoUrl='https://example.com/';},
+    raw=>{raw.logoUrl='https://example.com/details';},
+    raw=>{raw.heroImageUrl='https://example.com/';},
+    raw=>{raw.scenarios.rcs.turns[0].presentation.cards[0].imageUrl='https://example.com/details';},
+    raw=>{raw.scenarios.email.turns[0].presentation.heroImageUrl='https://example.com/';},
+  ];
+  for(const change of changes){
+    const bad=clone(clean);change(bad);const pipeline=loadPipeline([bad]);pipeline.context.fetchRemote=noImages;
+    await assert.rejects(pipeline.generateScenarioDraft(request({channels:CHANNELS}),'ignored-image-policy'),error=>error.code==='draft_invalid'&&error.issues.some(item=>item.code==='unlisted_url'&&/supplied or discovered image URL/.test(item.message)));
+    assert.equal(pipeline.calls.length,2);assert.equal(pipeline.draftCache.size,0);
+    assert.deepEqual(pipeline.calls[0].body.generationConfig.responseSchema.properties.logoUrl.enum,['']);
+  }
+  const valid=loadPipeline([clean]);valid.context.fetchRemote=noImages;
+  const result=await valid.generateScenarioDraft(request({channels:CHANNELS}),'valid-links');
+  assert.equal(valid.calls.length,1);assert.equal(valid.draftCache.size,1);
+  assert.equal(result.draft.scenarios.rcs.turns[0].presentation.cards[0].ctaUrl,'https://example.com/');
+  assert.equal(result.draft.scenarios.email.turns[0].presentation.ctaUrl,'https://example.com/details');
+  assert.equal(result.draft.scenarios.sms.turns[0].text,'See https://example.com/details');
+});
+test('overflow omits only the enum while final image validation still excludes navigation-only URLs',async()=>{
+  const sources=Array.from({length:7},(_,index)=>`https://assets.example/selected-${index}.png`);
+  const input=request({useCase:'Use these supplied images: '+sources.join(' ')}),bad=draft();bad.logoUrl='https://example.com/details';
+  const pipeline=loadPipeline([bad]);
+  await assert.rejects(pipeline.generateScenarioDraft(input,'overflow-navigation'),error=>error.code==='draft_invalid'&&error.issues.some(item=>item.code==='unlisted_url'));
+  assert.equal(pipeline.calls.length,2);assert.equal(pipeline.draftCache.size,0);
+  assert.equal(pipeline.calls[0].body.generationConfig.responseSchema.properties.logoUrl.enum,undefined);
+  const valid=draft();valid.logoUrl=sources.at(-1);const accepted=loadPipeline([valid]);
+  assert.equal((await accepted.generateScenarioDraft(input,'overflow-explicit')).draft.logoUrl,sources.at(-1));
+  assert.equal(accepted.calls.length,1);assert.equal(accepted.draftCache.size,1);
+});
 test('server still rejects oversized turns, reply choices and carousels with simplified provider schema',async()=>{
   const turns=draft();turns.scenarios.sms.turns=Array.from({length:13},(_,index)=>({speaker:index%2?'customer':'company',text:'Message'}));
   const choices=draft();choices.scenarios.sms.turns[1]={speaker:'customer',text:'Choose.',mode:'choices',options:Array.from({length:7},(_,index)=>`Choice ${index}`)};
