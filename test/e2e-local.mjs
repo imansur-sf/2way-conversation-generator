@@ -206,7 +206,7 @@ try {
   assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.prev').count(), 0, 'The unavailable previous-card control must be hidden');
   assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.next').count(), 1, 'The next-card control must remain available');
   const navBox = await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.next').boundingBox();
-  const imageBox = await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .card-img').boundingBox();
+  const imageBox = await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .card-img').first().boundingBox();
   assert.ok(navBox.y >= imageBox.y && navBox.y + navBox.height <= imageBox.y + imageBox.height, 'Carousel navigation must stay inside the card media area');
   await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.next').click();
   await livePreviewPage.waitForFunction(() => document.querySelector('#stage [data-rcs-carousel="live-carousel"] .carousel-track')?.style.transform === 'translateX(-100%)');
