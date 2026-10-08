@@ -17,10 +17,10 @@ Implementation branch: `codex/quality-two-phase-2026-10-07`. Production main mus
 ## Phase 1 — Protect data and make playback/export reliable
 
 - [x] Baseline and local-work checkpoints published and verified remotely.
-- [ ] Truthful saving, revision-aware hydration, retained migration sources, atomic import, recoverable history.
-- [ ] Targeted asynchronous image updates and cancellable reply timers; independent channel content.
-- [ ] Safe branded HTML; hardened static/asset endpoints, bounded generation admission and request identity.
-- [ ] Consistent email content and snippets; safe export serialization, complete image manifest and precise export warnings.
+- [x] Truthful saving, revision-aware hydration, retained migration sources, atomic import, recoverable history.
+- [x] Targeted asynchronous image updates and cancellable reply timers; independent channel content.
+- [x] Safe branded HTML; hardened static/asset endpoints, bounded generation admission and request identity.
+- [x] Consistent email content and snippets; safe export serialization, complete image manifest and precise export warnings.
 - [ ] Behavioral regression harness completes; real downloaded files work without a server.
 - [ ] Review, verify, commit and publish Phase 1 rollback point before Phase 2 starts.
 

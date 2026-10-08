@@ -46,7 +46,14 @@ async function enableManual(page) {
 }
 
 async function waitForAcknowledgedSave(page) {
-  await page.waitForFunction(() => document.querySelector('#saveState')?.textContent === 'Saved on this device');
+  await page.waitForFunction(() => document.querySelector('#saveState')?.textContent === 'Saved on this device').catch(async error=>{
+    const diagnostic=await page.evaluate(()=>{
+      let cached=null;try{cached=JSON.parse(localStorage.getItem('two-way-experience-studio-v2-scenarios'))}catch{}
+      const save=document.querySelector('#saveState');
+      return {status:save?.textContent,detail:save?.title,notice:document.querySelector('#storageNotice')?.textContent,activeChannel:document.querySelector('[data-channel].active')?.dataset.channel,cacheSavedAt:cached?.savedAt,cacheActiveId:cached?.activeId,scenarios:cached?.scenarios?.map(scenario=>({id:scenario.id,channel:scenario.channel,variants:Object.fromEntries(Object.entries(scenario.variants||{}).map(([key,variant])=>[key,{channel:variant.channel,stepCount:variant.steps?.length}]))})),heldAcknowledgements:window.__testScenarioSaveAcknowledgements?.pending.length};
+    }).catch(()=>'<page unavailable>');
+    console.error('Save acknowledgement failure:',JSON.stringify(diagnostic));throw error;
+  });
 }
 
 async function pauseScenarioSaveAcknowledgements(page) {
@@ -282,6 +289,16 @@ try {
   assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.next').count(), 0, 'The unavailable next-card control must be hidden');
   assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.prev').count(), 1, 'The previous-card control must return after advancing');
   const carouselWindow = await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-window').boundingBox();
+  await livePreviewPage.evaluate(box=>{
+    const carousel=document.querySelector('#stage [data-rcs-carousel="live-carousel"]'),describe=element=>element?.nodeType===1?{tag:element.tagName,id:element.id,className:typeof element.className==='string'?element.className:'',carousel:element.closest('[data-rcs-carousel]')?.dataset.rcsCarousel||null}:null;
+    const rect=element=>{const bounds=element.getBoundingClientRect();return {x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height}};
+    const point=fraction=>{const x=box.x+box.width*fraction,y=box.y+box.height*.5,element=document.elementFromPoint(x,y);return {x,y,insideViewport:x>=0&&x<innerWidth&&y>=0&&y<innerHeight,hit:describe(element),ancestors:element?[element,...function*(node){while(node.parentElement){node=node.parentElement;yield node}}(element)].slice(0,8).map(describe):[]}};
+    const ancestors=[];for(let node=carousel;node;node=node.parentElement){const style=getComputedStyle(node);ancestors.push({...describe(node),...rect(node),overflowX:style.overflowX,overflowY:style.overflowY,scrollTop:node.scrollTop})}
+    const diagnostic=window.__carouselSwipeDiagnostic={viewport:{width:innerWidth,height:innerHeight},window:box,start:point(.25),end:point(.7),ancestors,events:[]};
+    const observe=event=>{if(diagnostic.events.length>=30)return;diagnostic.events.push({type:event.type,x:event.clientX,y:event.clientY,pointerId:event.pointerId,button:event.button,buttons:event.buttons,target:describe(event.target),originalCarouselConnected:carousel.isConnected,captured:typeof event.pointerId==='number'&&carousel.hasPointerCapture(event.pointerId)})};
+    for(const type of ['pointerdown','pointermove','pointerup','pointercancel','gotpointercapture','lostpointercapture','dragstart'])document.addEventListener(type,observe,{capture:true});
+    diagnostic.stop=()=>{for(const type of ['pointerdown','pointermove','pointerup','pointercancel','gotpointercapture','lostpointercapture','dragstart'])document.removeEventListener(type,observe,{capture:true})};
+  },carouselWindow);
   await livePreviewPage.mouse.move(carouselWindow.x + carouselWindow.width * 0.25, carouselWindow.y + carouselWindow.height * 0.5);
   await livePreviewPage.mouse.down();
   await livePreviewPage.mouse.move(carouselWindow.x + carouselWindow.width * 0.7, carouselWindow.y + carouselWindow.height * 0.5);
@@ -294,10 +311,14 @@ try {
   }).catch(async error=>{
     const diagnostics=await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"]').evaluate(carousel=>{
       const track=carousel.querySelector('.carousel-track'),computed=getComputedStyle(track).transform,offset=computed==='none'?0:new DOMMatrixReadOnly(computed).m41;
-      return {inlineTransform:track.style.transform,computedTransform:computed,trackWidth:track.offsetWidth,visualIndex:track.offsetWidth?-offset/track.offsetWidth:null,previousButtons:carousel.querySelectorAll('.carousel-nav.prev').length,nextButtons:carousel.querySelectorAll('.carousel-nav.next').length};
+      const {stop,...swipe}=window.__carouselSwipeDiagnostic||{};
+      return {inlineTransform:track.style.transform,computedTransform:computed,trackWidth:track.offsetWidth,visualIndex:track.offsetWidth?-offset/track.offsetWidth:null,previousButtons:carousel.querySelectorAll('.carousel-nav.prev').length,nextButtons:carousel.querySelectorAll('.carousel-nav.next').length,swipe};
     }).catch(()=>'<carousel or page unavailable>');
-    console.error('Carousel after rightward swipe:',diagnostics);throw error;
+    console.error('Carousel after rightward swipe:',JSON.stringify(diagnostics));
+    await livePreviewPage.screenshot({path:'test-results/carousel-rightward-swipe.png',fullPage:true}).catch(screenshotError=>console.error('Carousel screenshot unavailable:',screenshotError.message));
+    throw error;
   });
+  await livePreviewPage.evaluate(()=>window.__carouselSwipeDiagnostic?.stop());
   assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.prev').count(),0,'A rightward swipe must return to the first card');
   assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.next').count(),1,'The next-card control must return after swiping to the first card');
   const firstWindow = await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-window').boundingBox();
@@ -358,7 +379,7 @@ try {
   await saveBeforeSwitch;
   await releaseScenarioSaveAcknowledgements(channelGuardPage);
   await channelGuardPage.waitForFunction(() => document.querySelector('[data-channel="sms"]')?.classList.contains('active'));
-  await channelGuardPage.waitForFunction(() => document.querySelector('#saveState')?.textContent.includes('Saved on this device'));
+  await waitForAcknowledgedSave(channelGuardPage);
   let unnecessarySwitchPrompt = false;
   const unexpectedDialog=async dialog => { unnecessarySwitchPrompt = true; await dialog.dismiss(); };
   channelGuardPage.on('dialog', unexpectedDialog);
@@ -392,7 +413,7 @@ try {
   const durableBrand = durableSavePage.locator('#identityFields [data-skey="brandName"]');
   await durableBrand.fill('Durable Save RCS');
   await durableSavePage.locator('#save').click();
-  await durableSavePage.waitForFunction(() => document.querySelector('#saveState')?.textContent.includes('Saved on this device'));
+  await waitForAcknowledgedSave(durableSavePage);
   const durableRecord = await durableSavePage.evaluate(async () => new Promise((resolve, reject) => {
     const request = indexedDB.open('two-way-experience-studio-scenarios-v1', 1);
     request.onerror = () => reject(request.error);
@@ -443,7 +464,7 @@ try {
   await channelIsolationPage.unroute('**/api/asset?url=**');
   await channelIsolationPage.locator('#identityFields [data-skey="brandName"]').fill('WhatsApp only brand');
   await channelIsolationPage.locator('#save').click();
-  await channelIsolationPage.waitForFunction(() => document.querySelector('#saveState')?.textContent.includes('Saved on this device'));
+  await waitForAcknowledgedSave(channelIsolationPage);
   const isolatedRecord = await channelIsolationPage.evaluate(async () => new Promise((resolve, reject) => {
     const request = indexedDB.open('two-way-experience-studio-scenarios-v1', 1);
     request.onerror = () => reject(request.error);

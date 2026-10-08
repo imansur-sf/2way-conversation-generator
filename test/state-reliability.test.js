@@ -51,6 +51,87 @@ function installJourneys(context) {
   Object.assign(context,{journeyChannels:['sms','rcs','whatsapp','email'],journeyMeta:new Set(['id','name','scenarioMode','variants','channel']),cloneValue:clone,supportedBootstrapChannels:new Set(['sms','rcs','whatsapp','email'])});
   vm.runInContext(['normalizeScenarioIdentifiers','bootstrapScenario','journeyVariant','isJourneyVariant','normalizeJourneyStep','normalizeJourneyVariant','normalizeJourney','captureJourneyVariant','projectJourneyVariant','prepareScenarioImport'].map(fn).join('\n'),context);
 }
+function installStarterJourneys(context) {
+  installJourneys(context);
+  const seed=JSON.parse(html.match(/<script id="scenario-data" type="application\/json">([\s\S]*?)<\/script>/)[1]);
+  Object.assign(context,{seed,customerJourneyId:'customer-initiated-initial-message',companyJourneyId:'company-initiated-initial-message'});
+  context.state.scenarios=clone(seed.scenarios);
+  vm.runInContext(['starterSource','starterVariant','companyWhatsappStarter','buildCustomerFirstJourney','buildCompanyFirstJourney','ensureJourneyState','channelSaveSignature','rememberChannelSaveSignatures','hasPendingChannelEdits','switchJourneyChannel'].map(fn).join('\n'),context);
+  context.state.scenarios=[context.buildCustomerFirstJourney(),context.buildCompanyFirstJourney()];
+  context.state.activeId=context.state.scenarios[0].id;
+  context.ensureJourneyState();context.rememberChannelSaveSignatures();
+  context.renderAll=()=>context.ensureJourneyState();
+}
+
+test('starter multi-channel switches acknowledge the exact rendered revision without creating pending edits', async () => {
+  const writes=[],context=environment({durableWrite:(key,value)=>{writes.push({key,value:clone(value)});return Promise.resolve()}});
+  installStarterJourneys(context);installPersistence(context);
+  const persist=context.persist;let saved;
+  context.persist=()=>saved=persist();
+  for(const channel of ['rcs','sms','whatsapp','email','rcs']){
+    context.switchJourneyChannel(channel);await saved;
+    const record=writes.filter(write=>write.key==='current').at(-1).value;
+    assert.deepEqual(record.scenarios,clone(context.state.scenarios),`${channel}: rendering must not change the acknowledged revision`);
+    assert.equal(context.state.unsavedScenarioChanges,false);assert.equal(context.notices.at(-1).outcome,'saved');
+    assert.equal(context.hasPendingChannelEdits(),false);
+    for(const journey of record.scenarios)for(const [key,variant] of Object.entries(journey.variants))assert.equal(variant.channel,key);
+  }
+});
+
+test('Save all changes and its restore-point render acknowledge edited RCS and WhatsApp variants', async () => {
+  const writes=[],context=environment({durableWrite:(key,value)=>{writes.push({key,value:clone(value)});return Promise.resolve()},flushFocusedBuilderEdit(){},setTimeout(){}});
+  installStarterJourneys(context);installPersistence(context);
+  vm.runInContext(fn('retainedScenarioHistory')+fn('persistScenarioHistory')+source('saveHistory=function(){return persistScenarioHistory()}')+source("captureVersion=function(label='Restore point')")+fn('saveAllChanges'),context);
+  for(const channel of ['rcs','whatsapp']){
+    context.switchJourneyChannel(channel);await tick();
+    context.active().brandName=`${channel} saved brand`;
+    if(channel==='whatsapp')context.active().avatar='data:image/png;base64,synthetic';
+    context.saveAllChanges();await tick();
+    const record=writes.filter(write=>write.key==='current').at(-1).value;
+    assert.deepEqual(record.scenarios,clone(context.state.scenarios),`${channel}: restore-point rendering must not invalidate the save`);
+    assert.equal(record.scenarios[0].variants[channel].brandName,`${channel} saved brand`);
+    assert.equal(context.state.unsavedScenarioChanges,false);assert.equal(context.notices.at(-1).outcome,'saved');
+    assert.deepEqual(clone(context.scenarioHistory[0].snapshot),record.scenarios[0]);
+  }
+});
+
+test('saved channel signatures are unchanged by projecting an inactive variant', () => {
+  const context=environment();installStarterJourneys(context);
+  context.renderAll();assert.equal(context.state.unsavedScenarioChanges,undefined,'bootstrap normalization alone is not a user edit');
+  for(const channel of ['sms','rcs','whatsapp','email']){
+    const before=context.channelSaveSignature(context.active(),channel);
+    context.captureJourneyVariant();context.projectJourneyVariant(context.active(),channel);
+    assert.equal(context.channelSaveSignature(context.active()),before,`${channel}: viewing a saved variant is not an edit`);
+    context.state.channelEditPending={scenarioId:context.active().id,channel};
+    assert.equal(context.hasPendingChannelEdits(),false,'unchanged controls do not need a departure prompt');
+  }
+  context.active().brandName='A genuinely changed brand';assert.equal(context.hasPendingChannelEdits(),true);
+});
+
+test('render-stable starter saves still retain genuinely newer edits while acknowledgement is pending', async () => {
+  let release;const context=environment({durableWrite:()=>new Promise(resolve=>release=resolve)});
+  installStarterJourneys(context);installPersistence(context);
+  const saved=context.persist();await tick();
+  context.active().brandName='Changed after the saved snapshot';context.captureJourneyVariant();context.renderAll();
+  release();await saved;
+  assert.equal(context.state.unsavedScenarioChanges,true);assert.equal(context.state.lastScenarioSaveOutcome,'pending');
+  assert.equal(context.notices.at(-1).outcome,'pending');assert.match(context.notices.at(-1).detail,/Newer changes still need saving/);
+});
+
+test('legacy, imported and shared multi-channel records retain a stable stored channel convention', async () => {
+  for(const boundary of ['reload','import','shared']){
+    const context=environment({supportedScenarioChannels:new Set(['sms','rcs','whatsapp','email']),scenarioMigrationDirty:false});
+    installStarterJourneys(context);installPersistence(context);vm.runInContext(fn('normalizeScenario'),context);
+    const input=clone(context.active());delete input.variants.sms.channel;delete input.variants.email.channel;
+    const restored=boundary==='reload'?context.bootstrapScenario(input,0):boundary==='import'?context.prepareScenarioImport(input)[0]:context.normalizeScenario(input);
+    context.state.scenarios=[restored];context.state.activeId=restored.id;context.renderAll();
+    const saved=context.persist();context.renderAll();await saved;
+    const record=JSON.parse(context.localStorage.getItem('current'));
+    assert.deepEqual(record.scenarios,clone(context.state.scenarios),`${boundary}: save and normalization must agree`);
+    assert.equal(context.state.unsavedScenarioChanges,false);
+    for(const [channel,variant] of Object.entries(record.scenarios[0].variants))assert.equal(variant.channel,channel);
+  }
+});
 
 test('future and unknown primary versions prevent every legacy migration write', () => {
   for(const version of [3,'future',null]){
