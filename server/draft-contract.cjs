@@ -283,8 +283,8 @@ function draftPrompt(request, evidence, brief, issues = [], policy = generationP
     'Produce independent presentation for EVERY requested channel from the same story. SMS: concise text. RCS/WhatsApp: useful card/carousel only when requested or relevant, never when plain text is requested. Email: relevant subject, complete text body, optional plain/branded presentation. No arbitrary HTML.',
     'Each channel has title,sender,subject(email required),preheader,turns. A turn has speaker(company|customer),text,options(array), and customer mode from GENERATION_POLICY.customerModes. Preserve explicit words, punctuation, speaker and order. Adjacent company turns/handoffs are distinct. Scripted customer dialogue and normal spoken replies use prefill with the complete reply text. Asking a question or saying a customer asks for details is not a request for a free-input UI. Use free only when it is in customerModes and the user explicitly requested open-ended input.',
     'Optional company turn presentation: {kind:"text"}, {kind:"card"|"carousel",cards:[{title,description,imageUrl,ctaLabel,ctaUrl}]}, or email {kind:"email",mode:"plain"|"branded",preheader,heroImageUrl,ctaLabel,ctaUrl}. One card uses exactly1 item; carousel2..4. turn.text is the sole message body; no bodyText/bodyHtml/customHtml. A CTA needs both URL and label; omit both if not justified. options must remain arrays even when labels contain commas.',
-    'Every logoUrl, heroImageUrl and card imageUrl must be an EXACT value in GENERATION_POLICY.imageUrls, including empty string. If the list contains only empty string, there are NO approved images: omit image fields or use empty string. Never guess a logo path, favicon, stock image or placeholder URL. A useful rich card can have title/description and no image. The website URL is not automatically an image. For CTA links use only the literal HTTP(S) URLs supplied by the user or listed in website context; otherwise omit both CTA fields.',
-    'Return {schemaVersion:2,companyName,initials,emailAddress,logoUrl,heroImageUrl,brandColor,brandSecondaryColor,initialSender,scenarios:{<requested channels>}}. Use2..12 turns and exact requested count. Generated text should be concise; do not shorten supplied dialogue. Source-listed links/images are context, not verified facts.',
+    'Every emitted logoUrl, heroImageUrl and card imageUrl must be an EXACT NONEMPTY URL in GENERATION_POLICY.imageUrls. To show no image, OMIT the optional image field; do not emit an empty string. If the list contains only empty string, there are NO approved images: OMIT every image field. Never guess a logo path, favicon, stock image or placeholder URL. A useful rich card can have title/description and no image. The website URL is not automatically an image. For CTA links use only the literal HTTP(S) URLs supplied by the user or listed in website context; otherwise omit both CTA fields.',
+    'Return {schemaVersion:2,companyName,initials,emailAddress,brandColor,brandSecondaryColor,initialSender,scenarios:{<requested channels>}}; add optional logoUrl/heroImageUrl only when an approved image is used. Use2..12 turns and exact requested count. Generated text should be concise; do not shorten supplied dialogue. Source-listed links/images are context, not verified facts.',
     `USER_REQUEST=${JSON.stringify(request)}`,
     `AUTHORITATIVE_BRIEF=${JSON.stringify(brief)}`,
     `GENERATION_POLICY=${JSON.stringify(policy)}`,
@@ -301,18 +301,21 @@ function draftResponseSchema(channels, policy = {customerModes:['prefill','choic
   // shape without array bounds was accepted by the same model/configuration.
   // validateAndNormalizeDraft still enforces all counts and channel capabilities.
   const string = {type:'STRING'};
-  const image = policy.imageEnumConstrained?{type:'STRING',enum:policy.imageUrls}:string;
-  const card = {type:'OBJECT', properties:{title:string, description:string, imageUrl:image, ctaLabel:string, ctaUrl:string}, required:['title']};
+  const imageUrls=policy.imageUrls.filter(Boolean);
+  // Gemini rejects an empty-string enum member. No image is represented by an
+  // omitted optional property, while application normalization still allows ''.
+  const image = policy.imageEnumConstrained?(imageUrls.length?{type:'STRING',enum:imageUrls}:null):string;
+  const card = {type:'OBJECT', properties:{title:string, description:string, ...(image?{imageUrl:image}:{}), ctaLabel:string, ctaUrl:string}, required:['title']};
   const scenarios = Object.fromEntries(channels.map(channel=>{
     const email=channel==='email', rich=channel==='rcs'||channel==='whatsapp';
     const presentation={type:'OBJECT',properties:{kind:{type:'STRING',enum:email?['text','email']:rich?['text','card','carousel']:['text']},
-      ...(email?{mode:{type:'STRING',enum:['plain','branded']},preheader:string,heroImageUrl:image,ctaLabel:string,ctaUrl:string}:{}),
+      ...(email?{mode:{type:'STRING',enum:['plain','branded']},preheader:string,...(image?{heroImageUrl:image}:{}),ctaLabel:string,ctaUrl:string}:{}),
       ...(rich?{cards:{type:'ARRAY',items:card}}:{}),
     },required:['kind']};
     const turn={type:'OBJECT',properties:{speaker:{type:'STRING',enum:['company','customer']},text:string,mode:{type:'STRING',enum:policy.customerModes},options:{type:'ARRAY',items:string},presentation},required:['speaker','text']};
     return [channel,{type:'OBJECT',properties:{title:string,sender:string,...(email?{subject:string,preheader:string}:{}),turns:{type:'ARRAY',items:turn}},required:email?['title','subject','turns']:['title','turns']}];
   }));
-  return {type:'OBJECT', properties:{schemaVersion:{type:'INTEGER'}, companyName:string, initials:string, emailAddress:string, logoUrl:image, heroImageUrl:image, brandColor:string, brandSecondaryColor:string, initialSender:{type:'STRING', enum:['company','customer']}, scenarios:{type:'OBJECT', properties:scenarios, required:channels}}, required:['schemaVersion','initialSender','scenarios']};
+  return {type:'OBJECT', properties:{schemaVersion:{type:'INTEGER'}, companyName:string, initials:string, emailAddress:string, ...(image?{logoUrl:image,heroImageUrl:image}:{}), brandColor:string, brandSecondaryColor:string, initialSender:{type:'STRING', enum:['company','customer']}, scenarios:{type:'OBJECT', properties:scenarios, required:channels}}, required:['schemaVersion','initialSender','scenarios']};
 }
 
 module.exports = {CHANNELS, MAX_TURNS, MAX_TEXT, normalizePersona, normalizeControls, explicitTurns, requestedInitialSender, storyBrief, allowedSources, generationPolicy, validateAndNormalizeDraft, promptFallback, draftPrompt, draftResponseSchema};

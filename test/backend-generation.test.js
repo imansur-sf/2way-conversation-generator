@@ -133,7 +133,7 @@ test('all requested channels retain distinct meaningful presentation with truthf
   assert.doesNotThrow(()=>validateAndNormalizeDraft(raw,request({channels:CHANNELS,useCase:'Use an RCS rich card, conversational WhatsApp, and email.'}),evidence),'RCS cards must not force WhatsApp cards');
 });
 test('provider schema specializes each channel and avoids the rejected union/cardinality complexity',()=>{
-  const schema=draftResponseSchema(CHANNELS),scenarios=schema.properties.scenarios;
+  const schema=draftResponseSchema(CHANNELS,{customerModes:['prefill','choices'],imageUrls:['','https://x.test/i'],imageEnumConstrained:true}),scenarios=schema.properties.scenarios;
   assert.deepEqual(scenarios.required,CHANNELS);
   assert.deepEqual(Object.keys(scenarios.properties),CHANNELS);
   for(const field of ['schemaVersion','companyName','initials','emailAddress','logoUrl','heroImageUrl','brandColor','brandSecondaryColor','initialSender'])assert.ok(schema.properties[field],field);
@@ -166,8 +166,30 @@ test('provider schema specializes each channel and avoids the rejected union/car
   assert.equal(nodes,80);assert.equal(optional,39);assert.ok(JSON.stringify(schema).length<3500);
   assert.deepEqual(Object.keys(draftResponseSchema(['email']).properties.scenarios.properties),['email']);
 });
-test('generation sends request-aware modes and explicit empty-image enums through both attempts',async()=>{
-  const good=draft(CHANNELS);good.logoUrl='';good.scenarios.rcs.turns[0].presentation={kind:'card',cards:[{title:'Invitation details',description:'Ask for details.',imageUrl:''}]};
+test('provider schemas never emit empty enum members and every image field remains optional',()=>{
+  const empty=generationPolicy(request(),{candidates:[]});
+  const small=generationPolicy(request(),evidence);
+  const overflow=generationPolicy(request({useCase:'Use these images '+Array.from({length:7},(_,index)=>`https://assets.example/${index}.png`).join(' ')}),evidence);
+  for(const policy of [empty,small,overflow]){
+    const schema=draftResponseSchema(CHANNELS,policy);let imageFields=0;
+    function inspect(node){
+      if(node.enum){assert.ok(node.enum.length>0);assert.ok(node.enum.every(value=>typeof value==='string'&&value.length>0),'Gemini enums cannot contain empty members');}
+      for(const [field,child] of Object.entries(node.properties||{})){
+        if(['logoUrl','heroImageUrl','imageUrl'].includes(field)){
+          imageFields++;assert.ok(!node.required?.includes(field),'No image is represented by omission');
+          if(policy.imageEnumConstrained)assert.deepEqual(child.enum,policy.imageUrls.filter(Boolean));
+          else {assert.equal(child.type,'STRING');assert.equal(child.enum,undefined);}
+        }
+        inspect(child);
+      }
+      if(node.items)inspect(node.items);
+    }
+    inspect(schema);
+    assert.equal(imageFields,policy===empty?0:5);
+  }
+});
+test('generation sends request-aware modes and omits unsupported no-asset image fields through both attempts',async()=>{
+  const good=draft(CHANNELS);delete good.logoUrl;good.scenarios.rcs.turns[0].presentation={kind:'card',cards:[{title:'Invitation details',description:'Ask for details.'}]};
   const bad=clone(good);bad.scenarios.sms.turns[1].mode='free';bad.scenarios.email.turns[1].mode='free';bad.scenarios.rcs.turns[0].presentation.cards[0].imageUrl='https://invented.example/card.png';bad.logoUrl='https://invented.example/logo.png';
   const pipeline=loadPipeline([bad,good]);
   pipeline.context.fetchRemote=async()=>({url:'https://example.com/',contentType:'text/html',body:Buffer.from('<title>Example</title><p>No published images.</p>')});
@@ -179,10 +201,11 @@ test('generation sends request-aware modes and explicit empty-image enums throug
     const policy=JSON.parse(prompt.match(/^GENERATION_POLICY=(.+)$/m)[1]);
     assert.deepEqual(policy,{customerModes:['prefill','choices'],imageUrls:[''],imageEnumConstrained:true});
     for(const channel of CHANNELS)assert.deepEqual(schema.properties.scenarios.properties[channel].properties.turns.items.properties.mode.enum,['prefill','choices']);
-    assert.deepEqual(schema.properties.logoUrl.enum,['']);assert.deepEqual(schema.properties.heroImageUrl.enum,['']);
-    assert.deepEqual(schema.properties.scenarios.properties.rcs.properties.turns.items.properties.presentation.properties.cards.items.properties.imageUrl.enum,['']);
-    assert.deepEqual(schema.properties.scenarios.properties.email.properties.turns.items.properties.presentation.properties.heroImageUrl.enum,['']);
+    assert.equal(schema.properties.logoUrl,undefined);assert.equal(schema.properties.heroImageUrl,undefined);
+    assert.equal(schema.properties.scenarios.properties.rcs.properties.turns.items.properties.presentation.properties.cards.items.properties.imageUrl,undefined);
+    assert.equal(schema.properties.scenarios.properties.email.properties.turns.items.properties.presentation.properties.heroImageUrl,undefined);
     assert.match(prompt,/NO approved images/);assert.match(prompt,/not a request for a free-input UI/);assert.match(prompt,/rich card can have title\/description and no image/);
+    assert.match(prompt,/OMIT every image field/);assert.match(prompt,/do not emit an empty string/);
   }
   const repair=JSON.parse(pipeline.calls[1].body.contents[0].parts[0].text.match(/^CORRECT_THESE_VALIDATION_ISSUES=(.+)$/m)[1]);
   assert.equal(repair.filter(item=>item.code==='unrequested_free_input').length,2);assert.equal(repair.filter(item=>item.code==='unlisted_url').length,2);
@@ -199,7 +222,7 @@ test('source-listed and explicit image URLs remain literal, deterministic choice
   const pipeline=loadPipeline([raw]),result=await pipeline.generateScenarioDraft(input,'selected-images');
   assert.equal(pipeline.calls.length,1);assert.equal(result.draft.logoUrl,supplied);
   const schema=pipeline.calls[0].body.generationConfig.responseSchema;
-  assert.deepEqual(schema.properties.logoUrl.enum,policy.imageUrls);
+  assert.deepEqual(schema.properties.logoUrl.enum,policy.imageUrls.filter(Boolean));
   assert.deepEqual(schema.properties.scenarios.properties.sms.properties.turns.items.properties.mode.enum,['prefill','free','choices']);
   assert.equal(result.draft.scenarios.sms.turns[1].mode,'free');
 });
@@ -239,7 +262,7 @@ test('final image allowlist rejects page and navigation URLs even if provider ig
     const bad=clone(clean);change(bad);const pipeline=loadPipeline([bad]);pipeline.context.fetchRemote=noImages;
     await assert.rejects(pipeline.generateScenarioDraft(request({channels:CHANNELS}),'ignored-image-policy'),error=>error.code==='draft_invalid'&&error.issues.some(item=>item.code==='unlisted_url'&&/supplied or discovered image URL/.test(item.message)));
     assert.equal(pipeline.calls.length,2);assert.equal(pipeline.draftCache.size,0);
-    assert.deepEqual(pipeline.calls[0].body.generationConfig.responseSchema.properties.logoUrl.enum,['']);
+    assert.equal(pipeline.calls[0].body.generationConfig.responseSchema.properties.logoUrl,undefined);
   }
   const valid=loadPipeline([clean]);valid.context.fetchRemote=noImages;
   const result=await valid.generateScenarioDraft(request({channels:CHANNELS}),'valid-links');
