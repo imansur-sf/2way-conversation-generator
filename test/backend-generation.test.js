@@ -19,23 +19,23 @@ function draft(channels = ['sms']) {
   }]))};
 }
 function loadPipeline(responses, env = {}) {
-  const calls = [], network = [], requireHere=createRequire(path.join(root,'server.js'));
+  const calls = [], network = [], logs=[], requireHere=createRequire(path.join(root,'server.js'));
   const context=vm.createContext({
     require:name=>name==='node:http'?{createServer(){return {listen(){}};}}:requireHere(name),
     __dirname:root,process:{env:{APP_ENV:'test',GEMINI_API_KEY:'synthetic-offline-key',...env}},
-    console:{log(){},error(){},warn(){}},Buffer,URL,AbortController,queueMicrotask,
+    console:{log(value){logs.push(value);},error(value){logs.push(value);},warn(){}},Buffer,URL,AbortController,queueMicrotask,
     setTimeout:(callback,delay)=>setTimeout(callback,delay===350?0:delay),clearTimeout,
     fetch:async(url,options)=>{
       calls.push({url,headers:options.headers,body:JSON.parse(options.body)});
       const next=responses[Math.min(calls.length-1,responses.length-1)];
       if(next instanceof Error)throw next;
-      if(next?.httpStatus)return {ok:false,status:next.httpStatus};
+      if(next?.httpStatus)return new Response(next.errorBody===undefined?'':typeof next.errorBody==='string'?next.errorBody:JSON.stringify(next.errorBody),{status:next.httpStatus});
       return {ok:true,json:async()=>next?.envelope || {candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(next)}]}}]}};
     },
   });
   vm.runInContext(`${serverSource}\nthis.api={parseJson,generateScenarioDraft,validateDraftRequest,startGenerationJob,publicJob,draftCache,generationJobs,active:()=>activeGenerations,health:()=>providerHealth(aiSettings,providerObservation)};`,context);
   context.fetchRemote=async url=>{network.push(url);return {url:'https://example.com/',contentType:'text/html',body:Buffer.from('<title>Example</title><link rel="icon" href="/logo.svg"><meta property="og:image" content="/hero.png"><a href="/details">Details</a><a href="mailto:support@example.com">Contact</a><p>Synthetic reference page.</p>')};};
-  return {...context.api,context,calls,network};
+  return {...context.api,context,calls,network,logs};
 }
 
 test('actual provider JSON parser accepts fenced whitespace and rejects surrounding prose',async()=>{
@@ -132,6 +132,50 @@ test('all requested channels retain distinct meaningful presentation with truthf
   assert.deepEqual(clone(pipeline.calls[0].body.generationConfig.responseSchema.properties.scenarios.required),CHANNELS);
   assert.doesNotThrow(()=>validateAndNormalizeDraft(raw,request({channels:CHANNELS,useCase:'Use an RCS rich card, conversational WhatsApp, and email.'}),evidence),'RCS cards must not force WhatsApp cards');
 });
+test('provider schema specializes each channel and avoids the rejected union/cardinality complexity',()=>{
+  const schema=draftResponseSchema(CHANNELS),scenarios=schema.properties.scenarios;
+  assert.deepEqual(scenarios.required,CHANNELS);
+  assert.deepEqual(Object.keys(scenarios.properties),CHANNELS);
+  for(const field of ['schemaVersion','companyName','initials','emailAddress','logoUrl','heroImageUrl','brandColor','brandSecondaryColor','initialSender'])assert.ok(schema.properties[field],field);
+  for(const channel of CHANNELS){
+    const scenario=scenarios.properties[channel],turn=scenario.properties.turns.items,presentation=turn.properties.presentation;
+    assert.deepEqual(turn.required,['speaker','text']);assert.deepEqual(turn.properties.speaker.enum,['company','customer']);
+    assert.deepEqual(turn.properties.mode.enum,['prefill','free','choices']);assert.equal(turn.properties.options.items.type,'STRING');
+    assert.deepEqual(scenario.required,channel==='email'?['title','subject','turns']:['title','turns']);
+    if(channel==='sms'){
+      assert.deepEqual(presentation.properties.kind.enum,['text']);assert.deepEqual(Object.keys(presentation.properties),['kind']);
+    }else if(channel==='email'){
+      assert.deepEqual(presentation.properties.kind.enum,['text','email']);assert.deepEqual(presentation.properties.mode.enum,['plain','branded']);
+      assert.deepEqual(Object.keys(presentation.properties),['kind','mode','preheader','heroImageUrl','ctaLabel','ctaUrl']);
+      assert.equal(scenario.properties.subject.type,'STRING');
+    }else{
+      assert.deepEqual(presentation.properties.kind.enum,['text','card','carousel']);assert.deepEqual(Object.keys(presentation.properties),['kind','cards']);
+      assert.deepEqual(Object.keys(presentation.properties.cards.items.properties),['title','description','imageUrl','ctaLabel','ctaUrl']);
+    }
+    if(channel!=='email'){assert.equal(scenario.properties.subject,undefined);assert.equal(scenario.properties.preheader,undefined);}
+  }
+  let nodes=0,optional=0;
+  function inspect(node){
+    nodes++;assert.equal(node.minItems,undefined);assert.equal(node.maxItems,undefined);
+    for(const field of node.required||[])assert.ok(node.properties?.[field],field);
+    optional+=Object.keys(node.properties||{}).filter(field=>!node.required?.includes(field)).length;
+    for(const child of Object.values(node.properties||{}))inspect(child);if(node.items)inspect(node.items);
+  }
+  inspect(schema);
+  // The rejected schema had 115 nodes, 70 optional fields and 4,764 bytes.
+  assert.equal(nodes,80);assert.equal(optional,39);assert.ok(JSON.stringify(schema).length<3500);
+  assert.deepEqual(Object.keys(draftResponseSchema(['email']).properties.scenarios.properties),['email']);
+});
+test('server still rejects oversized turns, reply choices and carousels with simplified provider schema',async()=>{
+  const turns=draft();turns.scenarios.sms.turns=Array.from({length:13},(_,index)=>({speaker:index%2?'customer':'company',text:'Message'}));
+  const choices=draft();choices.scenarios.sms.turns[1]={speaker:'customer',text:'Choose.',mode:'choices',options:Array.from({length:7},(_,index)=>`Choice ${index}`)};
+  const cards=draft(['rcs']);cards.scenarios.rcs.turns[0].presentation={kind:'carousel',cards:Array.from({length:5},(_,index)=>({title:`Card ${index}`}))};
+  for(const [raw,channels,code] of [[turns,['sms'],'invalid_turn_count'],[choices,['sms'],'invalid_options'],[cards,['rcs'],'invalid_cards']]){
+    const pipeline=loadPipeline([raw]);
+    await assert.rejects(pipeline.generateScenarioDraft(request({channels}),'strict-bounds'),error=>error.code==='draft_invalid'&&error.issues.some(item=>item.code===code));
+    assert.equal(pipeline.calls.length,MAX_PROVIDER_ATTEMPTS);assert.equal(pipeline.draftCache.size,0);
+  }
+});
 test('empty objects, missing channels and empty company text never succeed or enter cache',async()=>{
   const empty=draft();empty.scenarios.sms.turns[0].text='';
   for(const raw of [{},empty,{...draft(),scenarios:{email:draft(['email']).scenarios.email}}]) {
@@ -163,6 +207,25 @@ test('provider timeout fallback preserves a complete script and is identified an
 test('auth, missing model and safety failures are not masked by fallback',async()=>{
   for(const [raw,code] of [[{httpStatus:403},'gemini_auth_failed'],[{httpStatus:404},'gemini_model_not_found'],[{envelope:{promptFeedback:{blockReason:'SAFETY'}}},'gemini_blocked']]) {
     const pipeline=loadPipeline([raw]);await assert.rejects(pipeline.generateScenarioDraft(request({useCase:'Company says "Hi." Customer says "Hello."'}),'failed'),{code});assert.equal(pipeline.calls.length,1);assert.equal(pipeline.draftCache.size,0);
+  }
+});
+test('provider HTTP diagnostics are bounded, allowlisted and never log upstream free text',async()=>{
+  const sensitive='synthetic-offline-key PRIVATE_PROMPT https://private.example/?key=secret';
+  const body={error:{status:'INVALID_ARGUMENT',message:`Response schema has too many states. ${sensitive}`,details:[{fieldViolations:[
+    {field:'generation_config.response_schema.properties[0].value.items.max_items',description:sensitive},
+    {field:'contents.parts.text',description:sensitive},{field:sensitive,description:sensitive},
+  ]}]}};
+  const pipeline=loadPipeline([{httpStatus:400,errorBody:body}]);
+  await assert.rejects(pipeline.generateScenarioDraft(request(),'provider-error'),error=>error.code==='gemini_bad_request'&&error.issues[0].code==='provider_schema_complexity');
+  assert.equal(pipeline.calls.length,1);assert.equal(pipeline.draftCache.size,0);
+  const entry=pipeline.logs.map(value=>JSON.parse(value)).find(value=>value.event==='gemini_request_failed');
+  assert.deepEqual(clone(entry.diagnostic),{category:'schema_complexity',body:'parsed',fields:['generation_config.response_schema.properties[0].value.items.max_items'],status:'INVALID_ARGUMENT'});
+  assert.doesNotMatch(pipeline.logs.join('\n'),/PRIVATE_PROMPT|synthetic-offline-key|private\.example|key=secret|contents\.parts/);
+  for (const [errorBody,expected] of [['x'.repeat(16385),'oversized'],['not json','malformed'],[{error:{status:sensitive,message:sensitive}},'parsed']]) {
+    const invalid=loadPipeline([{httpStatus:400,errorBody}]);await assert.rejects(invalid.generateScenarioDraft(request(),'bounded'),{code:'gemini_bad_request'});
+    const diagnostic=invalid.logs.map(value=>JSON.parse(value)).find(value=>value.event==='gemini_request_failed').diagnostic;
+    assert.equal(diagnostic.body,expected);assert.equal(diagnostic.category,'unknown');assert.equal(diagnostic.status,undefined);assert.equal(invalid.calls.length,1);
+    assert.doesNotMatch(invalid.logs.join('\n'),/PRIVATE_PROMPT|synthetic-offline-key|private\.example/);
   }
 });
 test('supported image-only cards and explicitly open-ended input are not mistaken for empty output',()=>{

@@ -86,6 +86,46 @@ function parseJson(value) {
   try { return JSON.parse(text); }
   catch { throw Object.assign(new Error('gemini_bad_json'),{code:'gemini_bad_json'}); }
 }
+async function providerErrorDiagnostic(upstream) {
+  const diagnostic={category:'unknown',body:'unavailable',fields:[]};
+  if (!upstream.body?.getReader) return diagnostic;
+  const reader=upstream.body.getReader(),chunks=[];
+  let size=0;
+  try {
+    while (true) {
+      const {done,value}=await reader.read();
+      if (done) break;
+      size+=value.byteLength;
+      if (size>16384) {diagnostic.body='oversized';return diagnostic;}
+      chunks.push(Buffer.from(value));
+    }
+    let payload;
+    try {payload=JSON.parse(Buffer.concat(chunks).toString('utf8'));} catch {diagnostic.body='malformed';return diagnostic;}
+    diagnostic.body='parsed';
+    const error=payload?.error || {};
+    if (['INVALID_ARGUMENT','FAILED_PRECONDITION','UNAUTHENTICATED','PERMISSION_DENIED','NOT_FOUND','RESOURCE_EXHAUSTED','INTERNAL','UNAVAILABLE','DEADLINE_EXCEEDED'].includes(error.status)) diagnostic.status=error.status;
+    const message=typeof error.message==='string'?error.message:'';
+    // Never return upstream free text: validation messages can echo the prompt,
+    // credentials or resource identifiers. Categories and field names are closed sets.
+    if (/schema/i.test(message) && /too (?:complex|large|many)|complexity|nesting|nested too|states|constraint.*limit/i.test(message)) diagnostic.category='schema_complexity';
+    else if (/schema/i.test(message)) diagnostic.category='schema_invalid';
+    else if (/unsupported|not supported|unknown name|cannot find field/i.test(message)) diagnostic.category='unsupported_parameter';
+    else if (diagnostic.status==='INVALID_ARGUMENT') diagnostic.category='invalid_argument';
+    const allowed=new Set(['generationConfig','generation_config','responseSchema','response_schema','responseMimeType','response_mime_type','maxOutputTokens','max_output_tokens','properties','items','required','type','enum','minItems','maxItems','min_items','max_items','value','schemaVersion','companyName','initials','emailAddress','logoUrl','heroImageUrl','brandColor','brandSecondaryColor','initialSender','scenarios','sms','rcs','whatsapp','email','title','sender','subject','preheader','turns','speaker','text','mode','options','presentation','kind','cards','description','imageUrl','ctaLabel','ctaUrl']);
+    for (const detail of Array.isArray(error.details)?error.details:[]) {
+      for (const violation of Array.isArray(detail?.fieldViolations)?detail.fieldViolations:[]) {
+        const field=violation?.field;
+        if (typeof field!=='string' || field.length>300 || !/^[A-Za-z_][A-Za-z_0-9]*(?:\[\d{1,3}\])?(?:\.[A-Za-z_][A-Za-z_0-9]*(?:\[\d{1,3}\])?)*$/.test(field)) continue;
+        if (!field.replace(/\[\d+\]/g,'').split('.').every(part=>allowed.has(part))) continue;
+        if (!diagnostic.fields.includes(field)) diagnostic.fields.push(field);
+        if (diagnostic.fields.length>=6) break;
+      }
+      if (diagnostic.fields.length>=6) break;
+    }
+    return diagnostic;
+  } catch {diagnostic.body='unreadable';return diagnostic;}
+  finally {try {await reader.cancel();} catch {}reader.releaseLock();}
+}
 /* Exactly one upstream attempt. The generation loop owns the shared retry
    budget, including structural/semantic validation failures. */
 async function callGemini(prompt, channels) {
@@ -98,8 +138,10 @@ async function callGemini(prompt, channels) {
     });
     if (!upstream.ok) {
       const code=upstream.status===400?'gemini_bad_request':upstream.status===401||upstream.status===403?'gemini_auth_failed':upstream.status===404?'gemini_model_not_found':upstream.status===429?'gemini_rate_limited':'gemini_failed';
-      console.error(JSON.stringify({event:'gemini_request_failed',status:upstream.status,model:geminiModel}));
-      throw Object.assign(new Error(code),{code,status:upstream.status});
+      const diagnostic=await providerErrorDiagnostic(upstream);
+      console.error(JSON.stringify({event:'gemini_request_failed',status:upstream.status,model:geminiModel,diagnostic}));
+      const issues=upstream.status===400?[{code:`provider_${diagnostic.category}`,message:diagnostic.category==='schema_complexity'?'The provider rejected the response schema as too complex.':diagnostic.category==='schema_invalid'?'The provider rejected the response schema.':'The provider rejected the generation request; check the server diagnostic category and approved field paths.'}]:[];
+      throw Object.assign(new Error(code),{code,status:upstream.status,issues});
     }
     let payload;
     try {payload=await upstream.json();} catch {throw Object.assign(new Error('gemini_bad_json'),{code:'gemini_bad_json'});}

@@ -271,12 +271,24 @@ function draftPrompt(request, evidence, brief, issues = []) {
 }
 
 function draftResponseSchema(channels) {
+  // Provider schemas are deliberately smaller than the application contract.
+  // Google documents complexity-related rejections and recommends fewer constraints:
+  // https://ai.google.dev/gemini-api/docs/generate-content/structured-output#limitations
+  // The four-channel union schema was rejected in staging; this channel-specific
+  // shape without array bounds was accepted by the same model/configuration.
+  // validateAndNormalizeDraft still enforces all counts and channel capabilities.
   const string = {type:'STRING'};
   const card = {type:'OBJECT', properties:{title:string, description:string, imageUrl:string, ctaLabel:string, ctaUrl:string}, required:['title']};
-  const presentation = {type:'OBJECT', properties:{kind:{type:'STRING', enum:['text','card','carousel','email']}, mode:{type:'STRING', enum:['plain','branded']}, cards:{type:'ARRAY', items:card, maxItems:4}, preheader:string, heroImageUrl:string, ctaLabel:string, ctaUrl:string}, required:['kind']};
-  const turn = {type:'OBJECT', properties:{speaker:{type:'STRING', enum:['company','customer']}, text:string, mode:{type:'STRING', enum:['prefill','free','choices']}, options:{type:'ARRAY', items:string, maxItems:6}, presentation}, required:['speaker','text']};
-  const scenario = {type:'OBJECT', properties:{title:string, sender:string, subject:string, preheader:string, turns:{type:'ARRAY', items:turn, minItems:2, maxItems:MAX_TURNS}}, required:['title','turns']};
-  return {type:'OBJECT', properties:{schemaVersion:{type:'INTEGER'}, companyName:string, initials:string, emailAddress:string, logoUrl:string, heroImageUrl:string, brandColor:string, brandSecondaryColor:string, initialSender:{type:'STRING', enum:['company','customer']}, scenarios:{type:'OBJECT', properties:Object.fromEntries(channels.map(channel=>[channel,{...scenario, required:channel==='email'?['title','subject','turns']:['title','turns']}])) , required:channels}}, required:['schemaVersion','initialSender','scenarios']};
+  const scenarios = Object.fromEntries(channels.map(channel=>{
+    const email=channel==='email', rich=channel==='rcs'||channel==='whatsapp';
+    const presentation={type:'OBJECT',properties:{kind:{type:'STRING',enum:email?['text','email']:rich?['text','card','carousel']:['text']},
+      ...(email?{mode:{type:'STRING',enum:['plain','branded']},preheader:string,heroImageUrl:string,ctaLabel:string,ctaUrl:string}:{}),
+      ...(rich?{cards:{type:'ARRAY',items:card}}:{}),
+    },required:['kind']};
+    const turn={type:'OBJECT',properties:{speaker:{type:'STRING',enum:['company','customer']},text:string,mode:{type:'STRING',enum:['prefill','free','choices']},options:{type:'ARRAY',items:string},presentation},required:['speaker','text']};
+    return [channel,{type:'OBJECT',properties:{title:string,sender:string,...(email?{subject:string,preheader:string}:{}),turns:{type:'ARRAY',items:turn}},required:email?['title','subject','turns']:['title','turns']}];
+  }));
+  return {type:'OBJECT', properties:{schemaVersion:{type:'INTEGER'}, companyName:string, initials:string, emailAddress:string, logoUrl:string, heroImageUrl:string, brandColor:string, brandSecondaryColor:string, initialSender:{type:'STRING', enum:['company','customer']}, scenarios:{type:'OBJECT', properties:scenarios, required:channels}}, required:['schemaVersion','initialSender','scenarios']};
 }
 
 module.exports = {CHANNELS, MAX_TURNS, MAX_TEXT, normalizePersona, normalizeControls, explicitTurns, requestedInitialSender, storyBrief, allowedSources, validateAndNormalizeDraft, promptFallback, draftPrompt, draftResponseSchema};
