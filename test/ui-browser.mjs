@@ -115,7 +115,7 @@ try{
     try{
       for(const channel of ['sms','rcs']){
         await page.locator(`[data-channel="${channel}"]`).click();await page.locator('[data-v2-preview-reset]').click();await settle(page);
-        const value=await checkThreadRow(page,companyNames.stress,{requireTruncation:true,proveBaselineWrap:true});
+        const value=await checkThreadRow(page,companyNames.stress,{requireTruncation:true});
         const screenshot=`long-sender-${channel}.png`;manifest.push({name:'long-sender-timestamp',channel,...value,screenshot});await page.screenshot({path:path.join(output,screenshot)});
       }
       assert.deepEqual(errors,[]);

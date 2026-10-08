@@ -321,40 +321,56 @@ try {
   await waitForCarouselIndex(1);
   assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.next').count(), 0, 'The unavailable next-card control must be hidden');
   assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.prev').count(), 1, 'The previous-card control must return after advancing');
-  const carouselWindow = await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-window').boundingBox();
-  await livePreviewPage.evaluate(box=>{
+  const swipeCarousel=async(startFraction,endFraction,expectedIndex,direction)=>{
+  const windowLocator=livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-window');
+  await windowLocator.scrollIntoViewIfNeeded();
+  await livePreviewPage.evaluate(()=>{window.__carouselGeometrySample=null});
+  await livePreviewPage.waitForFunction(()=>{
+    const node=document.querySelector('#stage [data-rcs-carousel="live-carousel"] .carousel-window'),phone=node?.closest('.phone'),stage=document.querySelector('#stage');
+    if(!node||!phone?.parentElement.classList.contains('v2-preview-canvas'))return false;
+    const box=node.getBoundingClientRect(),device=phone.getBoundingClientRect(),scale=Number(stage.dataset.previewScale);
+    const sample=JSON.stringify([box.x,box.y,box.width,box.height,document.querySelector('#transcript')?.scrollTop,device.x,device.y,device.width,device.height]);
+    const stable=sample===window.__carouselGeometrySample;window.__carouselGeometrySample=sample;
+    return stable&&scale>0&&Math.abs(device.width-phone.offsetWidth*scale)<.1&&Math.abs(device.height-phone.offsetHeight*scale)<.1;
+  },null,{polling:'raf'});
+  const carouselWindow=await windowLocator.boundingBox();
+  assert.ok(carouselWindow.width*Math.abs(endFraction-startFraction)>32,'The swipe must exceed the gesture threshold');
+  await livePreviewPage.evaluate(({box,startFraction,endFraction})=>{
     const carousel=document.querySelector('#stage [data-rcs-carousel="live-carousel"]'),describe=element=>element?.nodeType===1?{tag:element.tagName,id:element.id,className:typeof element.className==='string'?element.className:'',carousel:element.closest('[data-rcs-carousel]')?.dataset.rcsCarousel||null}:null;
     const rect=element=>{const bounds=element.getBoundingClientRect();return {x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height}};
     const point=fraction=>{const x=box.x+box.width*fraction,y=box.y+box.height*.5,element=document.elementFromPoint(x,y);return {x,y,insideViewport:x>=0&&x<innerWidth&&y>=0&&y<innerHeight,hit:describe(element),ancestors:element?[element,...function*(node){while(node.parentElement){node=node.parentElement;yield node}}(element)].slice(0,8).map(describe):[]}};
     const ancestors=[];for(let node=carousel;node;node=node.parentElement){const style=getComputedStyle(node);ancestors.push({...describe(node),...rect(node),overflowX:style.overflowX,overflowY:style.overflowY,scrollTop:node.scrollTop})}
-    const diagnostic=window.__carouselSwipeDiagnostic={viewport:{width:innerWidth,height:innerHeight},window:box,start:point(.25),end:point(.7),ancestors,events:[]};
+    const diagnostic=window.__carouselSwipeDiagnostic={viewport:{width:innerWidth,height:innerHeight},window:box,start:point(startFraction),end:point(endFraction),ancestors,events:[]};
     const observe=event=>{if(diagnostic.events.length>=30)return;diagnostic.events.push({type:event.type,x:event.clientX,y:event.clientY,pointerId:event.pointerId,button:event.button,buttons:event.buttons,target:describe(event.target),originalCarouselConnected:carousel.isConnected,captured:typeof event.pointerId==='number'&&carousel.hasPointerCapture(event.pointerId)})};
     for(const type of ['pointerdown','pointermove','pointerup','pointercancel','gotpointercapture','lostpointercapture','dragstart'])document.addEventListener(type,observe,{capture:true});
     diagnostic.stop=()=>{for(const type of ['pointerdown','pointermove','pointerup','pointercancel','gotpointercapture','lostpointercapture','dragstart'])document.removeEventListener(type,observe,{capture:true})};
-  },carouselWindow);
-  await livePreviewPage.mouse.move(carouselWindow.x + carouselWindow.width * 0.25, carouselWindow.y + carouselWindow.height * 0.5);
+  },{box:carouselWindow,startFraction,endFraction});
+  try{
+  const hits=await livePreviewPage.evaluate(()=>{
+    const diagnostic=window.__carouselSwipeDiagnostic;
+    return [diagnostic.start,diagnostic.end].map(point=>{const node=document.elementFromPoint(point.x,point.y);return point.insideViewport&&node?.closest('[data-rcs-carousel]')?.dataset.rcsCarousel==='live-carousel'&&!node.closest('button,a,input')});
+  });
+  assert.deepEqual(hits,[true,true],'Both swipe points must hit the current carousel, away from interactive controls');
+  await livePreviewPage.mouse.move(carouselWindow.x + carouselWindow.width * startFraction, carouselWindow.y + carouselWindow.height * 0.5);
   await livePreviewPage.mouse.down();
-  await livePreviewPage.mouse.move(carouselWindow.x + carouselWindow.width * 0.7, carouselWindow.y + carouselWindow.height * 0.5);
+  await livePreviewPage.mouse.move(carouselWindow.x + carouselWindow.width * endFraction, carouselWindow.y + carouselWindow.height * 0.5);
   await livePreviewPage.mouse.up();
-  await waitForCarouselIndex(0).catch(async error=>{
+  await waitForCarouselIndex(expectedIndex);
+  }catch(error){
     const diagnostics=await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"]').evaluate(carousel=>{
       const track=carousel.querySelector('.carousel-track'),computed=getComputedStyle(track).transform,offset=computed==='none'?0:new DOMMatrixReadOnly(computed).m41;
       const {stop,...swipe}=window.__carouselSwipeDiagnostic||{};
       return {inlineTransform:track.style.transform,computedTransform:computed,trackWidth:track.offsetWidth,visualIndex:track.offsetWidth?-offset/track.offsetWidth:null,previousButtons:carousel.querySelectorAll('.carousel-nav.prev').length,nextButtons:carousel.querySelectorAll('.carousel-nav.next').length,swipe};
     }).catch(()=>'<carousel or page unavailable>');
-    console.error('Carousel after rightward swipe:',JSON.stringify(diagnostics));
-    await livePreviewPage.screenshot({path:'test-results/carousel-rightward-swipe.png',fullPage:true}).catch(screenshotError=>console.error('Carousel screenshot unavailable:',screenshotError.message));
+    console.error(`Carousel after ${direction} swipe:`,JSON.stringify(diagnostics));
+    await livePreviewPage.screenshot({path:`test-results/carousel-${direction}-swipe.png`,fullPage:true}).catch(screenshotError=>console.error('Carousel screenshot unavailable:',screenshotError.message));
     throw error;
-  });
-  await livePreviewPage.evaluate(()=>window.__carouselSwipeDiagnostic?.stop());
+  }finally{await livePreviewPage.evaluate(()=>window.__carouselSwipeDiagnostic?.stop())}
+  };
+  await swipeCarousel(.25,.7,0,'rightward');
   assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.prev').count(),0,'A rightward swipe must return to the first card');
   assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.next').count(),1,'The next-card control must return after swiping to the first card');
-  const firstWindow = await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-window').boundingBox();
-  await livePreviewPage.mouse.move(firstWindow.x + firstWindow.width * 0.7, firstWindow.y + firstWindow.height * 0.5);
-  await livePreviewPage.mouse.down();
-  await livePreviewPage.mouse.move(firstWindow.x + firstWindow.width * 0.25, firstWindow.y + firstWindow.height * 0.5);
-  await livePreviewPage.mouse.up();
-  await waitForCarouselIndex(1);
+  await swipeCarousel(.7,.25,1,'leftward');
   assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.prev').count(),1,'A leftward swipe must advance back to the second card');
   assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.next').count(),0,'The next-card control must disappear on the last card after swiping');
   const ctaPresentation = livePreviewPage.locator('[data-rcs-cta-presentation-step="live-rich-card"]');
