@@ -215,7 +215,7 @@ test('legacy generation shares the job concurrency cap and reports retry guidanc
 
 test('valid generation still completes through the API and preserves discovered logo candidates',async()=>{
   const {context,handler}=loadServer({mockGeneration:false,env:{GEMINI_API_KEY:'offline-test-key'}});
-  const providerDraft={companyName:'Example',initialSender:'company',logoUrl:'https://example.com/logo.svg',heroImageUrl:'https://example.com/hero.png',scenarios:{sms:{initialMessage:'Hello from Example.',turns:[{speaker:'company',text:'Hello from Example.'},{speaker:'customer',text:'Hello.'}]}}};
+  const providerDraft={schemaVersion:2,companyName:'Example',initialSender:'company',logoUrl:'https://example.com/logo.svg',heroImageUrl:'https://example.com/hero.png',scenarios:{sms:{title:'Welcome',initialMessage:'Hello from Example.',turns:[{speaker:'company',text:'Hello from Example.'},{speaker:'customer',text:'Hello.'}]}}};
   let providerCalls=0;
   context.fetch=async()=>{providerCalls+=1;return {ok:true,json:async()=>({candidates:[{content:{parts:[{text:JSON.stringify(providerDraft)}]}}]})};};
   vm.runInContext(`fetchRemote=async()=>({url:'https://example.com/',contentType:'text/html',body:Buffer.from('<title>Example</title><link rel="icon" href="/logo.svg"><meta property="og:image" content="/hero.png"><p>A synthetic company page.</p>'),partial:false});`,context);

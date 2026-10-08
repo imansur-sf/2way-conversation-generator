@@ -44,6 +44,12 @@ jobs:
       - name: Integrated builder and playback
         if: ${{ !cancelled() && steps.browser.outcome == 'success' }}
         run: node test/e2e-local.mjs
+      - name: AI draft fidelity and application
+        if: ${{ !cancelled() && steps.browser.outcome == 'success' }}
+        run: node test/ai-browser.mjs
+      - name: Responsive editing and accessible controls
+        if: ${{ !cancelled() && steps.browser.outcome == 'success' }}
+        run: node test/ui-browser.mjs
       - name: Browser verification artifacts
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4

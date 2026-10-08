@@ -346,6 +346,10 @@ try {
   await livePreviewPage.mouse.down();
   await livePreviewPage.mouse.move(cropBox.x + cropBox.width * 0.75, cropBox.y + cropBox.height * 0.35);
   await livePreviewPage.mouse.up();
+  assert.equal(await cropper.locator('[data-rcs-crop-frame] img').evaluate(image=>image.style.objectFit),'contain','Draft crop must update within the dialog');
+  const draftCrop = await livePreviewPage.evaluate(() => JSON.parse(localStorage.getItem('two-way-experience-studio-v2-scenarios')).scenarios[0].variants.rcs.steps.find(step => step.id === 'live-rich-card'));
+  assert.notEqual(draftCrop.imageScale,1.4,'Draft adjustments must not persist before Done');
+  await cropper.locator('[data-rcs-crop-done]').click();
   await livePreviewPage.waitForFunction(() => document.querySelector('#stage .card-img__asset')?.style.objectFit === 'contain');
   const readCropSnapshot=()=>livePreviewPage.evaluate(() => {
     const record=JSON.parse(localStorage.getItem('two-way-experience-studio-v2-scenarios')||'null'),fixture=record?.scenarios?.find(scenario=>scenario.id==='live-preview-journey');
@@ -358,7 +362,6 @@ try {
   assert.equal(savedCrop.imageFit, 'contain', 'The selected RCS image-fit mode must persist with the card');
   assert.equal(savedCrop.imageScale, 1.4, 'The RCS image zoom must persist with the card');
   assert.ok(savedCrop.imagePositionX > 70 && savedCrop.imagePositionY < 40, 'Dragging inside the 5:2 crop frame must persist the selected focal point');
-  await cropper.locator('[data-rcs-crop-done]').click();
   const cropExport = await Promise.all([livePreviewPage.waitForEvent('download'), livePreviewPage.locator('#export').click()]).then(([value]) => value);
   const cropExported = `${exportDirectory}/crop-${await cropExport.suggestedFilename()}`;
   await cropExport.saveAs(cropExported);

@@ -33,6 +33,12 @@ Implementation branch: `codex/quality-two-phase-2026-10-07`. Production main mus
 - [ ] Extract touched boundaries into testable modules; CI, documentation and release gates.
 - [ ] Review, verify, commit and publish Phase 2 rollback point.
 
+### Phase 2 implementation boundaries
+
+The delivery adds explicit persona inputs, a validated channel-aware AI contract, truthful review/provenance, responsive Auto-fit and narrow-screen navigation, clearer local-save feedback, and transactional adjustment of the existing RCS image frame. Changes are extracted at the touched AI/preview/security/export boundaries rather than rewriting the entire application.
+
+The audit also proposed larger future enhancements. Cloud storage/collaboration, multi-tab conflict resolution, a resizable desktop divider, new avatar/email-hero crop editors, a full token-substitution system and a configurable demo clock are **not implemented in this delivery**. Browser storage remains local; avoid concurrent editing of the same workspace in multiple tabs. These limits must stay visible in handoff documentation instead of being described as completed work.
+
 ## Rollback procedure and data safeguards
 
 Code rollback is a deliberate release operation, not a reset of a dirty checkout. Use the immutable checkpoint as the source for a recovery branch/build; retain newer commits. For production, the verified pre-change release is v180. Re-check Heroku rollback eligibility immediately before a rollback. Never expose configuration secrets in this ledger.

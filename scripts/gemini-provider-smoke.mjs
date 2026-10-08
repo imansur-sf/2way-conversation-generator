@@ -1,26 +1,18 @@
-const key = process.env.GEMINI_API_KEY;
-const model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+import assert from 'node:assert/strict';
+import configModule from '../server/ai-config.cjs';
 
-if (!key) throw new Error('GEMINI_API_KEY is missing');
-
-const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
-  method:'POST',
-  headers:{ 'Content-Type':'application/json' },
-  body:JSON.stringify({
-    contents:[{ parts:[{ text:'Return exactly the JSON object {"ok":true}.' }] }],
-    generationConfig:{ responseMimeType:'application/json', maxOutputTokens:128 }
-  })
+const config=configModule.aiConfig();
+assert.equal(process.env.ALLOW_LIVE_AI,'1','Set ALLOW_LIVE_AI=1 to authorize exactly one potentially billable provider request.');
+assert.ok(config.apiKey,'GEMINI_API_KEY is missing');
+const response=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(config.model)+':generateContent',{
+  method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':config.apiKey},
+  signal:AbortSignal.timeout(config.timeoutMs),
+  body:JSON.stringify({contents:[{parts:[{text:'Return exactly the JSON object {"ok":true}.'}]}],generationConfig:{responseMimeType:'application/json',maxOutputTokens:128}}),
 });
-
-if (!response.ok) throw new Error(`Gemini returned ${response.status}`);
-const body = await response.json();
-const candidate = body.candidates?.[0];
-if (!candidate?.content?.parts?.length) {
-  const diagnostic = {
-    candidateCount:body.candidates?.length || 0,
-    finishReason:candidate?.finishReason || null,
-    promptBlockReason:body.promptFeedback?.blockReason || null
-  };
-  throw new Error(`Gemini returned no candidate (${JSON.stringify(diagnostic)})`);
-}
-console.log(`Gemini provider smoke: OK (${model})`);
+assert.ok(response.ok,'Gemini returned '+response.status);
+const body=await response.json(),candidate=body.candidates?.[0];
+assert.equal(body.promptFeedback?.blockReason,undefined,'Provider blocked the synthetic smoke prompt');
+assert.equal(candidate?.finishReason,'STOP','Provider did not finish its response');
+const output=candidate?.content?.parts?.filter(part=>!part.thought).map(part=>part.text||'').join('') || '';
+assert.deepEqual(JSON.parse(output),{ok:true},'Provider must return the requested JSON, not merely a candidate');
+console.log(JSON.stringify({event:'gemini_provider_smoke_passed',model:config.model,providerRequests:1}));

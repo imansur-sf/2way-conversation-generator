@@ -37,7 +37,7 @@ function environment(extra = {}) {
     saved:'', storedScenarios:[], scenarioHistory:[], bootstrapRecoveryWasUsed:false,
     active:()=>state.scenarios.find(item=>item.id===state.activeId),
     captureJourneyVariant(){}, rememberChannelSaveSignatures(){},
-    showStorageNotice:(detail,outcome)=>notices.push({detail,outcome}),
+    showStorageNotice:(detail,outcome)=>notices.push({detail,outcome}),renderLocalSaveDetails(){},
     durableWrite:()=>Promise.resolve(), persist(){}, resetRuntime(){}, renderAll(){}, renderPreview(){},
     ensureJourneyState(){}, bindSaveAllControl(){}, announce(){}, $:()=>null,
     setTimeout, clearTimeout, ...extra,
@@ -375,6 +375,70 @@ test('RCS reply image replacements are last-started-wins and action removal canc
     const pending=url.onclick();remove.onclick();assert.equal(currentAction(a),undefined);urls.shift()('data:image/png;base64,removed');await pending;assert.equal(currentAction(a),undefined);assert.equal(context.state.imageOperations.size,0);
     const next=rcsActionEnvironment(carousel),deleted=next.url.onclick();next.context.state.scenarios=[];next.urls.shift()('data:image/png;base64,deleted');await deleted;assert.equal(next.currentAction(next.a).image,'');
   }
+});
+
+test('crop drafts cancel without writes, commit once to stable targets, and reject changed sources', () => {
+  for(const mode of ['cancel','commit','source','removed','new-operation']){
+    let saves=0;const context=environment({persist:()=>{saves++}});installJourneys(context);
+    vm.runInContext(['imageAssetTarget','beginImageAssetOperation','rcsImageSettings','createRcsImageCropDraft'].map(fn).join('\n'),context);
+    const current=context.active();current.channel='rcs';current.steps[1].cardImage='data:image/png;base64,original';
+    current.scenarioMode='multi';current.variants={rcs:context.journeyVariant(current),sms:context.journeyVariant(scenario('sms'))};
+    const control={dataset:{imageScope:'step',imageStep:'A-reply',imageKey:'cardImage'}};
+    const original=clone(current),crop=context.createRcsImageCropDraft(control);Object.assign(crop.draft,{x:80,y:20,scale:1.4});
+    assert.deepEqual(clone(current),original,'editing the crop draft must not mutate the scenario');
+    context.captureJourneyVariant();context.projectJourneyVariant(current,'sms');
+    const target=current.variants.rcs.steps[1];
+    if(mode==='cancel')crop.cancel();
+    if(mode==='source')target.cardImage='replacement';
+    if(mode==='removed')current.variants.rcs.steps=[];
+    if(mode==='new-operation'){context.projectJourneyVariant(current,'rcs');context.beginImageAssetOperation(control)}
+    assert.equal(crop.commit(),mode==='commit');assert.equal(crop.commit(),false,'Done cannot save twice');
+    assert.equal(saves,mode==='commit'?1:0);
+    if(mode==='commit'){assert.equal(target.imageScale,1.4);assert.equal(target.imagePositionX,80);assert.equal(target.cardImage,'data:image/png;base64,original');assert.equal(current.steps[1].imageScale,undefined)}
+  }
+});
+
+test('malformed imported crop numbers use finite defaults and clamp valid extremes', () => {
+  const context=environment();vm.runInContext(fn('rcsImageSettings'),context);
+  for(const value of ['bad',Infinity,NaN])assert.deepEqual(clone(context.rcsImageSettings({imagePositionX:value,imagePositionY:value,imageScale:value})),{fit:'cover',x:50,y:50,scale:1});
+  assert.deepEqual(clone(context.rcsImageSettings({imagePositionX:-10,imagePositionY:200,imageScale:5})),{fit:'cover',x:0,y:100,scale:2.5});
+});
+
+test('on-screen Shift changes emitted letters and announces its pressed state', () => {
+  const makeButton=dataset=>({dataset,listeners:{},attributes:{},classList:{toggle(){}},addEventListener(name,handler){this.listeners[name]=handler},setAttribute(name,value){this.attributes[name]=value}});
+  const key=makeButton({key:'a'}),shift=makeButton({}),backspace=makeButton({});
+  const keyboard={addEventListener(){},querySelectorAll:()=>[key],querySelector:selector=>selector.includes('shift')?shift:backspace,contains:()=>false};
+  let inserted=false;const screen={classList:{add(){},remove(){}},querySelector:selector=>selector==='.phone-keyboard'&&inserted?keyboard:null,insertAdjacentHTML(){inserted=true}};
+  const input={value:'',selectionStart:0,selectionEnd:0,addEventListener(){},dispatchEvent(){},focus(){}};
+  const context=environment({$:selector=>selector==='#stage .phone-screen'?screen:selector==='#phoneInput'?input:selector==='#phoneSend'?{}:null,document:{activeElement:input},keyboardMarkup:()=>'',updatePhoneSend(){},requestAnimationFrame:callback=>callback(),Event:class{}});
+  vm.runInContext(fn('addPhoneKeyboard'),context);context.addPhoneKeyboard();
+  shift.listeners.click({currentTarget:shift});key.listeners.click();assert.equal(input.value,'A');assert.equal(shift.attributes['aria-pressed'],'true');
+  shift.listeners.click({currentTarget:shift});key.listeners.click();assert.equal(input.value,'Aa');assert.equal(shift.attributes['aria-pressed'],'false');
+});
+
+test('save timestamp advances only after an actual successful acknowledgement', async () => {
+  let release;const context=environment({durableWrite:()=>new Promise(resolve=>release=resolve)});installPersistence(context);
+  const save=context.persist();await tick();assert.equal(context.state.lastAcknowledgedSaveAt,undefined);release();await save;
+  assert.equal(context.state.lastAcknowledgedSaveAt,JSON.parse(context.localStorage.getItem('current')).savedAt);
+  const last=context.state.lastAcknowledgedSaveAt;context.durableWrite=()=>Promise.reject(new Error('Unavailable'));context.localStorage.setItem=()=>{throw new Error('Full')};context.active().brandName='Unsaved';await context.persist();
+  assert.equal(context.state.lastAcknowledgedSaveAt,last);assert.equal(context.state.unsavedScenarioChanges,true);
+});
+
+test('auto-fit bounds both dimensions without altering manual zoom choices', () => {
+  const context=vm.createContext({window:{},document:{readyState:'loading',addEventListener(){}}});
+  vm.runInContext(fs.readFileSync(path.join(root,'assets/v2/preview-fit.js'),'utf8'),context);
+  const fit=context.window.TwoWayV2.fitScale;
+  for(const [width,height] of [[900,780],[680,470],[780,970],[326,600],[800,150]]){const scale=fit(350,710,width,height);assert.ok(350*scale<=width+.001);assert.ok(710*scale<=height+.001);assert.ok(scale<=1)}
+  assert.equal(fit(350,710,200,150,'1'),1);assert.equal(fit(350,710,200,150,'.85'),.85);assert.equal(fit(350,710,200,150,'.7'),.7);
+});
+
+test('repeated workspace layout synchronization does not mutate its observed body class again', () => {
+  const modern=fs.readFileSync(path.join(root,'assets/v2-modern.js'),'utf8'),sync=modern.match(/const syncWorkspaceLayout = \(\) => \{[\s\S]*?\n  \};/)[0];
+  let classWrites=0;const classes=new Set(),node=()=>({children:[],setAttribute(){},removeAttribute(){},hasAttribute:()=>false,contains:()=>false});
+  const builder=node(),preview=node(),tab=node(),tabs={...node(),querySelector:()=>tab},menu={};
+  const context=vm.createContext({workspacePanel:'editor',narrowWorkspace:{matches:true},window:{},document:{body:{classList:{contains:name=>classes.has(name),toggle(name,value){classWrites++;value?classes.add(name):classes.delete(name)}}},querySelector:selector=>selector==='.builder'?builder:selector==='.preview'?preview:selector==='.v2-workspace-tabs'?tabs:selector==='.v2-header-menu'?menu:null}});
+  vm.runInContext(sync+';syncWorkspaceLayout();syncWorkspaceLayout();syncWorkspaceLayout();',context);
+  assert.equal(classWrites,1,'The body observer must reach a fixed point');assert.equal(builder.hidden,false);assert.equal(preview.hidden,true);assert.equal(preview.inert,true);
 });
 
 test('invalid multi-item import leaves the workspace untouched', () => {

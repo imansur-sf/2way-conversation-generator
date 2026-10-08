@@ -1,6 +1,6 @@
 # Two-Way Experience Studio
 
-This repository is the production release candidate for the Two-Way Experience Studio. It retains compatibility with browser-saved 1.0 scenarios while providing the validated modern workspace and AI-generation improvements.
+Two-Way Experience Studio builds interactive SMS, RCS, WhatsApp, and email demos. This is the production codebase; major changes are verified on an isolated branch and the separate staging app before production promotion. See the [two-phase delivery ledger](docs/two-phase-delivery.md) for current verification and rollback points.
 
 ## Environments
 
@@ -16,10 +16,11 @@ See [the code map](docs/2.0-code-map.md) for the module boundaries and compatibi
 
 ## Local setup
 
-1. Use Node 20 or newer.
-2. Copy `.env.example` to `.env` and set `GEMINI_API_KEY` when testing AI generation.
-3. Run `npm test`.
-4. Run `npm start`, then open `http://localhost:3000`.
+1. Use Node 20 or newer (CI uses Node 22).
+2. Run `npm ci --ignore-scripts`.
+3. Configure `GEMINI_API_KEY` and the approved `GEMINI_MODEL` in your local environment when testing AI generation. See `.env.example`; do not commit credentials.
+4. Run `npm test`.
+5. Run `npm start`, then open `http://localhost:3000`.
 
 The server reads environment variables directly. Load `.env` through your shell or local environment manager; `.env` is intentionally not committed.
 
@@ -28,32 +29,34 @@ The server reads environment variables directly. Load `.env` through your shell 
 After deploying the staging app:
 
 ```sh
-BASE_URL=https://YOUR-RELEASE-CANDIDATE.herokuapp.com node scripts/smoke-hosted.mjs
+BASE_URL=https://YOUR-RELEASE-CANDIDATE.herokuapp.com EXPECTED_ENV=staging EXPECTED_VERSION=YOUR_APP_VERSION node scripts/smoke-hosted.mjs
 ```
 
-This confirms that the deployed service is staging 2.0, serves the builder, and exposes health/AI configuration status without sending an AI request.
+This confirms that the deployment serves the builder and matches the expected `APP_ENV` and `APP_VERSION`, without sending an AI request. Optionally set `EXPECTED_MODEL` to assert the configured model. Verify the exact source commit separately against Heroku release/build metadata; `APP_VERSION` is an application label, not necessarily a commit ID.
 
-To exercise the complete AI job path after a key/model change, run this inside the deployed app. It sends one fixed, non-sensitive acceptance prompt and prints no key or response copy:
+To exercise the complete AI job path, explicitly authorize the bounded live smoke against staging. It submits **two fixed synthetic prompts**, with at most **four provider requests total** (one initial attempt and one repair/retry per prompt). A fallback result does not pass. This can incur provider usage:
 
 ```sh
-heroku run --app YOUR-RELEASE-CANDIDATE -- /bin/sh -lc "npm run test:ai:live"
+ALLOW_LIVE_AI=1 BASE_URL=https://YOUR-RELEASE-CANDIDATE.herokuapp.com EXPECTED_ENV=staging EXPECTED_VERSION=YOUR_APP_VERSION node scripts/ai-app-smoke.mjs
 ```
 
-## AI review safeguards
-
-The AI setup accepts optional precision controls for the opening sender and exact total message count. Along with the user’s prompt, the server validates named people, topics, handoffs, quoted/ordered turns, and the requested total before the draft reaches review. The builder’s Scenario QA panel then reports the actual company/customer counts, starting sender, empty company messages, sequential company delivery, and unavailable images before preview or export.
+From an authorized staging runtime, omit `BASE_URL` to start a temporary local smoke server using that runtime's existing configuration. Add `SMOKE_REPORT=1` only when you want the fixed synthetic dialogue/checks printed for manual quality review. Keys are never printed. The optional `scripts/gemini-provider-smoke.mjs` also requires `ALLOW_LIVE_AI=1` and sends exactly one additional provider request; it is not a substitute for application acceptance.
 
 ## Release rules
 
 1. Preserve a Git tag and Heroku release rollback point before every production deployment.
-2. The application imports valid 1.0 browser saves on first use and mirrors saves in the 1.0 format during the stabilization window. Do not delete the legacy browser keys during that window.
+2. Valid legacy browser saves can be migrated, but original legacy records are retained for recovery. They are **not** continuously overwritten with new-format edits. Unsupported future records are protected from replacement. Never clear real users’ storage as a deployment step.
 3. Do not commit credentials, downloaded scenarios containing sensitive information, or generated exports.
-4. Run unit tests, local manual checks, hosted smoke checks, AI acceptance scenarios, and exported-HTML checks before production promotion.
+4. Require the [CI browser gate](docs/testing.md), staging checks, bounded live-AI acceptance, and manual review before production promotion. CI alone is not a release or a guarantee of every possible workflow.
 5. Configure `GEMINI_API_KEY` directly in Heroku before running AI acceptance tests. Do not copy or display a credential through source control or shell output.
 6. Keep `GEMINI_MODEL` pinned to a model enabled for the production Google project and validate it with the live acceptance test before cutover.
 
 ## Current storage boundary
 
-2.0 protects in-progress scenarios with local storage, IndexedDB mirroring, version snapshots, JSON import/export, and standalone exports. Generation jobs are intentionally transient: they are capped in memory and expire after 15 minutes. This is reliable for a single staging session, but it is not multi-user cloud persistence.
+Scenario saves are **device- and browser-profile-local**, primarily in IndexedDB with a small local-storage fallback where it fits. Save status is acknowledged only for the revision actually written. A successful database save does not require a second cache copy. Oversized or blocked storage can still fail; keep the page open and export scenario JSON to rescue work when warned.
 
-Before a production release, choose and provision a managed database and object storage owned by the production environment. That decision determines user access controls, retention, backup policy, and cost, so this staging rebuild does not silently create those services.
+Each scenario retains independent channel variants. A save includes those variants and creates a restore point; an additional named restore point is optional, not a separate requirement for saving. Up to three restore points are retained per scenario. Scenario JSON is an editable backup; downloaded interactive HTML is a playback artifact for the selected channel, not a workspace backup.
+
+Private/incognito sessions, clearing site data, changing profiles/devices, and browser storage eviction can remove or hide local work. Editing the same workspace in multiple tabs is not a supported collaborative workflow; concurrent-writer conflict resolution is not yet implemented. Export JSON regularly for important work.
+
+Generation jobs are bounded, process-local and transient. Completed records expire after 15 minutes; a process restart loses job records. Adding multiple server processes requires shared job/idempotency storage. A cloud scenario library or multi-user collaboration would also need an explicitly approved database, object storage, access-control and retention design; this update does not provision those services.

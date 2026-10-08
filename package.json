@@ -2,12 +2,12 @@
   "name": "two-way-experience-studio-2",
   "version": "1.1.0",
   "private": true,
-  "description": "Isolated 2.0 rebuild workspace for the Two-Way Experience Studio",
+  "description": "Interactive SMS, RCS, WhatsApp and email experience builder",
   "scripts": {
     "start": "node server.js",
     "test": "node --test test/*.test.js",
     "test:e2e": "node test/e2e-local.mjs",
-    "test:browser": "node test/security-browser.mjs && node test/state-browser.mjs && node test/export-browser.mjs && node test/e2e-local.mjs",
+    "test:browser": "node test/security-browser.mjs && node test/state-browser.mjs && node test/export-browser.mjs && node test/e2e-local.mjs && node test/ai-browser.mjs && node test/ui-browser.mjs",
     "test:hosted": "node scripts/smoke-hosted.mjs",
     "test:ai:live": "node scripts/ai-app-smoke.mjs"
   },

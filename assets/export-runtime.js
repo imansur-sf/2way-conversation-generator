@@ -2,7 +2,7 @@
 (function (global) {
   'use strict';
 
-  const uiAssets = ['assets/vendor/purify.min.js', 'assets/email-safety.js', 'assets/export-runtime.js', 'assets/v2/live-region.js', 'assets/v2-modern.js'];
+  const uiAssets = ['assets/vendor/purify.min.js', 'assets/email-safety.js', 'assets/ai-draft.js', 'assets/export-runtime.js', 'assets/v2/live-region.js', 'assets/v2/preview-fit.js', 'assets/v2-modern.js'];
   const imageFields = new Set(['avatar', 'recipientAvatar', 'emailLogo', 'emailHeroImage', 'cardImage', 'image', 'imageUrl']);
   const inlineUrl = value => !value || /^(?:data:|#)/i.test(value);
   const safeJson = value => JSON.stringify(value).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
@@ -217,7 +217,7 @@
     doc.body.className = `export export-booting export-channel-${selected.channel || 'sms'}`;
     const lock = doc.createElement('style');
     lock.id = 'standalone-export-lock';
-    lock.textContent = '.export .builder,.export .appbar,.export .preview-info,.export #presentationNotePanel,.export #emailPresentationHint,.export #appStatus{display:none!important}.export #stage{width:100vw!important;max-width:none!important;margin:0!important}.export.v2-focus-mode .phone{transform:scale(1.12)!important;transform-origin:center}.export.v2-focus-mode .gmail{transform:scale(1.02)!important;transform-origin:center}.export-booting #stage{visibility:hidden}';
+    lock.textContent = '.export .builder,.export .appbar,.export .preview-info,.export #presentationNotePanel,.export #emailPresentationHint,.export #appStatus{display:none!important}.export #stage{max-width:none!important;margin:0!important}.export-booting #stage{visibility:hidden}';
     doc.head.append(lock);
     const missingPaths = [...failures.keys()];
     const requiredPaths = [...failures.values()].filter(failure => failure.required).map(failure => failure.path);

@@ -1,6 +1,8 @@
 (() => {
   const scenarioKey = 'two-way-experience-studio-v2-scenarios';
   let lastRequirements = null;
+  let lastSource = null;
+  let activeAiRequest = null;
   let jobStatus = '';
   const { createAnnouncer, createScenarioBackup } = window.TwoWayV2 || {};
   if (!createAnnouncer) return;
@@ -48,24 +50,24 @@
     if (!review || !lastRequirements || review.querySelector('.v2-requirements')) return;
     const section = document.createElement('section');
     section.className = 'v2-requirements';
-    const items = lastRequirements.items || [];
-    const checks = [
-      lastRequirements.initialSender ? { label:'Opening sender', value:lastRequirements.initialSender === 'company' ? 'Company' : 'Customer', satisfied:lastRequirements.initialSenderSatisfied } : null,
-      lastRequirements.expectedMessageCount ? { label:'Message count', value:`${lastRequirements.actualMessageCount} of ${lastRequirements.expectedMessageCount}`, satisfied:lastRequirements.countSatisfied } : null,
-      lastRequirements.scriptedTurns ? { label:'Scripted order', value:`${lastRequirements.scriptedTurns} supplied turns`, satisfied:lastRequirements.scriptedTurnsSatisfied } : null
-    ].filter(Boolean);
-    const all = [...checks, ...items];
-    section.innerHTML = `<strong>${lastRequirements.complete ? 'Prompt contract verified' : 'Prompt requirements to review'}</strong>${all.length ? `<ul>${all.map(item => `<li data-missing="${!item.satisfied}">${htmlEscape(item.label)}: ${htmlEscape(item.value)}</li>`).join('')}</ul>` : '<div>No named requirements were detected. Review the conversation before applying.</div>'}`;
+    const status = {'passed':'Passed','failed':'Not met','unverified':'Not verified','not-applicable':'Not applicable'};
+    const entries = Object.entries(lastRequirements.channels || {});
+    const persona = lastSource?.brief?.persona || {};
+    section.innerHTML = `<strong>Channel checks — review before applying</strong><p>${lastSource?.mode === 'prompt-fallback' ? 'Prompt-guided starter' : 'Provider-generated draft'} · Coverage: ${htmlEscape(lastSource?.coverage || 'not reported')}. Factual accuracy is not verified.</p><p>Customer: ${htmlEscape(persona.customerName || 'Not specified')} · Representative: ${htmlEscape(persona.representativeName || 'Not specified')}</p>${entries.map(([channel, result]) => `<h5>${htmlEscape(channel === 'whatsapp' ? 'WhatsApp' : channel.toUpperCase())}</h5><ul>${(result.checks || []).map(check => `<li data-missing="${check.status === 'failed'}">${htmlEscape(check.label)}: ${htmlEscape(status[check.status] || 'Not verified')}${check.detail ? ' — ' + htmlEscape(check.detail) : ''}</li>`).join('')}</ul>`).join('')}${(lastRequirements.warnings || []).length ? `<ul>${lastRequirements.warnings.map(warning => `<li>${htmlEscape(typeof warning === 'string' ? warning : warning.message || '')}</li>`).join('')}</ul>` : ''}`;
     review.append(section);
   };
   const hydrateAiProgress = root => {
     const panel = root.querySelector('#setupAssistant');
-    if (!panel || !jobStatus || panel.querySelector('.v2-ai-progress')) return;
-    if (!['starting','queued','running'].includes(jobStatus)) return;
+    if (!panel) return;
+    const existing = panel.querySelector('.v2-ai-progress');
+    if (!['starting','queued','running'].includes(jobStatus)) { existing?.remove(); return; }
+    const description = jobStatus === 'starting' ? 'Submitting the generation request.' : jobStatus === 'queued' ? 'Waiting for generation to start.' : 'Generation is running. Website research and validation are not complete until the result is returned.';
+    if (existing?.dataset.status === jobStatus) return;
+    existing?.remove();
     const progress = document.createElement('div');
     progress.className = 'v2-ai-progress';
-    const running = jobStatus === 'running';
-    progress.innerHTML = `<strong>Building your scenario</strong><span>${running ? 'Reading the website and shaping the message flow.' : 'Creating a secure generation job.'}</span><ol><li class="is-complete">Website</li><li class="${running ? 'is-active' : ''}">Conversation</li><li>Requirement check</li></ol>`;
+    progress.dataset.status = jobStatus;
+    progress.innerHTML = `<strong>Building your scenario</strong><span>${description}</span>`;
     panel.querySelector('.ai-setup-form')?.append(progress);
   };
   const hydrateGenerationControls = root => {
@@ -73,30 +75,16 @@
     if (!form || form.querySelector('.v2-generation-controls')) return;
     const controls = document.createElement('details');
     controls.className = 'v2-generation-controls';
-    controls.innerHTML = `<summary>Generation controls <span>Optional precision</span></summary><div class="v2-generation-controls__body"><label>Opening sender<select data-v2-opening-sender><option value="">Follow the prompt</option><option value="company">Company opens</option><option value="customer">Customer opens</option></select></label><label>Exact message total<input type="number" min="2" max="12" inputmode="numeric" placeholder="Follow the prompt" data-v2-message-total></label><p>These are added as clear generation requirements. They do not replace your scenario description.</p></div>`;
-    const generate = form.querySelector('#generateAiDraft');
-    generate?.before(controls);
+    controls.innerHTML = '<summary>Generation controls <span>Optional precision</span></summary><div class="v2-generation-controls__body"><label>Opening sender<select data-v2-opening-sender><option value="">Follow the prompt</option><option value="company">Company opens</option><option value="customer">Customer opens</option></select></label><label>Exact message total<input type="number" min="2" max="12" step="1" inputmode="numeric" placeholder="Follow the prompt" data-v2-message-total></label><label>Customer name<input data-v2-customer-name placeholder="Not specified"></label><label>Representative name<input data-v2-representative-name placeholder="Not specified"></label><label>Representative role<input data-v2-representative-role placeholder="Not specified"></label><p>Optional structured requirements. Your prompt is kept unchanged; conflicting dialogue must be resolved before generation.</p></div>';
+    form.querySelector('#generateAiDraft')?.before(controls);
     const storageKey = 'two-way-experience-studio-v2-generation-controls';
     let saved = {};
     try { saved = JSON.parse(sessionStorage.getItem(storageKey) || '{}'); } catch {}
-    const sender = controls.querySelector('[data-v2-opening-sender]');
-    const total = controls.querySelector('[data-v2-message-total]');
-    sender.value = saved.sender || '';
-    total.value = saved.total || '';
-    const save = () => { try { sessionStorage.setItem(storageKey, JSON.stringify({ sender:sender.value, total:total.value })); } catch {} };
-    sender.addEventListener('change', save);
-    total.addEventListener('input', save);
-    generate?.addEventListener('click', () => {
-      const prompt = form.querySelector('#aiUseCase');
-      if (!prompt) return;
-      const original = prompt.value.replace(/\n*\[Studio generation controls:[\s\S]*?\]\s*$/,'').trim();
-      const lines = [];
-      if (sender.value) lines.push(`Start the conversation with the ${sender.value}.`);
-      const numericTotal = Number(total.value);
-      if (numericTotal >= 2 && numericTotal <= 12) lines.push(`Create exactly ${numericTotal} total messages.`);
-      prompt.value = lines.length ? `${original}\n\n[Studio generation controls: ${lines.join(' ')}]` : original;
-      prompt.dispatchEvent(new Event('input', { bubbles:true }));
-    }, { capture:true });
+    const fields = {sender:'[data-v2-opening-sender]',total:'[data-v2-message-total]',customerName:'[data-v2-customer-name]',representativeName:'[data-v2-representative-name]',representativeRole:'[data-v2-representative-role]'};
+    for (const [key,selector] of Object.entries(fields)) controls.querySelector(selector).value = saved[key] || '';
+    const save = () => { try { sessionStorage.setItem(storageKey, JSON.stringify(Object.fromEntries(Object.entries(fields).map(([key,selector]) => [key,controls.querySelector(selector).value])))); } catch {} };
+    controls.addEventListener('input', save);
+    controls.addEventListener('change', save);
   };
   const hydrateFlowMap = root => {
     const steps = root.querySelector('#steps');
@@ -130,43 +118,87 @@
     steps.before(map);
   };
   const hydrateScenarioQa = root => {
-    const steps = root.querySelector('#steps');
-    if (!steps) return;
-    const blocks = [...steps.querySelectorAll('article.block')];
-    if (!blocks.length) return;
-    const flow = blocks.map((block, index) => {
-      const author = /customer/i.test(block.querySelector('.badge')?.textContent || '') ? 'customer' : 'company';
-      const message = block.querySelector('textarea[data-field="text"], textarea[data-step], [data-response-rich]')?.value || block.querySelector('[data-response-rich]')?.textContent || '';
-      return { block, index, author, message:message.trim() };
-    });
-    const companyCount = flow.filter(item => item.author === 'company').length;
-    const customerCount = flow.length - companyCount;
-    const emptyCompany = flow.find(item => item.author === 'company' && !item.message);
-    const unavailableAssets = [...root.querySelectorAll('.v2-image-state[data-state="unavailable"]')].length;
-    const consecutiveCompany = flow.some((item, index) => index && item.author === 'company' && flow[index - 1].author === 'company');
-    const issues = [
-      !companyCount ? { kind:'error', text:'Add at least one company message so the preview can respond.' } : null,
-      emptyCompany ? { kind:'error', text:`Company message ${emptyCompany.index + 1} is empty.`, target:emptyCompany.block } : null,
-      unavailableAssets ? { kind:'warning', text:`${unavailableAssets} image ${unavailableAssets === 1 ? 'needs' : 'need'} a replacement.` } : null
-    ].filter(Boolean);
-    const signature = flow.map(item => `${item.author}:${item.message}`).join('|') + `:${unavailableAssets}`;
-    const existing = root.querySelector('.v2-scenario-qa');
+    const steps = root.querySelector('#steps'),review = window.TwoWayAi?.getScenarioReview?.();
+    if (!steps || !review) return;
+    const assetStates = [...root.querySelectorAll('.v2-image-state')].map(node=>node.dataset.state);
+    const unavailable = assetStates.filter(state=>state==='unavailable').length,checking = assetStates.filter(state=>state==='checking').length;
+    const issues = [...review.issues];
+    if (unavailable) issues.push({kind:'warning',text:`${unavailable} image(s) need a replacement.`});
+    if (checking) issues.push({kind:'warning',text:`${checking} image(s) are still being checked.`});
+    const signature = JSON.stringify({review,assetStates}),existing = root.querySelector('.v2-scenario-qa');
     if (existing?.dataset.signature === signature) return;
     existing?.remove();
     const qa = document.createElement('section');
     qa.className = 'v2-scenario-qa';
     qa.dataset.signature = signature;
-    qa.innerHTML = `<div class="v2-scenario-qa__head"><div><strong>${issues.length ? 'Scenario review needed' : 'Scenario ready'}</strong><span>${flow.length} messages · ${companyCount} company · ${customerCount} customer · starts with ${flow[0].author}</span></div><i data-state="${issues.length ? 'review' : 'ready'}">${issues.length ? 'Review' : 'Ready'}</i></div>${consecutiveCompany ? '<p class="v2-scenario-qa__note">Consecutive company messages are configured as a guided sequence and will deliver in order.</p>' : ''}${issues.length ? `<ul>${issues.map((issue,index) => `<li data-kind="${issue.kind}">${htmlEscape(issue.text)}${issue.target ? `<button type="button" data-v2-qa-target="${issue.target.dataset.stepBlock || ''}">Fix</button>` : ''}</li>`).join('')}</ul>` : '<p class="v2-scenario-qa__note">Flow, sender order, and available assets are ready for preview and export.</p>'}`;
-    const map = root.querySelector('.v2-flow-map');
-    (map || steps).before(qa);
+    qa.innerHTML = `<div class="v2-scenario-qa__head"><div><strong>${issues.length ? 'Scenario review needed' : 'Basic content checks passed'}</strong><span>${review.total} messages · ${review.companyCount} company · ${review.customerCount} customer · starts with ${htmlEscape(review.initialSender)}</span></div><i data-state="${issues.length ? 'review' : 'ready'}">${issues.length ? 'Review' : 'Checked'}</i></div><p class="v2-scenario-qa__note">${htmlEscape(review.routing)}</p>${issues.length ? `<ul>${issues.map(issue=>`<li data-kind="${issue.kind}">${htmlEscape(issue.text)}${issue.stepId ? `<button type="button" data-v2-qa-target="${htmlEscape(issue.stepId)}">Fix</button>` : ''}</li>`).join('')}</ul>` : ''}<p class="v2-scenario-qa__note">${htmlEscape(review.note)}</p>`;
+    (root.querySelector('.v2-flow-map') || steps).before(qa);
     qa.addEventListener('click', event => {
       const button = event.target.closest('[data-v2-qa-target]');
       if (!button) return;
       const block = steps.querySelector(`[data-step-block="${CSS.escape(button.dataset.v2QaTarget)}"]`);
       block?.classList.remove('is-collapsed');
-      block?.scrollIntoView({ behavior:'smooth', block:'center' });
-      block?.querySelector('textarea,input,[contenteditable="true"]')?.focus({ preventScroll:true });
+      const body=block?.querySelector('.block-body');if(body)body.hidden=false;
+      block?.scrollIntoView({behavior:'smooth',block:'center'});
+      block?.querySelector('textarea,input,[contenteditable="true"]')?.focus({preventScroll:true});
     });
+  };
+  let workspacePanel = 'editor';
+  const narrowWorkspace = matchMedia('(max-width: 950px)');
+  const syncWorkspaceLayout = () => {
+    const exported = document.body.classList.contains('export');
+    const narrow = narrowWorkspace.matches && !exported;
+    const tabs = document.querySelector('.v2-workspace-tabs');
+    const builder = document.querySelector('.builder'), preview = document.querySelector('.preview');
+    if (!builder || !preview || !tabs) return;
+    if (document.body.classList.contains('v2-narrow-workspace') !== narrow) document.body.classList.toggle('v2-narrow-workspace', narrow);
+    const presenting = document.body.classList.contains('presentation');
+    tabs.hidden = !narrow || presenting;
+    if (narrow && presenting) workspacePanel = 'preview';
+    const focus = document.body.classList.contains('v2-focus-mode');
+    const menu = document.querySelector('.v2-header-menu');
+    if (menu && menu.__v2Desktop !== !narrow) { menu.__v2Desktop = !narrow; menu.open = !narrow; }
+    for (const [name, panel] of [['editor', builder], ['preview', preview]]) {
+      const hidden = narrow && name !== (presenting ? 'preview' : workspacePanel);
+      if (hidden && panel.contains(document.activeElement)) tabs.querySelector(`[data-workspace-panel="${workspacePanel}"]`)?.focus();
+      panel.hidden = hidden;
+      if (!panel.hasAttribute('aria-busy')) panel.inert = hidden;
+      if (narrow) { panel.setAttribute('role', 'tabpanel'); panel.setAttribute('aria-labelledby', `workspace-tab-${name}`); }
+      else { panel.removeAttribute('role'); panel.removeAttribute('aria-labelledby'); }
+      const tab = tabs.querySelector(`[data-workspace-panel="${name}"]`);
+      tab.setAttribute('aria-selected', String(name === workspacePanel)); tab.tabIndex = name === workspacePanel ? 0 : -1;
+    }
+    for (const child of builder.children) if (!child.classList.contains('v2-focus-rail')) child.inert = !narrow && focus;
+    window.TwoWayV2?.refreshPreviewFit?.();
+  };
+  const mountWorkspaceLayout = () => {
+    const builder = document.querySelector('.builder'), preview = document.querySelector('.preview');
+    if (!builder || !preview) return;
+    builder.id ||= 'workspace-editor'; preview.id ||= 'workspace-preview';
+    if (!document.querySelector('.v2-workspace-tabs')) {
+      const tabs = document.createElement('div'); tabs.className = 'v2-workspace-tabs'; tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Workspace view');
+      tabs.innerHTML = `<button type="button" id="workspace-tab-editor" role="tab" data-workspace-panel="editor" aria-controls="${builder.id}" aria-selected="true">Editor</button><button type="button" id="workspace-tab-preview" role="tab" data-workspace-panel="preview" aria-controls="${preview.id}" aria-selected="false" tabindex="-1">Preview</button>`;
+      const select = button => { workspacePanel = button.dataset.workspacePanel; syncWorkspaceLayout(); };
+      tabs.addEventListener('click', event => { const button = event.target.closest('[data-workspace-panel]'); if (button) select(button); });
+      tabs.addEventListener('keydown', event => {
+        if (!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
+        event.preventDefault();
+        const name = event.key === 'Home' ? 'editor' : event.key === 'End' ? 'preview' : workspacePanel === 'editor' ? 'preview' : 'editor';
+        const button = tabs.querySelector(`[data-workspace-panel="${name}"]`); select(button); button.focus();
+      });
+      document.querySelector('.studio')?.before(tabs);
+      narrowWorkspace.addEventListener('change', syncWorkspaceLayout);
+      new MutationObserver(syncWorkspaceLayout).observe(document.body, { attributes:true, attributeFilter:['class'] });
+      document.addEventListener('keydown', event => {
+        if (event.key !== 'Escape') return;
+        const menu = document.querySelector('.v2-header-menu[open]');
+        if (menu && narrowWorkspace.matches) { menu.open = false; menu.querySelector('summary').focus(); }
+        if (!document.querySelector('.rcs-image-cropper')) document.body.classList.remove('presentation');
+      });
+      document.querySelector('.v2-header-menu')?.addEventListener('click', event => { if (narrowWorkspace.matches && event.target.closest('button')) event.currentTarget.open = false; });
+    }
+    document.querySelectorAll('.phone .status,.phone-side,.card-img__shade,.crop-safe-area').forEach(node => node.setAttribute('aria-hidden','true'));
+    syncWorkspaceLayout();
   };
   const bindPreviewMode = control => {
     // Keep the binding marker as a runtime property, not a data attribute.
@@ -182,11 +214,14 @@
         const enabled = document.body.classList.toggle('v2-focus-mode');
         focus.textContent = enabled ? 'Exit focus' : 'Focus mode';
         focus.setAttribute('aria-pressed', String(enabled));
+        if (enabled && narrowWorkspace.matches) workspacePanel = 'preview';
+        syncWorkspaceLayout();
         announce(enabled ? 'Focus mode on. The preview is enlarged.' : 'Focus mode off. The builder is visible again.');
       }
     });
   };
   const hydratePreviewMode = root => {
+    mountWorkspaceLayout();
     const preview = root.querySelector('.preview');
     if (!preview) return;
     let control = preview.querySelector('.v2-preview-mode');
@@ -194,7 +229,7 @@
       control = document.createElement('div');
       control.className = 'v2-preview-mode';
       control.setAttribute('aria-label', 'Preview actions');
-      control.innerHTML = '<button type="button" data-v2-preview-reset>Reset path</button><button type="button" data-v2-preview-focus>Focus mode</button><button type="button" data-v2-preview-present>Present</button>';
+      control.innerHTML = '<button type="button" data-v2-preview-reset>Reset path</button><button type="button" data-v2-preview-focus aria-pressed="false">Focus mode</button><button type="button" data-v2-preview-present>Present</button>';
       preview.querySelector('.preview-info')?.before(control);
     }
     bindPreviewMode(control);
@@ -209,6 +244,8 @@
         document.body.classList.remove('v2-focus-mode');
         control.querySelector('[data-v2-preview-focus]')?.replaceChildren(document.createTextNode('Focus mode'));
         control.querySelector('[data-v2-preview-focus]')?.setAttribute('aria-pressed', 'false');
+        syncWorkspaceLayout();
+        document.querySelector('.v2-workspace-nav button')?.focus();
       });
       builder.prepend(exit);
     }
@@ -268,14 +305,20 @@
   };
 
   document.addEventListener('twoway:ai-job', event => {
-    jobStatus = event.detail?.status || '';
-    if (jobStatus === 'failed') announce('AI draft generation could not complete. Review the error and try again.');
+    const detail=event.detail || {};
+    if(detail.status==='cleared'){activeAiRequest=null;lastRequirements=null;lastSource=null;jobStatus='';hydrate();return;}
+    if(detail.status==='starting'){activeAiRequest=detail.requestId;lastRequirements=null;lastSource=null;}
+    if(!detail.requestId||detail.requestId!==activeAiRequest)return;
+    jobStatus=detail.status || '';
+    if(jobStatus==='failed')announce('Draft generation could not complete. Review the reported reason and try again.');
     hydrate();
   });
   document.addEventListener('twoway:ai-draft', event => {
-    lastRequirements = event.detail?.requirements || null;
-    jobStatus = 'completed';
-    announce(lastRequirements?.complete ? 'AI draft is ready and captures the named prompt requirements.' : 'AI draft is ready. Review the prompt requirements before applying.');
+    if(!event.detail?.requestId||event.detail.requestId!==activeAiRequest)return;
+    lastRequirements=event.detail.requirements || null;
+    lastSource=event.detail.source || null;
+    jobStatus='completed';
+    announce(lastSource?.mode==='prompt-fallback'?'A prompt-guided starter is ready. Review coverage and facts before applying.':'A provider draft is ready. Review each channel and verify facts before applying.');
     hydrate();
   });
   document.addEventListener('twoway:asset-state', () => hydrateScenarioQa(document));

@@ -264,3 +264,84 @@ body.presentation #presentationNotePanel { display: none !important; }
   .v2-flow-map__head span { text-align:left; }
   .v2-preview-mode button { padding-right:6px; padding-left:6px; }
 }
+
+/* Workspace sizing has one owner. The canvas reserves the transformed size;
+   device artwork, carousel tracks and image crops keep their own geometry. */
+body .studio { min-height:0; height:calc(100dvh - var(--appbar-height)); overflow:hidden; }
+body .preview { display:flex; flex-direction:column; gap:8px; min-height:0; height:100%; padding:16px; overflow:hidden; }
+body .preview .stage { display:flex; align-items:flex-start; justify-content:flex-start; flex:1 1 0; width:100%; height:0; min-height:0; padding:20px; overflow:auto; }
+body .preview .preview-info { position:absolute; top:20px; right:20px; margin:0; }
+.v2-preview-mode { align-self:flex-start; flex-shrink:0; margin-right:38px; }
+.v2-preview-canvas { position:relative; flex:0 0 auto; margin:auto; }
+body #stage .v2-preview-canvas > :is(.phone,.gmail) { position:absolute; top:0; left:0; margin:0; transform-origin:top left; }
+body.export,body.presentation { padding-top:0!important; }
+body.export .studio,body.presentation .studio { height:100dvh!important; }
+body.export .preview,body.presentation .preview { display:flex!important; height:100dvh!important; min-height:0!important; padding:10px!important; }
+body.export #stage,body.presentation #stage { flex:1 1 0; width:100%!important; height:0!important; min-height:0!important; }
+body.export .v2-workspace-tabs,body.presentation .v2-workspace-tabs { display:none!important; }
+
+body .appbar { gap:12px; padding-inline:18px; }
+.appbar-brand,.appbar-brand > div { min-width:0; }
+.appbar-brand strong,.appbar-brand span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.appbar-actions { flex:0 0 auto; }
+.appbar .top-scale { width:auto; min-width:88px; }
+.appbar .top-primary { background:#075eab; }
+.appbar :is(.top-scale,.top-quiet) { background:#073677; }
+.appbar .live-dot { color:#fff; }
+body .v2-preview-mode { background:#073677; }
+.v2-header-menu { position:relative; }
+.v2-header-menu summary { display:flex; align-items:center; cursor:pointer; }
+.v2-header-menu > div { position:absolute; z-index:150; right:0; top:calc(100% + 8px); display:grid; gap:6px; min-width:180px; padding:10px; border:1px solid #9fbbda; border-radius:10px; background:#08295c; box-shadow:0 10px 24px #001b4a55; }
+.v2-header-menu button { text-align:left; }
+@media (min-width:951px) {
+  .v2-header-menu summary { display:none; }
+  .v2-header-menu > div { position:static; display:flex; min-width:0; padding:0; border:0; background:transparent; box-shadow:none; }
+}
+.v2-workspace-tabs[hidden] { display:none; }
+.v2-workspace-tabs { position:fixed; top:var(--appbar-height); left:0; right:0; z-index:90; display:flex; height:42px; padding:4px 12px; gap:6px; background:#08295c; }
+.v2-workspace-tabs button { flex:1; border:1px solid #9fbbda; border-radius:6px; background:#08295c; color:#fff; font-size:13px; font-weight:750; }
+.v2-workspace-tabs button[aria-selected="true"] { color:#08295c; background:#fff; }
+body :is(.builder,.preview)[hidden] { display:none!important; }
+.v2-local-save { display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; margin:7px 0 12px; color:#dceeff; font-size:11px; line-height:1.4; }
+.v2-local-save span { flex:1 1 160px; }
+.v2-local-save button { padding:5px 7px; border:1px solid #9ed7ff; border-radius:5px; background:#073677; color:#fff; font-size:11px; }
+body :is(.appbar,.v2-workspace-tabs,.v2-preview-mode,.rcs-image-cropper) :is(button,summary,select,input):focus-visible { outline:3px solid #ffcf50; outline-offset:3px; }
+body .builder :is(.block,.image-asset-control,.v2-flow-map,.v2-scenario-qa) :is(button,input,textarea,select,[contenteditable]):focus-visible { outline:3px solid #075eab; outline-offset:2px; }
+body .builder :is(.block,.image-asset-control) :is(small,.helper,.image-asset-copy,.image-asset-hint) { color:#435d77; }
+body .builder input::placeholder,body .builder textarea::placeholder { color:#596a7a; opacity:1; }
+body .builder .scenario-enhancements .restore-point-help { color:#c9e5ff; }
+.v2-flow-map__head span,.v2-scenario-qa__note,.v2-image-state { color:#435d77; }
+dialog.rcs-image-cropper { width:100vw; height:100dvh; max-width:none; max-height:none; margin:0; border:0; }
+dialog.rcs-image-cropper::backdrop { background:transparent; }
+.rcs-image-cropper .rcs-image-cropper__dialog { max-height:calc(100dvh - 40px); }
+.rcs-image-cropper .rcs-image-cropper__modes button.active { background:#075eab; }
+.rcs-image-cropper .rcs-image-cropper__control input { width:100%; }
+.rcs-crop-position { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-top:12px; }
+.rcs-crop-position label { display:grid; gap:5px; color:#315b7d; font-size:12px; }
+.rcs-crop-position input { min-width:0; padding:8px; }
+.rcs-crop-original { margin-top:12px; color:#315b7d; font-size:12px; }
+.rcs-crop-original summary { cursor:pointer; }
+.rcs-crop-original img { display:block; width:100%; max-height:160px; object-fit:contain; margin-top:8px; }
+.rcs-image-cropper .crop-copy { max-width:90%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.rcs-image-cropper .rcs-image-cropper__footer .primary { background:#075eab; }
+
+@media (max-width:950px) {
+  body { --appbar-height:64px; }
+  body.v2-narrow-workspace { padding-top:calc(var(--appbar-height) + 42px); overflow:hidden; }
+  body.v2-narrow-workspace .studio { display:block; height:calc(100dvh - var(--appbar-height) - 42px); }
+  body.v2-narrow-workspace .builder { height:100%; overflow:auto; }
+  body.v2-narrow-workspace .preview { height:100%; padding:10px; }
+  body .appbar-brand img { width:42px; height:42px; flex-basis:42px; }
+  body .appbar-brand strong { font-size:14px; }
+  body .appbar-brand span,.appbar .live-dot { display:none; }
+  .v2-preview-mode [data-v2-preview-focus] { display:none; }
+}
+@media (max-width:600px) {
+  body .appbar { gap:6px; padding-inline:8px; }
+  .appbar-brand { gap:0; }
+  .appbar-brand > div { display:none; }
+  .appbar-actions { flex:1; justify-content:flex-end; gap:6px; }
+  .appbar :is(.top-quiet,.top-primary) { padding-inline:8px; }
+  body .preview .stage { padding:12px; border-radius:12px; }
+  .rcs-crop-position { grid-template-columns:1fr; }
+}

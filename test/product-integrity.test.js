@@ -81,63 +81,57 @@ test('AI applies to the active named scenario by default, with a separate-scenar
   assert.ok(html.includes('Choose Create separately to keep this scenario unchanged.'), 'the review explains that the secondary action preserves the current scenario');
 });
 
-test('AI uses one explicit initial sender across every channel, including email', () => {
-  const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
-  for (const marker of ['"initialSender":"company"', 'Use "company" as initialSender when the company opens with outreach', 'customerMessage:clean(scenario.customerMessage)', "initialSender:clean(raw?.initialSender).toLowerCase()==='customer'?'customer':'company'"]) {
-    assert.ok(server.includes(marker), `expected AI draft sender contract: ${marker}`);
-  }
-  for (const marker of ["customerFirst=draft.initialSender==='customer'", "author:'brand',kind:'text',text:config.initialBody||config.initialMessage||config.fallbackResponse", "emailBody:customerFirst?'':config.initialBody", 'aiCustomerStep(config,true)', 'aiBrandResponseSteps(config)']) {
-    assert.ok(html.includes(marker), `expected shared sender behavior in the channel converter: ${marker}`);
-  }
-});
-
-test('AI honors a named company as the stated opening sender, including fallback drafts', () => {
-  const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
-  const helpers = new Function(`${server.slice(server.indexOf('function fallbackTurns'), server.indexOf('function readJson'))};return { requestedInitialSender, fallbackDraft, enforceRequestedInitialSender };`)();
-  const useCase = 'NCSA sends a marketing communication about an upcoming Baseball Recruiting event. A customer, Sean, responds with questions about cost and group tickets.';
-  assert.equal(helpers.requestedInitialSender(useCase, 'NCSA'), 'company');
-  const fallback = helpers.fallbackDraft({ companyName:'NCSA', website:'https://ncsasports.org', useCase, evidence:{ title:'NCSA', candidates:[] } });
-  assert.equal(fallback.initialSender, 'company');
-  assert.equal(fallback.scenarios.sms.turns[0].speaker, 'company');
-  const corrected = helpers.enforceRequestedInitialSender({ companyName:'NCSA', initialSender:'customer', scenarios:{ sms:{ initialMessage:'Join the NCSA Baseball Recruiting event.', turns:[{ speaker:'customer', text:'What does it cost?' },{ speaker:'company', text:'We can help with tickets.' }] } } }, useCase, 'NCSA');
-  assert.equal(corrected.initialSender, 'company');
-  assert.equal(corrected.scenarios.sms.turns[0].speaker, 'company');
-});
-
-test('fallback drafts preserve natural-language customer, topic, question, and handoff details', () => {
-  const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
-  const helpers = new Function(`${server.slice(server.indexOf('function fallbackTurns'), server.indexOf('function readJson'))};return { fallbackDraft, enforcePromptStory };`)();
-  const cases = [
-    { company:'NCSA', website:'https://ncsasports.org', useCase:'NCSA sends a marketing communication about an upcoming Baseball Recruiting event. A customer, Sean, responds to the message with questions around the cost and if there are any group tickets. After a few back and forth messages between them, when Sean wants to learn more about IMG Academy, he is connected to a Sales Rep named Jake in the same thread.', details:['Sean', 'Baseball Recruiting event', 'cost', 'group tickets', 'IMG Academy', 'Jake'] },
-    { company:'Aurora Skills', website:'https://auroraskills.example', useCase:'Aurora Skills sends an invitation for its Climate Innovation Forum. A prospect, Amara, asks about accessibility and virtual attendance. Later, Amara wants to learn more about the Greenhouse Accelerator, so an Account Executive named Priya joins the same thread.', details:['Amara', 'Climate Innovation Forum', 'accessibility', 'virtual attendance', 'Greenhouse Accelerator', 'Priya'] }
-  ];
-  for (const sample of cases) {
-    const fallback = helpers.fallbackDraft({ companyName:sample.company, website:sample.website, useCase:sample.useCase, evidence:{ title:sample.company, candidates:[] } });
-    const transcript = fallback.scenarios.sms.turns.map(turn => turn.text).join('\n');
-    assert.equal(fallback.scenarios.sms.turns.length, 6);
-    for (const detail of sample.details) assert.match(transcript, new RegExp(detail, 'i'), `fallback should retain ${detail}`);
-    const incomplete = { companyName:sample.company, scenarios:{ sms:{ initialMessage:'A generic update.', turns:[{ speaker:'company', text:'A generic update.' },{ speaker:'customer', text:'Please tell me more.' }] } } };
-    const enforced = helpers.enforcePromptStory(incomplete, sample.useCase, sample.company);
-    const enforcedTranscript = enforced.scenarios.sms.turns.map(turn => turn.text).join('\n');
-    for (const detail of sample.details) assert.match(enforcedTranscript, new RegExp(detail, 'i'), `coverage gate should retain ${detail}`);
+test('validated AI dialogue maps losslessly into every channel including consecutive company replies', () => {
+  const contract = require('../server/draft-contract.cjs');
+  const adapter = require('../assets/ai-draft.js');
+  const request = {companyName:'Example', website:'https://example.com/', channels:['sms','rcs','whatsapp','email'], useCase:'Company: “Hi Zoë — the literal token is $&.”\nCustomer: “Yes, please.”\nCompany: “I’ll connect you with José.”\nCompany: “José here; how can I help?”', persona:{customerName:'Zoë',representativeName:'José'}, controls:{initialSender:'company',expectedMessageCount:4}};
+  const brief = contract.storyBrief(request);
+  const evidence = {url:request.website,candidates:[]};
+  const raw = {schemaVersion:2,initialSender:'company',scenarios:Object.fromEntries(request.channels.map(channel => [channel,{title:'A personal introduction',subject:channel === 'email' ? 'Your introduction' : '',turns:brief.scriptedTurns}]))};
+  const {draft,requirements} = contract.validateAndNormalizeDraft(raw,request,evidence,brief);
+  assert.equal(requirements.complete,true);
+  let id = 0;
+  for (const channel of request.channels) {
+    const scenario = adapter.toScenario(channel,draft,{id:() => `test-${++id}`});
+    assert.deepEqual(scenario.steps.map(step => step.text),brief.scriptedTurns.map(turn => turn.text));
+    assert.deepEqual(scenario.steps.map(step => step.author),['brand','customer','brand','brand']);
+    assert.equal(scenario.steps[1].kind,'prefill');
+    assert.equal(scenario.steps[1].reusableSet,false);
+    assert.equal(scenario.persona.customerName,'Zoë');
+    if (channel === 'email') assert.equal(scenario.steps[0].emailMode,'plain');
   }
 });
 
-test('AI preserves ordered scripted customer turns and defaults their supplied copy to composer prefills', () => {
-  const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
-  for (const marker of ['Preserve every explicitly provided line and its order in turns.', 'Include every supplied turn, up to 12 turns', 'Copy explicitly quoted dialogue verbatim; do not shorten it.', 'function cleanPrompt', 'slice(0,12_000)', 'function validateDraftRequest', 'const useCase = cleanPrompt(body?.useCase)', 'function preserveExplicitTurns', 'scenario_draft_explicit_turns_preserved', 'return turns.slice(0,16)', 'value.slice(0,16)', 'Any supplied customer wording must use mode "prefill".', 'function turns(value)', 'turns:turns(scenario.turns)']) {
-    assert.ok(server.includes(marker), `expected scripted AI-turn contract: ${marker}`);
-  }
-  for (const marker of ['scriptedStepsFromAi', "turn.mode==='free'?'free':turn.mode==='choices'?'prefilled':'prefill'", 'scenario.steps=turns', 'reusableSet:mode===\'free\'']) {
-    assert.ok(html.includes(marker), `expected scripted AI-turn mapping: ${marker}`);
+test('prompt-guided fallback preserves supplied people and topics without inventing confirmations', () => {
+  const contract = require('../server/draft-contract.cjs');
+  const request = {companyName:'Aurora Skills',website:'https://example.com/',channels:['sms','email'],useCase:'Aurora Skills sends an invitation for its Climate Innovation Forum. A prospect, Amara, asks about accessibility and virtual attendance. Later, Amara wants to learn more about the Greenhouse Accelerator, so an Account Executive named Priya joins the same thread.'};
+  const brief = contract.storyBrief(request);
+  assert.equal(brief.initialSender,'company');
+  const fallback = contract.promptFallback(request,{url:request.website,candidates:[]},brief);
+  assert.ok(fallback,'a complete supplied brief can produce a clearly reviewable starter');
+  for (const channel of request.channels) {
+    const transcript = fallback.draft.scenarios[channel].turns.map(turn => turn.text).join('\n');
+    for (const detail of ['Amara','Climate Innovation Forum','accessibility','virtual attendance','Greenhouse Accelerator','Priya']) assert.ok(transcript.includes(detail),detail);
+    assert.match(transcript,/need confirmation/);
+    assert.equal(fallback.requirements.channels[channel].checks.find(check => check.id === 'factual_accuracy').status,'unverified');
   }
 });
 
-test('AI generation uses one compact canonical request within the hosted timeout budget', () => {
-  const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
-  for (const marker of ["const channel = channels[0] || 'sms'", 'Return exactly this compact JSON shape', 'requestTimeoutMs = 7_000', 'geminiRequestTimeoutMs = 20_000', 'maxOutputTokens:2400', 'function adaptCanonicalDraft', 'function fallbackDraft', "event:'scenario_draft_fallback'", "requests:1, channels", "channels:['sms']", "error?.name === 'TypeError'"]) {
-    assert.ok(server.includes(marker), `expected resilient AI generation: ${marker}`);
-  }
+test('unspecified names stay unknown and contradictory dialogue is rejected instead of repaired', () => {
+  const contract = require('../server/draft-contract.cjs');
+  const request = {companyName:'Example',website:'https://example.com/',channels:['sms'],useCase:'Company sends a reminder. Customer says they want details.'};
+  assert.equal(contract.storyBrief(request).persona.customerName,'');
+  assert.throws(() => contract.storyBrief({...request,useCase:'Company: "Hello"\nCustomer: "Thanks"',controls:{expectedMessageCount:4}}),error => error.code === 'conflicting_requirements');
+  assert.throws(() => contract.validateAndNormalizeDraft({},request,{url:request.website,candidates:[]}),error => error.code === 'draft_invalid');
+});
+
+test('server and frontend share a bounded AI contract without splitting comma-containing choices', () => {
+  const {aiConfig} = require('../server/ai-config.cjs');
+  const adapter = require('../assets/ai-draft.js');
+  assert.equal(aiConfig({}).maxAttempts,2);
+  assert.equal(aiConfig({}).timeoutMs,20000);
+  assert.deepEqual(adapter.options(['Yes, please','No, thank you']),['Yes, please','No, thank you']);
+  assert.deepEqual(adapter.options('Legacy yes, Legacy no'),['Legacy yes','Legacy no']);
 });
 
 test('customer response modes distinguish typing, composer prefills, and intentional choice bubbles', () => {

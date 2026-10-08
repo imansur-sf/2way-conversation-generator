@@ -11,26 +11,13 @@ test('AI generation uses a bounded, observable asynchronous job contract', () =>
   }
 });
 
-test('AI drafts expose prompt-requirement coverage and retry transient provider failures', () => {
-  for (const marker of ['function requirementChecklist', 'requirementsComplete:requirements.complete', 'gemini_request_retrying', "['gemini_timeout','gemini_failed','gemini_bad_json','gemini_rate_limited']", 'for (let attempt = 0; attempt < 2; attempt += 1)', 'expectedMessageCount', 'scriptedTurnsSatisfied', 'initialSenderSatisfied']) {
-    assert.ok(server.includes(marker), `expected generation quality gate: ${marker}`);
-  }
-});
-
-test('the structured prompt contract preserves scripted order and repairs a requested message total', () => {
-  const helpers = new Function(`${server.slice(server.indexOf('function fallbackTurns'), server.indexOf('function readJson'))};return { storyBrief, preserveExplicitTurns, enforceRequestedMessageCount };`)();
-  const scripted = 'Company says "Welcome, Taylor." Customer says "What is the cost?" Company says "It is $10." Company says "Jordan from sales is joining this thread." Customer says "Great, thank you."';
-  const brief = helpers.storyBrief(scripted, 'Northstar');
-  assert.equal(brief.expectedMessageCount, 5);
-  const incomplete = { companyName:'Northstar', scenarios:{ sms:{ turns:[{ speaker:'company', text:'Generic introduction.' },{ speaker:'customer', text:'Question.' }] } } };
-  const preserved = helpers.preserveExplicitTurns(incomplete, scripted);
-  assert.deepEqual(preserved.scenarios.sms.turns.map(turn => [turn.speaker, turn.text]), brief.scriptedTurns.map(turn => [turn.speaker, turn.text]));
-  const countPrompt = 'Northstar sends an invitation. Create 7 total messages.';
-  const short = { companyName:'Northstar', scenarios:{ sms:{ turns:[{ speaker:'company', text:'Join our event.' },{ speaker:'customer', text:'Can I learn more?' }] } } };
-  const repaired = helpers.enforceRequestedMessageCount(short, countPrompt, 'Northstar');
-  assert.equal(repaired.scenarios.sms.turns.length, 7);
-  assert.ok(server.includes('countSatisfied'), 'the review contract must expose message-count validation');
-  assert.equal(helpers.storyBrief('Start the conversation with the customer. Create exactly 4 total messages.', 'Northstar').initialSender, 'customer');
+test('script limits reject unsupported content instead of silently truncating it', () => {
+  const {explicitTurns,storyBrief}=require('../server/draft-contract.cjs');
+  assert.throws(()=>explicitTurns(Array.from({length:13},(_,index)=>(index%2?'Customer':'Company')+' says "Message '+index+'."').join(' ')),{code:'invalid_dialogue'});
+  assert.throws(()=>explicitTurns('Company says "'+'x'.repeat(1801)+'"'),{code:'invalid_dialogue'});
+  assert.throws(()=>explicitTurns('Company says "Unclosed quotation'),{code:'invalid_dialogue'});
+  const brief=storyBrief({companyName:'Example',useCase:'Start the conversation with the customer. Create exactly 4 total messages.'});
+  assert.equal(brief.initialSender,'customer');assert.equal(brief.expectedMessageCount,4);
 });
 
 test('generation jobs deduplicate retried requests and expose aggregate health metrics', () => {

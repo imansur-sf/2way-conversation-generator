@@ -3,20 +3,23 @@ const { createReadStream, stat, realpath } = require('node:fs');
 const { randomUUID, createHash } = require('node:crypto');
 const path = require('node:path');
 const { clientIp:trustedClientIp, createRemoteFetcher, publicFilePath, supportedImageTypes, svgContentSecurityPolicy } = require('./server/security.cjs');
+const { aiConfig, providerHealth } = require('./server/ai-config.cjs');
+const { CHANNELS, normalizePersona, normalizeControls, storyBrief, draftPrompt, draftResponseSchema, validateAndNormalizeDraft, promptFallback } = require('./server/draft-contract.cjs');
 
 const port = Number(process.env.PORT) || 3000;
 const root = __dirname;
 const appEnvironment = process.env.APP_ENV || 'development';
 const appVersion = process.env.APP_VERSION || '2.0.0';
-const geminiApiKey = process.env.GEMINI_API_KEY || '';
-const geminiModel = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
+const aiSettings = aiConfig(process.env);
+const geminiApiKey = aiSettings.apiKey;
+const geminiModel = aiSettings.model;
+const providerObservation = {lastSuccessAt:null,lastFailureAt:null,lastFailureCode:null};
 const scrapeLimitBytes = 500_000;
 const imageLimitBytes = 2_000_000;
 const requestLimitBytes = 200_000;
-/* Keep the full scrape + generation request safely below Heroku's router
-   timeout. A browser retry starts a fresh request when an upstream is slow. */
+/* Website fetches have a total deadline. Generation uses asynchronous jobs;
+   its two-attempt provider budget may exceed a synchronous router timeout. */
 const requestTimeoutMs = 7_000;
-const geminiRequestTimeoutMs = 20_000;
 const rateWindowMs = 60_000;
 const perMinuteLimit = 12;
 const rateBuckets = new Map();
@@ -74,226 +77,45 @@ function extractWebsite(html, pageUrl) {
   if (ogImage) add(ogImage,'hero');
   [...html.matchAll(/<link\b[^>]*>/gi)].forEach(match => { const tag = match[0], rel = tag.match(/rel=["']([^"']+)["']/i)?.[1] || '', href = tag.match(/href=["']([^"']+)["']/i)?.[1]; if (/icon/i.test(rel) && href) add(href,'logo'); });
   [...html.matchAll(/<img\b[^>]*>/gi)].forEach(match => { const tag = match[0], src = tag.match(/(?:src|data-src)=["']([^"']+)["']/i)?.[1], descriptor = `${tag.match(/alt=["']([^"']*)["']/i)?.[1] || ''} ${tag.match(/class=["']([^"']*)["']/i)?.[1] || ''}`.toLowerCase(); if (src) add(src, /logo|brand|header/.test(descriptor) ? 'logo':'image'); });
-  return { url:pageUrl, title, description, headings, text:stripMarkup(html).slice(0,7000), candidates:candidates.slice(0,16) };
+  const links=[...new Set([...html.matchAll(/<a\b[^>]*href=["']([^"']+)["']/gi)].map(match=>absoluteUrl(decodeEntities(match[1]),pageUrl)).filter(Boolean))].slice(0,30);
+  const emails=[...new Set([...html.matchAll(/href=["']mailto:([^?"']+)/gi)].map(match=>decodeEntities(match[1])))].slice(0,10);
+  return { url:pageUrl, title, description, headings, text:stripMarkup(html).slice(0,7000), candidates:candidates.slice(0,16), links, emails };
 }
-function parseJson(text) {
-  const value = String(text || '').trim().replace(/^```json\s*/i,'').replace(/^```\s*/i,'').replace(/```$/,'').trim();
-  const first = value.indexOf('{'), last = value.lastIndexOf('}');
-  if (first < 0 || last <= first) throw Object.assign(new Error('gemini_bad_json'), { code:'gemini_bad_json' });
-  try { return JSON.parse(value.slice(first,last + 1)); }
-  catch { throw Object.assign(new Error('gemini_bad_json'), { code:'gemini_bad_json' }); }
+function parseJson(value) {
+  const text = String(value || '').trim().replace(/^\x60\x60\x60json\s*/i,'').replace(/^\x60\x60\x60\s*/,'').replace(/\x60\x60\x60$/,'').trim();
+  try { return JSON.parse(text); }
+  catch { throw Object.assign(new Error('gemini_bad_json'),{code:'gemini_bad_json'}); }
 }
-async function callGemini(prompt) {
-  if (!geminiApiKey) throw Object.assign(new Error('llm_not_configured'), { code:'llm_not_configured' });
-  const request = async (attempt = 0) => {
-    const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), geminiRequestTimeoutMs);
-    try {
-      const retryInstruction = attempt ? '\nReturn the compact JSON object now. Do not explain it, use Markdown, or add fields that were not requested.' : '';
-      const upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${geminiApiKey}`, { method:'POST', headers:{ 'Content-Type':'application/json' }, signal:controller.signal, body:JSON.stringify({ contents:[{ parts:[{ text:prompt + retryInstruction }] }], generationConfig:{ responseMimeType:'application/json', maxOutputTokens:2400 } }) });
-      if (!upstream.ok) {
-        const detail = (await upstream.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 300);
-        const code = upstream.status === 400 ? 'gemini_bad_request' : upstream.status === 401 || upstream.status === 403 ? 'gemini_auth_failed' : upstream.status === 404 ? 'gemini_model_not_found' : upstream.status === 429 ? 'gemini_rate_limited' : 'gemini_failed';
-        console.error(JSON.stringify({ event:'gemini_request_failed', status:upstream.status, model:geminiModel, detail }));
-        throw Object.assign(new Error(code), { code, status:upstream.status });
-      }
-      let payload;
-      try { payload = await upstream.json(); }
-      catch { throw Object.assign(new Error('gemini_bad_json'), { code:'gemini_bad_json' }); }
-      const raw=payload?.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('') || '';
-      try { return parseJson(raw); }
-      catch (error) { console.error(JSON.stringify({ event:'gemini_invalid_json', model:geminiModel, attempt, finishReason:payload?.candidates?.[0]?.finishReason || null, characters:raw.length })); throw error; }
-    } catch (error) {
-      if (error?.name === 'AbortError') throw Object.assign(new Error('gemini_timeout'), { code:'gemini_timeout' });
-      if (!error?.code && error?.name === 'TypeError') throw Object.assign(new Error('gemini_failed'), { code:'gemini_failed' });
-      throw error;
-    } finally { clearTimeout(timeout); }
-  };
-  let failure;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try { return await request(attempt); }
-    catch (error) {
-      failure = error;
-      const retryable = ['gemini_timeout','gemini_failed','gemini_bad_json','gemini_rate_limited'].includes(error?.code);
-      if (!retryable || attempt === 1) throw error;
-      console.log(JSON.stringify({ event:'gemini_request_retrying', attempt:attempt + 1, code:error.code }));
-      await new Promise(resolve => setTimeout(resolve, 350));
+/* Exactly one upstream attempt. The generation loop owns the shared retry
+   budget, including structural/semantic validation failures. */
+async function callGemini(prompt, channels) {
+  if (!geminiApiKey) throw Object.assign(new Error('llm_not_configured'),{code:'llm_not_configured'});
+  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),aiSettings.timeoutMs);
+  try {
+    const upstream=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(geminiModel)}:generateContent`,{
+      method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':geminiApiKey},signal:controller.signal,
+      body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{responseMimeType:'application/json',responseSchema:draftResponseSchema(channels),maxOutputTokens:Math.min(8000,2400*channels.length)}})
+    });
+    if (!upstream.ok) {
+      const code=upstream.status===400?'gemini_bad_request':upstream.status===401||upstream.status===403?'gemini_auth_failed':upstream.status===404?'gemini_model_not_found':upstream.status===429?'gemini_rate_limited':'gemini_failed';
+      console.error(JSON.stringify({event:'gemini_request_failed',status:upstream.status,model:geminiModel}));
+      throw Object.assign(new Error(code),{code,status:upstream.status});
     }
-  }
-  throw failure;
+    let payload;
+    try {payload=await upstream.json();} catch {throw Object.assign(new Error('gemini_bad_json'),{code:'gemini_bad_json'});}
+    const candidate=payload?.candidates?.[0],finish=candidate?.finishReason;
+    if (payload?.promptFeedback?.blockReason || ['SAFETY','RECITATION','BLOCKLIST','PROHIBITED_CONTENT','SPII'].includes(finish)) throw Object.assign(new Error('gemini_blocked'),{code:'gemini_blocked'});
+    if (finish && finish!=='STOP') throw Object.assign(new Error('gemini_incomplete'),{code:'gemini_incomplete'});
+    const raw=candidate?.content?.parts?.filter(part=>!part.thought).map(part=>part.text || '').join('') || '';
+    return parseJson(raw);
+  } catch (error) {
+    if (error?.name==='AbortError') throw Object.assign(new Error('gemini_timeout'),{code:'gemini_timeout'});
+    if (!error?.code && error?.name==='TypeError') throw Object.assign(new Error('gemini_failed'),{code:'gemini_failed'});
+    throw error;
+  } finally {clearTimeout(timeout);}
 }
-function adaptCanonicalDraft(raw, channels) {
-  const source = raw?.scenarios?.sms || raw?.scenarios?.[Object.keys(raw?.scenarios || {})[0]] || {};
-  return { ...raw, scenarios:Object.fromEntries(channels.map(channel => [channel,{ ...source }])) };
-}
-function fallbackTurns(useCase) {
-  const turns = [];
-  const pattern = /\b(company|customer|prospect|recipient)(?:\s*\([^)]*\))?\s+(?:says?|asks?|repl(?:y|ies)|responds?)\s*[:\-]?\s*["“]([^"”]{2,1800})["”]/gi;
-  for (const match of useCase.matchAll(pattern)) turns.push({ speaker:/company/i.test(match[1]) ? 'company':'customer', text:clean(match[2]), mode:'prefill', options:[] });
-  return turns.slice(0,16);
-}
-function promptStory(useCase) {
-  const copy = cleanPrompt(useCase);
-  const customer = clean(copy.match(/\b(?:customer|prospect|recipient|lead)\s*,?\s*(?:named\s+)?([A-Z][a-z]{1,40})\b/i)?.[1]);
-  const representativeMatch = copy.match(/\b((?:(?:sales|account|customer success|admissions|program)?\s*(?:rep(?:resentative)?|advisor|agent|specialist|manager|director|consultant|executive)))\s+(?:named|called)?\s*([A-Z][a-z]{1,40})\b/i);
-  const representativeRole = clean(representativeMatch?.[1]);
-  const representative = clean(representativeMatch?.[2]);
-  const openingTopic = clean(copy.match(/\b(?:sends?|shares?|announces?|promotes?|invites?|markets?|launches?)[^.?!]{0,160}?\b(?:about|for)\s+(?:an?\s+)?([^.!?]+)/i)?.[1] || copy.match(/\b(?:about|for)\s+(?:an?\s+)?([^.!?]+)/i)?.[1]);
-  const questionTopic = clean(copy.match(/\b(?:questions?\s+(?:around|about|regarding)|asks?\s+(?:about|whether)|inquires?\s+(?:about|whether)|wants?\s+to\s+know\s+(?:about\s+)?)\s*([^.!?]+)/i)?.[1]);
-  const handoffTopic = clean(copy.match(/\b(?:wants?\s+to\s+learn\s+more\s+about|is\s+interested\s+in|asks?\s+to\s+learn\s+about)\s+([^,.!?]+)/i)?.[1]);
-  return { customer, representative, representativeRole, openingTopic, questionTopic, handoffTopic };
-}
-function requestedMessageCount(useCase) {
-  const scripted = fallbackTurns(useCase);
-  if (scripted.length >= 2) return scripted.length;
-  const match = cleanPrompt(useCase).match(/\b([2-9]|1[0-2])\s+(?:total\s+)?(?:messages?|turns?|steps?)\b/i);
-  return match ? Number(match[1]) : 0;
-}
-function storyBrief(useCase, companyName = '') {
-  const story = promptStory(useCase);
-  const scriptedTurns = fallbackTurns(useCase);
-  return {
-    company:clean(companyName),
-    initialSender:requestedInitialSender(useCase,companyName) || (scriptedTurns[0]?.speaker || ''),
-    expectedMessageCount:requestedMessageCount(useCase),
-    scriptedTurns,
-    story
-  };
-}
-function promptStoryAnchors(story) { return [story.customer, story.representative, story.openingTopic, story.questionTopic, story.handoffTopic].filter(value => value && value.length >= 3); }
-function naturalLanguageFallbackTurns(useCase, company) {
-  const story = promptStory(useCase), hasStory = promptStoryAnchors(story).length || story.questionTopic;
-  if (!hasStory) return [];
-  const greeting = story.customer ? `Hi ${story.customer}! ` : 'Hi! ';
-  const opening = story.openingTopic ? `about ${story.openingTopic}` : 'with an update tailored to your interests';
-  const question = story.questionTopic ? `Could you tell me more about ${story.questionTopic}?` : `Could you share more details ${story.openingTopic ? `about ${story.openingTopic}` : ''}?`.replace(/\s+\?/,'?');
-  const turns = [
-    { speaker:'company', text:`${greeting}${company} is reaching out ${opening}. We’d be glad to help you explore the details.`, mode:'prefill', options:[] },
-    { speaker:'customer', text:question, mode:'prefill', options:[] },
-    { speaker:'company', text:`${greeting}I can help clarify ${story.questionTopic || story.openingTopic || 'the details'} without guessing at information that is not in the brief.`, mode:'prefill', options:[] }
-  ];
-  if (story.handoffTopic) {
-    turns.push({ speaker:'customer', text:`Thanks. I’d also like to learn more about ${story.handoffTopic}.`, mode:'prefill', options:[] });
-    const role = story.representativeRole || 'specialist';
-    const person = story.representative || `a ${role}`;
-    turns.push({ speaker:'company', text:`Absolutely${story.customer ? `, ${story.customer}` : ''}. I’m connecting you with ${person} in this same thread to help with ${story.handoffTopic}.`, mode:'prefill', options:[] });
-    if (story.representative) turns.push({ speaker:'company', text:`Hi${story.customer ? ` ${story.customer}` : ''}, ${story.representative} here. I’d be happy to share more about ${story.handoffTopic} and help with next steps.`, mode:'prefill', options:[] });
-  }
-  return turns;
-}
-function escapedPattern(value) { return String(value || '').replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }
-function requestedInitialSender(useCase, companyName = '') {
-  const copy = String(useCase || ''), company = escapedPattern(companyName.trim());
-  const explicit = copy.match(/\b(?:start|begin|open)(?:\s+the\s+(?:conversation|demo|flow))?\s+with\s+(?:the\s+)?(company|customer)\b/i)?.[1]?.toLowerCase();
-  if (explicit) return explicit;
-  const companySubject = company ? `(?:company|brand|${company})` : '(?:company|brand)';
-  const customerSubject = '(?:customer|prospect|recipient|lead)';
-  const companyAction = '(?:says?|sends?|shares?|announces?|invites?|markets?|reaches?\\s+out|launches?)';
-  const customerAction = '(?:says?|sends?|asks?|repl(?:y|ies)|responds?|reaches?\\s+out|inquires?)';
-  const candidates = [
-    ...[...copy.matchAll(new RegExp(`\\b${companySubject}\\b[^.!?]{0,110}\\b${companyAction}\\b`, 'gi'))].map(match => ({ speaker:'company', index:match.index })),
-    ...[...copy.matchAll(new RegExp(`\\b${customerSubject}\\b[^.!?]{0,110}\\b${customerAction}\\b`, 'gi'))].map(match => ({ speaker:'customer', index:match.index }))
-  ].sort((left,right) => left.index-right.index);
-  return candidates[0]?.speaker || null;
-}
-function enforceRequestedInitialSender(raw, useCase, companyName = '') {
-  const requested = requestedInitialSender(useCase,companyName);
-  if (!requested) return raw;
-  const scenarioKey = raw?.scenarios?.sms ? 'sms' : Object.keys(raw?.scenarios || {})[0];
-  const scenario = scenarioKey ? raw.scenarios[scenarioKey] : null;
-  if (!scenario) return { ...raw, initialSender:requested };
-  const generated = turns(scenario.turns);
-  if (requested === 'company' && generated[0]?.speaker !== 'company') {
-    const opening = clean(scenario.initialMessage || scenario.initialBody || generated.find(turn => turn.speaker === 'company')?.text || `Hi! ${clean(companyName,clean(raw?.companyName,'Our team'))} is reaching out with an update.`);
-    console.log(JSON.stringify({ event:'scenario_draft_initial_sender_corrected', requested, generatedFirst:generated[0]?.speaker || null }));
-    return { ...raw, initialSender:'company', scenarios:{ ...raw.scenarios, [scenarioKey]:{ ...scenario, initialMessage:opening, initialBody:opening, turns:[{ speaker:'company', text:opening },...generated] } } };
-  }
-  if (requested === 'customer' && generated[0]?.speaker !== 'customer') {
-    const firstCustomer = generated.find(turn => turn.speaker === 'customer');
-    const opening = firstCustomer || { speaker:'customer', text:`Hi, I have a question about ${promptStory(useCase).questionTopic || promptStory(useCase).openingTopic || 'your offering'}.`, mode:'prefill', options:[] };
-    console.log(JSON.stringify({ event:'scenario_draft_initial_sender_corrected', requested, generatedFirst:generated[0]?.speaker || null }));
-    return { ...raw, initialSender:'customer', scenarios:{ ...raw.scenarios, [scenarioKey]:{ ...scenario, customerMessage:opening.text, prefilledReply:opening.text, turns:[opening,...generated.filter(turn => turn !== firstCustomer)] } } };
-  }
-  return { ...raw, initialSender:requested };
-}
-function preserveExplicitTurns(raw, useCase) {
-  const supplied = fallbackTurns(useCase);
-  const scenarioKey = raw?.scenarios?.sms ? 'sms' : Object.keys(raw?.scenarios || {})[0];
-  const generated = scenarioKey ? turns(raw.scenarios[scenarioKey]?.turns) : [];
-  const orderedMatch = supplied.length === generated.length && supplied.every((turn,index) => turn.speaker === generated[index]?.speaker && turn.text === generated[index]?.text);
-  if (supplied.length < 2 || orderedMatch || !scenarioKey) return raw;
-  const firstCompany = supplied.find(turn => turn.speaker === 'company')?.text || '';
-  const firstCustomer = supplied.find(turn => turn.speaker === 'customer')?.text || '';
-  console.log(JSON.stringify({ event:'scenario_draft_explicit_turns_preserved', supplied:supplied.length, generated:generated.length }));
-  return { ...raw, initialSender:supplied[0]?.speaker === 'customer' ? 'customer':'company', scenarios:{ ...raw.scenarios, [scenarioKey]:{ ...raw.scenarios[scenarioKey], initialMessage:firstCompany || raw.scenarios[scenarioKey]?.initialMessage, initialBody:firstCompany || raw.scenarios[scenarioKey]?.initialBody, customerMessage:firstCustomer || raw.scenarios[scenarioKey]?.customerMessage, prefilledReply:firstCustomer || raw.scenarios[scenarioKey]?.prefilledReply, turns:supplied } } };
-}
-function enforceRequestedMessageCount(raw, useCase, companyName = '') {
-  const required = requestedMessageCount(useCase);
-  const scenarioKey = raw?.scenarios?.sms ? 'sms' : Object.keys(raw?.scenarios || {})[0];
-  const scenario = scenarioKey ? raw.scenarios[scenarioKey] : null;
-  const generated = turns(scenario?.turns);
-  if (!scenario || !required || generated.length >= required) return raw;
-  const story = promptStory(useCase), company = clean(companyName,clean(raw?.companyName,'Our team'));
-  const topic = story.questionTopic || story.openingTopic || 'the details';
-  const addition = [];
-  while (generated.length + addition.length < required) {
-    const offset = addition.length;
-    addition.push(offset % 2 === 0
-      ? { speaker:'customer', text:`Could you share one more detail about ${topic}${story.customer ? ` for ${story.customer}` : ''}?`, mode:'prefill', options:[] }
-      : { speaker:'company', text:`Absolutely${story.customer ? `, ${story.customer}` : ''}. ${company} can walk through ${topic} and the next best step with you.`, mode:'prefill', options:[] });
-  }
-  /* Keep a named handoff as the ending rather than burying it behind filler. */
-  const handoffIndex = story.handoffTopic ? generated.findIndex(turn => turn.text.toLowerCase().includes(story.handoffTopic.toLowerCase())) : -1;
-  const expanded = handoffIndex > -1 ? [...generated.slice(0,handoffIndex),...addition,...generated.slice(handoffIndex)] : [...generated,...addition];
-  console.log(JSON.stringify({ event:'scenario_draft_message_count_repaired', required, generated:generated.length, repaired:expanded.length }));
-  return { ...raw, scenarios:{ ...raw.scenarios, [scenarioKey]:{ ...scenario, turns:expanded.slice(0,12) } } };
-}
-function enforcePromptStory(raw, useCase, companyName = '') {
-  const story = promptStory(useCase), required = promptStoryAnchors(story), contextualTurns = naturalLanguageFallbackTurns(useCase,clean(companyName,clean(raw?.companyName,'Our team')));
-  const scenarioKey = raw?.scenarios?.sms ? 'sms' : Object.keys(raw?.scenarios || {})[0];
-  const scenario = scenarioKey ? raw.scenarios[scenarioKey] : null;
-  const generated = turns(scenario?.turns), transcript = generated.map(turn => turn.text).join('\n').toLowerCase();
-  const missing = required.filter(value => !transcript.includes(value.toLowerCase()));
-  if (!scenario || !contextualTurns.length || (!missing.length && generated.length >= contextualTurns.length)) return raw;
-  const firstCompany = contextualTurns.find(turn => turn.speaker === 'company')?.text || '';
-  const firstCustomer = contextualTurns.find(turn => turn.speaker === 'customer')?.text || '';
-  console.log(JSON.stringify({ event:'scenario_draft_prompt_story_enforced', missing, generatedTurns:generated.length, replacementTurns:contextualTurns.length }));
-  return { ...raw, initialSender:contextualTurns[0]?.speaker === 'customer' ? 'customer':'company', scenarios:{ ...raw.scenarios, [scenarioKey]:{ ...scenario, initialMessage:firstCompany, initialBody:firstCompany, customerMessage:firstCustomer, prefilledReply:firstCustomer, turns:contextualTurns, fallbackResponse:contextualTurns.filter(turn => turn.speaker === 'company').at(-1)?.text || scenario.fallbackResponse } } };
-}
-function fallbackDraft({ companyName, website, useCase, evidence }) {
-  const hostname = new URL(website).hostname.replace(/^www\./,''), company=clean(companyName,evidence.title || hostname), turns=fallbackTurns(useCase);
-  if (!turns.length) turns.push(...naturalLanguageFallbackTurns(useCase,company));
-  const companyFirst = turns[0]?.speaker === 'company' || (!turns.length && requestedInitialSender(useCase,company) === 'company');
-  if (!turns.length) {
-    const opening = companyFirst ? `Hi! ${company} is reaching out with an update.` : 'Hi! I have a question about your offering.';
-    turns.push({ speaker:companyFirst?'company':'customer', text:opening, mode:'prefill', options:[] });
-    turns.push({ speaker:companyFirst?'customer':'company', text:companyFirst?'Could you share more details?':`Thanks for reaching out to ${company}. How can we help?`, mode:'prefill', options:[] });
-  }
-  const firstCompany=turns.find(turn=>turn.speaker==='company')?.text || '',firstCustomer=turns.find(turn=>turn.speaker==='customer')?.text || '';
-  return { companyName:company, initials:company.split(/\s+/).map(word=>word[0]).join('').slice(0,3).toUpperCase(), emailAddress:`hello@${hostname}`, logoUrl:evidence.candidates.find(item=>item.role==='logo')?.url || '', heroImageUrl:evidence.candidates.find(item=>item.role==='hero')?.url || evidence.candidates.find(item=>item.role==='image')?.url || '', brandColor:'#0176D3', brandSecondaryColor:'#032D60', initialSender:companyFirst?'company':'customer', scenarios:{sms:{title:`${company} conversation`,sender:company,initialMessage:firstCompany,customerMessage:firstCustomer,prefilledReply:firstCustomer,turns,keywords:[],fallbackResponse:turns.filter(turn=>turn.speaker==='company').at(-1)?.text || `Thanks for reaching out to ${company}.`}} };
-}
-function draftPrompt({ companyName, website, useCase, channels, evidence }) {
-  const images = evidence.candidates.map((item,index) => `${index + 1}. ${item.role}: ${item.url}`).join('\n') || '(none)';
-  const channel = channels[0] || 'sms';
-  const brief = storyBrief(useCase,companyName);
-  const channelSchema = channel === 'email'
-    ? '{"title":"","subject":"","preheader":"","initialBody":"","customerMessage":"","prefilledReply":"","turns":[{"speaker":"company","text":""},{"speaker":"customer","text":"","mode":"prefill"}],"keywords":[{"terms":"","response":""}],"fallbackResponse":"","ctaLabel":"","ctaUrl":"","layout":"hero"}'
-    : '{"title":"","sender":"","initialMessage":"","customerMessage":"","prefilledReply":"","turns":[{"speaker":"company","text":""},{"speaker":"customer","text":"","mode":"prefill"}],"keywords":[{"terms":"","response":""}],"fallbackResponse":""}';
-  return `Create one concise, realistic ${channel.toUpperCase()} two-way messaging demo. Return JSON only.\nCompany: ${companyName || '(not supplied)'}\nWebsite: ${website}\nUse case: ${useCase}\n\nStructured brief (this is the acceptance contract): ${JSON.stringify(brief)}. Include every non-empty named person, topic, question, and handoff in the turns; never replace them with generic placeholders. If expectedMessageCount is non-zero, return exactly that many turns. If scriptedTurns is non-empty, preserve each scripted turn's speaker, text, and order verbatim. Preserve every explicitly provided line and its order in turns. Include every supplied turn, up to 12 turns.\n\nEvidence: ${evidence.title}. ${evidence.description}. ${evidence.headings.slice(0,6).join(' | ')}\nWebsite text: ${evidence.text.slice(0,2000)}\nImage candidates (only use these URLs or empty strings):\n${images}\n\nUse "company" as initialSender when the company opens with outreach, a campaign, reminder, or invitation; use "customer" only when the customer explicitly begins. Never merge or omit adjacent company turns, including a handoff to another company representative. A turn is {"speaker":"company"|"customer","text":"","mode":"prefill"|"free"|"choices","options":[]}. Any supplied customer wording must use mode "prefill". Use "choices" only for requested selectable options and "free" only for explicitly open-ended typing. Copy explicitly quoted dialogue verbatim; do not shorten it.\n\nReturn exactly this compact JSON shape, with only the ${channel} scenario key: {"companyName":"","initials":"","emailAddress":"","logoUrl":"","heroImageUrl":"","brandColor":"#0176D3","brandSecondaryColor":"#032D60","initialSender":"company","scenarios":{"${channel}":${channelSchema}}}. When dialogue is not supplied, keep each generated text under 240 characters. Do not invent facts or URLs.`;
-}
-function clean(value, fallback = '') { return typeof value === 'string' ? value.trim().slice(0,1800) : fallback; }
-function cleanPrompt(value) { return typeof value === 'string' ? value.trim().slice(0,12_000) : ''; }
-function color(value, fallback = '#0176D3') { const candidate = clean(value); return /^#[0-9a-f]{6}$/i.test(candidate) ? candidate.toUpperCase() : fallback; }
-function responses(value) { return Array.isArray(value) ? value.slice(0,3).map(item => ({ terms:clean(item?.terms,'').slice(0,140), response:clean(item?.response,'') })).filter(item => item.response) : []; }
-function turns(value) { return Array.isArray(value) ? value.slice(0,16).map(turn => { const speaker=clean(turn?.speaker).toLowerCase()==='customer'?'customer':'company'; const mode=['prefill','free','choices'].includes(clean(turn?.mode).toLowerCase())?clean(turn?.mode).toLowerCase():'prefill'; return { speaker, text:clean(turn?.text), mode:speaker==='customer'?mode:undefined, options:Array.isArray(turn?.options)?turn.options.map(option=>clean(option)).filter(Boolean).slice(0,6):[] }; }).filter(turn => turn.text) : []; }
-function normalizeDraft(raw, channels, website) {
-  const hostname = new URL(website).hostname.replace(/^www\./,'');
-  const scenarios = {};
-  channels.forEach(channel => {
-    const scenario = raw?.scenarios?.[channel] || {};
-    scenarios[channel] = { title:clean(scenario.title,`${clean(raw?.companyName,'Company')} ${channel.toUpperCase()} conversation`), sender:clean(scenario.sender,clean(raw?.companyName,hostname)), initialMessage:clean(scenario.initialMessage), customerMessage:clean(scenario.customerMessage), subject:clean(scenario.subject,`A message from ${clean(raw?.companyName,hostname)}`), preheader:clean(scenario.preheader), initialBody:clean(scenario.initialBody), ctaLabel:clean(scenario.ctaLabel), ctaUrl:clean(scenario.ctaUrl), layout:['hero','simple'].includes(clean(scenario.layout)) ? clean(scenario.layout) : 'hero', prefilledReply:clean(scenario.prefilledReply), turns:turns(scenario.turns), keywords:responses(scenario.keywords), fallbackResponse:clean(scenario.fallbackResponse,'Thanks for reaching out. I can help you find the best next step.'), cards:Array.isArray(scenario.cards) ? scenario.cards.slice(0,4).map(card => ({ title:clean(card?.title,'Learn more'), description:clean(card?.description), cta:clean(card?.cta,'Learn more'), url:clean(card?.url), imageUrl:clean(card?.imageUrl) })) : [] };
-  });
-  return { companyName:clean(raw?.companyName,hostname), initials:clean(raw?.initials).replace(/[^A-Za-z0-9]/g,'').slice(0,3).toUpperCase(), emailAddress:clean(raw?.emailAddress,`hello@${hostname}`), logoUrl:clean(raw?.logoUrl), heroImageUrl:clean(raw?.heroImageUrl), brandColor:color(raw?.brandColor), brandSecondaryColor:color(raw?.brandSecondaryColor,'#032D60'), initialSender:clean(raw?.initialSender).toLowerCase()==='customer'?'customer':'company', scenarios };
-}
+function clean(value, fallback='') {return typeof value==='string'?value.trim().slice(0,1800):fallback;}
+function cleanPrompt(value) {return typeof value==='string'?value.trim():'';}
 function readJson(request) {
   return new Promise((resolve,reject) => {
     const chunks=[]; let size=0;
@@ -303,31 +125,21 @@ function readJson(request) {
   });
 }
 function validateDraftRequest(body) {
-  const website = normalizedWebsiteUrl(clean(body?.website));
-  const useCase = cleanPrompt(body?.useCase);
-  const channels = [...new Set(Array.isArray(body?.channels) ? body.channels.filter(channel => ['sms','rcs','whatsapp','email'].includes(channel)) : [])];
-  if (!website || !useCase || !channels.length) throw Object.assign(new Error('missing_required_fields'), { code:'missing_required_fields' });
-  return { companyName:clean(body?.companyName), website, useCase, channels };
-}
-function requirementChecklist(draft, useCase) {
-  const brief = storyBrief(useCase,draft?.companyName);
-  const story = brief.story;
-  const fields = [
-    ['Customer',story.customer], ['Representative',story.representative], ['Opening topic',story.openingTopic], ['Customer question',story.questionTopic], ['Handoff topic',story.handoffTopic]
-  ].filter(([,value]) => value && value.length >= 3);
-  const canonical = draft?.scenarios?.sms || Object.values(draft?.scenarios || {})[0] || {};
-  const generatedTurns = turns(canonical.turns);
-  const transcript = Object.values(draft?.scenarios || {}).flatMap(scenario => [scenario.initialMessage,scenario.initialBody,...turns(scenario.turns).map(turn => turn.text)]).filter(Boolean).join('\n').toLowerCase();
-  const items = fields.map(([label,value]) => ({ label, value, satisfied:transcript.includes(value.toLowerCase()) }));
-  const initialSenderSatisfied = !brief.initialSender || draft?.initialSender === brief.initialSender && generatedTurns[0]?.speaker === brief.initialSender;
-  const countSatisfied = !brief.expectedMessageCount || generatedTurns.length === brief.expectedMessageCount;
-  const scriptedTurnsSatisfied = !brief.scriptedTurns.length || (brief.scriptedTurns.length === generatedTurns.length && brief.scriptedTurns.every((turn,index) => turn.speaker === generatedTurns[index]?.speaker && turn.text === generatedTurns[index]?.text));
-  return { story, items, initialSender:brief.initialSender || null, initialSenderSatisfied, expectedMessageCount:brief.expectedMessageCount || null, actualMessageCount:generatedTurns.length, countSatisfied, scriptedTurns:brief.scriptedTurns.length, scriptedTurnsSatisfied, complete:items.every(item => item.satisfied) && initialSenderSatisfied && countSatisfied && scriptedTurnsSatisfied };
+  if (!body || typeof body!=='object' || Array.isArray(body)) throw Object.assign(new Error('invalid_json'),{code:'invalid_json'});
+  let website=normalizedWebsiteUrl(typeof body.website==='string'?body.website:'');
+  const useCase=cleanPrompt(body.useCase);
+  const channels=[...new Set(Array.isArray(body.channels)?body.channels:[])];
+  if (!website || !useCase || !channels.length) throw Object.assign(new Error('missing_required_fields'),{code:'missing_required_fields'});
+  if (useCase.length>12000 || website.length>2048 || body.companyName!==undefined&&(typeof body.companyName!=='string'||body.companyName.length>200) || channels.some(channel=>!CHANNELS.includes(channel))) throw Object.assign(new Error('invalid_generation_request'),{code:'invalid_generation_request'});
+  try {const parsed=new URL(website);if(!['http:','https:'].includes(parsed.protocol)||parsed.username||parsed.password)throw new Error();website=parsed.href;} catch {throw Object.assign(new Error('invalid_url'),{code:'invalid_url'});}
+  const request={companyName:clean(body.companyName),website,useCase,channels,persona:normalizePersona(body.persona),controls:normalizeControls(body.controls)};
+  storyBrief(request); // Fail contradictory/invalid controls before admission or any network work.
+  return request;
 }
 function errorStatus(code) {
   if (['llm_not_configured','generation_busy','remote_busy'].includes(code)) return 503;
   if (code === 'idempotency_conflict') return 409;
-  if (['invalid_url','blocked_url','blocked_host','missing_required_fields','request_too_large','invalid_json'].includes(code)) return 400;
+  if (['invalid_url','blocked_url','blocked_host','missing_required_fields','request_too_large','invalid_json','invalid_generation_request','invalid_controls','invalid_persona','invalid_dialogue','conflicting_requirements'].includes(code)) return 400;
   if (code === 'rate_limited') return 429;
   return 502;
 }
@@ -346,37 +158,56 @@ function publicGenerationMetrics() {
   };
 }
 async function generateScenarioDraft(body, requestId) {
-  const request = validateDraftRequest(body);
-  const cacheKey = createHash('sha256').update(JSON.stringify(request)).digest('hex');
-  const cached = draftCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    console.log(JSON.stringify({ event:'scenario_draft_cache_hit', requestId }));
+  const request=validateDraftRequest(body),brief=storyBrief(request);
+  const cacheKey=createHash('sha256').update(JSON.stringify(request)).digest('hex');
+  const cached=draftCache.get(cacheKey);
+  if (cached && cached.expiresAt>Date.now()) {
+    console.log(JSON.stringify({event:'scenario_draft_cache_hit',requestId}));
     return JSON.parse(JSON.stringify(cached.value));
   }
-  const startedAt = Date.now();
-  console.log(JSON.stringify({ event:'scenario_draft_started', requestId, channels:request.channels, website:new URL(request.website).hostname }));
-  const remote = await fetchRemote(request.website,scrapeLimitBytes,true);
-  console.log(JSON.stringify({ event:'scenario_draft_website_ready', requestId, elapsedMs:Date.now()-startedAt, bytes:remote.body.length, partial:Boolean(remote.partial) }));
-  if (!/html|xml|text\//i.test(remote.contentType)) throw Object.assign(new Error('not_html'),{ code:'not_html' });
-  const evidence = extractWebsite(remote.body.toString('utf8'),remote.url);
-  console.log(JSON.stringify({ event:'scenario_draft_gemini_started', requestId, elapsedMs:Date.now()-startedAt, model:geminiModel, requests:1, channels:request.channels }));
-  let canonical, fallbackReason='';
-  try { canonical = await callGemini(draftPrompt({ companyName:request.companyName, website:remote.url, useCase:request.useCase, channels:['sms'], evidence })); }
-  catch (error) {
-    if (!['gemini_timeout','gemini_failed','gemini_bad_json'].includes(error?.code)) throw error;
-    fallbackReason=error.code;
-    canonical=fallbackDraft({ companyName:request.companyName, website:remote.url, useCase:request.useCase, evidence });
-    console.log(JSON.stringify({ event:'scenario_draft_fallback', requestId, reason:fallbackReason, elapsedMs:Date.now()-startedAt }));
+  const startedAt=Date.now();
+  console.log(JSON.stringify({event:'scenario_draft_started',requestId,channels:request.channels,website:new URL(request.website).hostname}));
+  const remote=await fetchRemote(request.website,scrapeLimitBytes,true);
+  if (!/html|xml|text\//i.test(remote.contentType)) throw Object.assign(new Error('not_html'),{code:'not_html'});
+  const evidence=extractWebsite(remote.body.toString('utf8'),remote.url);
+  let validated,failure,attempts=0;
+  const retryable=new Set(['gemini_timeout','gemini_failed','gemini_bad_json','gemini_incomplete','gemini_rate_limited','draft_invalid']);
+  for (let attempt=0;attempt<aiSettings.maxAttempts;attempt+=1) {
+    attempts+=1;
+    try {
+      const raw=await callGemini(draftPrompt(request,evidence,brief,failure?.issues || []),request.channels);
+      validated=validateAndNormalizeDraft(raw,request,evidence,brief);
+      providerObservation.lastSuccessAt=Date.now();
+      break;
+    } catch(error) {
+      failure=error;providerObservation.lastFailureAt=Date.now();providerObservation.lastFailureCode=error.code || 'gemini_failed';
+      if (!retryable.has(error?.code) || attempt+1>=aiSettings.maxAttempts) break;
+      console.log(JSON.stringify({event:'gemini_request_retrying',requestId,attempt:attempt+1,code:error.code}));
+      await new Promise(resolve=>setTimeout(resolve,350));
+    }
   }
-  const promptComplete = enforceRequestedMessageCount(enforcePromptStory(preserveExplicitTurns(canonical,request.useCase),request.useCase,request.companyName),request.useCase,request.companyName);
-  const ai = adaptCanonicalDraft(enforceRequestedInitialSender(promptComplete,request.useCase,request.companyName),request.channels);
-  const draft = normalizeDraft(ai,request.channels,remote.url);
-  const requirements = requirementChecklist(draft,request.useCase);
-  console.log(JSON.stringify({ event:'scenario_draft_completed', requestId, elapsedMs:Date.now()-startedAt, requirementsComplete:requirements.complete }));
-  const result = { draft, source:{ url:remote.url, title:evidence.title, imageCandidates:evidence.candidates, fallbackReason, brief:storyBrief(request.useCase,request.companyName) }, requirements };
-  if (!fallbackReason) draftCache.set(cacheKey,{ expiresAt:Date.now()+draftCacheTtlMs, value:result });
-  for (const [key,value] of draftCache) if (value.expiresAt <= Date.now()) draftCache.delete(key);
-  while (draftCache.size > generationJobLimit) draftCache.delete(draftCache.keys().next().value);
+  let fallbackReason=null,stage=null;
+  if (!validated) {
+    if (['gemini_timeout','gemini_failed','gemini_bad_json','gemini_incomplete','draft_invalid'].includes(failure?.code)) {
+      validated=promptFallback(request,evidence,brief);
+      if (validated) {fallbackReason=failure.code;stage=failure.code==='draft_invalid'?'validation':'provider';}
+    }
+    if (!validated) throw failure || Object.assign(new Error('draft_invalid'),{code:'draft_invalid'});
+  }
+  const {draft,requirements}=validated;
+  requirements.scope='structure-and-explicit-constraints';
+  if (fallbackReason) requirements.warnings.push('This is a deterministic prompt-guided starter, not a successful AI generation. Review it before applying.');
+  console.log(JSON.stringify({event:'scenario_draft_completed',requestId,elapsedMs:Date.now()-startedAt,requirementsComplete:requirements.complete,fallbackReason,attempts}));
+  const result={draft,requirements,source:{
+    url:remote.url,title:evidence.title,imageCandidates:evidence.candidates,
+    requestedChannels:[...request.channels],requestFingerprint:cacheKey,
+    mode:fallbackReason?'prompt-fallback':'provider',fallbackReason,stage,coverage:'partial',
+    provider:{name:'gemini',model:geminiModel,attempts},brief,facts:brief.facts,
+    grounding:{status:'unverified',note:'Only the supplied brief and limited page context were available. Facts, link availability, and ownership were not independently verified.'},
+  }};
+  if (!fallbackReason && requirements.complete) draftCache.set(cacheKey,{expiresAt:Date.now()+draftCacheTtlMs,value:result});
+  for (const [key,value] of draftCache) if (value.expiresAt<=Date.now()) draftCache.delete(key);
+  while (draftCache.size>generationJobLimit) draftCache.delete(draftCache.keys().next().value);
   return result;
 }
 function pruneGenerationJobs(reserve = 0) {
@@ -424,6 +255,7 @@ function startGenerationJob(body, requestId, idempotencyKey = '', requester = ''
     }
     catch (error) {
       job.error = error?.code || 'scenario_generation_failed';
+      job.issues = Array.isArray(error?.issues) ? error.issues : [];
       job.status='failed';
       generationMetrics.failed += 1;
       generationMetrics.lastFailureAt = Date.now();
@@ -436,7 +268,7 @@ function startGenerationJob(body, requestId, idempotencyKey = '', requester = ''
 function publicJob(job) {
   const response = { id:job.id, status:job.status, createdAt:job.createdAt, updatedAt:job.updatedAt, durationMs:job.startedAt ? Math.max(0, (job.completedAt || Date.now()) - job.startedAt) : 0 };
   if (job.status === 'completed') Object.assign(response,job.result);
-  if (job.status === 'failed') response.error=job.error;
+  if (job.status === 'failed') {response.error=job.error;response.issues=job.issues || [];}
   return response;
 }
 function sendFile(file,response) {
@@ -459,7 +291,7 @@ function sendFile(file,response) {
 }
 async function handleApi(request,response,url) {
   const requestId = request.headers['x-request-id']?.toString().slice(0,96) || randomUUID();
-  if (request.method === 'GET' && url.pathname === '/api/health') { sendJson(response,200,{ ok:true, service:'two-way-experience-studio', version:appVersion, environment:appEnvironment, aiConfigured:Boolean(geminiApiKey), jobs:{ transient:true, retentionMinutes:generationJobTtlMs / 60_000, metrics:publicGenerationMetrics() } },requestId); return true; }
+  if (request.method === 'GET' && url.pathname === '/api/health') { sendJson(response,200,{ ok:true, service:'two-way-experience-studio', version:appVersion, environment:appEnvironment, aiConfigured:Boolean(geminiApiKey), ai:providerHealth(aiSettings,providerObservation), jobs:{ transient:true, retentionMinutes:generationJobTtlMs / 60_000, metrics:publicGenerationMetrics() } },requestId); return true; }
   if (request.method === 'POST' && url.pathname === '/api/client-diagnostic') {
     if (!withinRateLimit(request,'diagnostic',20)) { sendJson(response,429,{ error:'rate_limited' },requestId); return true; }
     try {
@@ -494,7 +326,7 @@ async function handleApi(request,response,url) {
       const idempotencyKey = String(request.headers['x-idempotency-key'] || request.headers['x-request-id'] || '').trim().slice(0,128);
       const { job, reused } = startGenerationJob(body,requestId,idempotencyKey,clientIp(request));
       sendJson(response,202,{ id:job.id, status:job.status, poll:`/api/scenario-jobs/${job.id}`, reused },requestId);
-    } catch (error) { sendJson(response,errorStatus(error?.code),{ error:error?.code || 'scenario_generation_failed' },requestId); }
+    } catch (error) { sendJson(response,errorStatus(error?.code),{ error:error?.code || 'scenario_generation_failed', issues:error?.issues || [] },requestId); }
     return true;
   }
   if (request.method === 'GET' && url.pathname === '/api/asset') {
@@ -520,7 +352,7 @@ async function handleApi(request,response,url) {
       acquireGenerationSlot(); admitted=true;
       const result = await generateScenarioDraft(body,requestId);
       sendJson(response,200,result,requestId);
-    } catch (error) { const code=error?.code || 'scenario_generation_failed'; console.error(JSON.stringify({ event:'scenario_draft_failed', requestId, code, status:error?.status || null, name:error?.name || null, message:String(error?.message || '').slice(0,240) })); sendJson(response,errorStatus(code),{ error:code },requestId); }
+    } catch (error) { const code=error?.code || 'scenario_generation_failed'; console.error(JSON.stringify({ event:'scenario_draft_failed', requestId, code, status:error?.status || null, name:error?.name || null, message:String(error?.message || '').slice(0,240) })); sendJson(response,errorStatus(code),{ error:code, issues:error?.issues || [] },requestId); }
     finally { if (admitted) activeGenerations -= 1; }
     return true;
   }
