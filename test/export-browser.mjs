@@ -92,10 +92,16 @@ async function controls(page, channel, thread) {
   await page.locator(thread).click();
   assert.ok(!(await page.locator('#stage').innerText()).includes('RESPONSE_MARKER'));
   const target = page.locator(channel === 'email' ? '.gmail' : '.phone');
-  const before = await target.evaluate(node => getComputedStyle(node).transform);
+  const before = await target.boundingBox();
   await page.locator('[data-v2-preview-focus]').click();
   assert.equal(await page.locator('[data-v2-preview-focus]').getAttribute('aria-pressed'), 'true');
-  assert.notEqual(await target.evaluate(node => getComputedStyle(node).transform), before);
+  await page.waitForFunction(({selector,before})=>{const node=document.querySelector(selector),box=node.getBoundingClientRect();return box.width>before.width+1||box.height>before.height+1},{selector:channel==='email'?'.gmail':'.phone',before});
+  const focused=await target.boundingBox();assert.ok(focused.width>before.width+1||focused.height>before.height+1,'Focus must provide visibly more reading space');
+  for(const [mode,scale] of [['.85',.85],['.7',.7],['1',1]]){
+    await page.locator('#previewScale').selectOption(mode,{force:true});
+    await page.waitForFunction(({selector,scale})=>{const node=document.querySelector(selector),box=node.getBoundingClientRect();return Math.abs(box.width-node.offsetWidth*scale)<.1&&Math.abs(box.height-node.offsetHeight*scale)<.1},{selector:channel==='email'?'.gmail':'.phone',scale});
+  }
+  await page.locator('#previewScale').selectOption('auto',{force:true});
   await page.locator('[data-v2-preview-focus]').click();
   assert.equal(await page.locator('body').evaluate(node => node.classList.contains('v2-focus-mode')), false);
   await page.locator('[data-v2-preview-present]').click();

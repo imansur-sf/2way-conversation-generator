@@ -273,7 +273,9 @@ body .preview .stage { display:flex; align-items:flex-start; justify-content:fle
 body .preview .preview-info { position:absolute; top:20px; right:20px; margin:0; }
 .v2-preview-mode { align-self:flex-start; flex-shrink:0; margin-right:38px; }
 .v2-preview-canvas { position:relative; flex:0 0 auto; margin:auto; }
-body #stage .v2-preview-canvas > :is(.phone,.gmail) { position:absolute; top:0; left:0; margin:0; transform-origin:top left; }
+body #stage .v2-preview-canvas > :is(.phone,.gmail) { position:absolute; top:0; left:0; margin:0; }
+body #stage :is(.phone,.gmail) { transform:scale(var(--v2-device-scale,1))!important; transform-origin:top left!important; transition:none!important; }
+body.v2-focus-mode #stage { padding:8px; }
 body.export,body.presentation { padding-top:0!important; }
 body.export .studio,body.presentation .studio { height:100dvh!important; }
 body.export .preview,body.presentation .preview { display:flex!important; height:100dvh!important; min-height:0!important; padding:10px!important; }
@@ -307,8 +309,10 @@ body :is(.builder,.preview)[hidden] { display:none!important; }
 .v2-local-save button { padding:5px 7px; border:1px solid #9ed7ff; border-radius:5px; background:#073677; color:#fff; font-size:11px; }
 body :is(.appbar,.v2-workspace-tabs,.v2-preview-mode,.rcs-image-cropper) :is(button,summary,select,input):focus-visible { outline:3px solid #ffcf50; outline-offset:3px; }
 body .builder :is(.block,.image-asset-control,.v2-flow-map,.v2-scenario-qa) :is(button,input,textarea,select,[contenteditable]):focus-visible { outline:3px solid #075eab; outline-offset:2px; }
+body .builder .image-asset-hint { color:#c9e5ff; }
 body .builder :is(.block,.image-asset-control) :is(small,.helper,.image-asset-copy,.image-asset-hint) { color:#435d77; }
 body .builder input::placeholder,body .builder textarea::placeholder { color:#596a7a; opacity:1; }
+body .phone-keyboard .keyboard-key--return { color:#202732; }
 body .builder .scenario-enhancements .restore-point-help { color:#c9e5ff; }
 .v2-flow-map__head span,.v2-scenario-qa__note,.v2-image-state { color:#435d77; }
 dialog.rcs-image-cropper { width:100vw; height:100dvh; max-width:none; max-height:none; margin:0; border:0; }

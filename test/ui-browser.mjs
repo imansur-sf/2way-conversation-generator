@@ -35,16 +35,26 @@ async function fresh(viewport={width:1440,height:1000}){
   await page.locator('#scenarioSelect').selectOption(fixture.id);
   return {context,page,errors};
 }
-async function settle(page){await page.evaluate(()=>{window.__uiFrameReady=false;requestAnimationFrame(()=>requestAnimationFrame(()=>window.__uiFrameReady=true))});await page.waitForFunction(()=>window.__uiFrameReady)}
+async function settle(page){
+  await page.evaluate(()=>{window.__uiFitSample=null;window.__uiFitStable=0});
+  await page.waitForFunction(()=>{
+    const stage=document.querySelector('#stage'),device=stage?.querySelector('.phone,.gmail');if(!device||!device.getClientRects().length)return false;
+    const box=device.getBoundingClientRect(),scale=Number(stage.dataset.previewScale),sample=JSON.stringify([stage.clientWidth,stage.clientHeight,box.x,box.y,box.width,box.height,scale]);
+    const matches=scale>0&&Math.abs(box.width-device.offsetWidth*scale)<.1&&Math.abs(box.height-device.offsetHeight*scale)<.1;
+    window.__uiFitStable=matches&&sample===window.__uiFitSample?window.__uiFitStable+1:0;window.__uiFitSample=sample;
+    return window.__uiFitStable>=2;
+  },null,{polling:'raf',timeout:3000}).catch(async error=>{throw new Error(`Preview fit did not converge: ${JSON.stringify(await metrics(page))}`,{cause:error})});
+}
 async function panel(page,name){const tab=page.locator(`[data-workspace-panel="${name}"]`);if(await tab.isVisible())await tab.click()}
 async function saved(page){await page.waitForFunction(()=>document.querySelector('#saveState')?.textContent==='Saved on this device')}
 async function metrics(page){return page.evaluate(()=>{
   const stage=document.querySelector('#stage'),device=stage.querySelector('.phone,.gmail'),header=document.querySelector('.appbar'),rect=node=>{const r=node.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,right:r.right,bottom:r.bottom}},style=getComputedStyle(stage);
-  return {stage:rect(stage),device:rect(device),natural:{width:device.offsetWidth,height:device.offsetHeight},padding:{x:parseFloat(style.paddingLeft),y:parseFloat(style.paddingTop)},scale:Number(stage.dataset.previewScale),mode:stage.dataset.previewFit,canvasCount:stage.querySelectorAll('.v2-preview-canvas').length,horizontalOverflow:document.documentElement.scrollWidth-innerWidth,headerOverflow:header?header.scrollWidth-header.clientWidth:0};
+  return {stage:rect(stage),device:rect(device),natural:{width:device.offsetWidth,height:device.offsetHeight},padding:{x:parseFloat(style.paddingLeft),y:parseFloat(style.paddingTop)},scale:Number(stage.dataset.previewScale),mode:stage.dataset.previewFit,computedTransform:getComputedStyle(device).transform,inlineTransform:device.style.transform,scaleVariable:style.getPropertyValue('--v2-device-scale'),selectedPanel:document.querySelector('[data-workspace-panel][aria-selected="true"]')?.dataset.workspacePanel,canvasCount:stage.querySelectorAll('.v2-preview-canvas').length,horizontalOverflow:document.documentElement.scrollWidth-innerWidth,headerOverflow:header?header.scrollWidth-header.clientWidth:0};
 })}
 function assertFit(value){
   assert.equal(value.canvasCount,1,'There must be one sizing canvas');assert.ok(value.horizontalOverflow<=1,'The workspace must not overflow horizontally');assert.ok(value.headerOverflow<=1,'Header controls must remain in the viewport');
   assert.ok(value.device.width>0&&value.device.height>0,'The selected preview must be visible');
+  assert.ok(Math.abs(value.device.width-value.natural.width*value.scale)<.1&&Math.abs(value.device.height-value.natural.height*value.scale)<.1,'Rendered device scale must match the fit controller');
   assert.ok(value.device.x>=value.stage.x-1&&value.device.y>=value.stage.y-1,'Auto-fit must not clip the leading edge');
   assert.ok(value.device.right<=value.stage.right+1&&value.device.bottom<=value.stage.bottom+1,'Auto-fit must fit both dimensions');
   assert.ok(Math.abs(value.device.width/value.device.height-value.natural.width/value.natural.height)<.001,'Scaling must preserve device aspect ratio');
@@ -63,6 +73,13 @@ try{
       const value=await metrics(page),row={name,viewport,channel,...value,errors:[...errors],screenshot:`${name}-${channel}.png`};manifest.push(row);
       await page.screenshot({path:path.join(output,row.screenshot)});assertFit(value);assert.deepEqual(errors,[]);
       if(channel==='sms'){row.axe=await scopedAxe(page,['.appbar','.v2-workspace-tabs','.v2-preview-mode']);assert.deepEqual(row.axe.violations,[],'Changed workspace controls must pass the scoped automated rules')}
+      if(name==='desktop'&&channel==='rcs'){row.imageHintsAxe=await scopedAxe(page,['.builder .image-asset-hint']);assert.deepEqual(row.imageHintsAxe.violations,[],'Image guidance must remain readable on its own surface')}
+      if(['desktop','narrow','landscape'].includes(name)){
+        await page.locator(channel==='email'?'[data-email="0"]':channel==='whatsapp'?'[data-wa-thread="wa-main"]':'[data-thread="sms-main"]').click();await settle(page);
+        const conversation={name:`${name}-conversation`,viewport,channel,...await metrics(page),contentOverflow:await page.locator('#stage .mailview,#stage .mailbody,#stage .scenario-email-header,#stage .transcript,#stage .wa-chat-body').evaluateAll(nodes=>nodes.map(node=>({className:node.className,overflow:node.scrollWidth-node.clientWidth}))),screenshot:`${name}-${channel}-conversation.png`};manifest.push(conversation);
+        await page.screenshot({path:path.join(output,conversation.screenshot)});assertFit(conversation);assert.ok(conversation.contentOverflow.every(item=>item.overflow<=1),`Conversation content must fit horizontally: ${JSON.stringify(conversation.contentOverflow)}`);
+        if(channel==='rcs')await page.locator('#stage .card-img__asset').waitFor();
+      }
       for(const [mode,scale] of [['.85',.85],['.7',.7],['1',1]]){await page.locator('#previewScale').selectOption(mode);await settle(page);assert.equal((await metrics(page)).scale,scale,'Manual zoom must remain exact')}
     })}finally{await context.close()}
   });
@@ -96,7 +113,8 @@ try{
       assert.equal(await page.evaluate(key=>localStorage.getItem(key),key),initial,'Draft crop must not write browser storage');
       await dialog.locator('[data-rcs-crop-reset]').click();assert.equal(await dialog.locator('[data-rcs-crop-x]').inputValue(),'50');
       await dialog.locator('[data-rcs-crop-undo]').click();assert.equal(await dialog.locator('[data-rcs-crop-x]').inputValue(),'80');
-      await dialog.locator('[data-rcs-crop-done]').focus();await page.keyboard.press('Tab');assert.equal(await page.evaluate(()=>document.querySelector('dialog.rcs-image-cropper').contains(document.activeElement)),true,'Native modal must contain Tab focus');
+      await dialog.locator('[data-rcs-crop-done]').focus();await page.keyboard.press('Tab');assert.equal(await dialog.locator('.rcs-image-cropper__close').evaluate(node=>node===document.activeElement),true,'Tab from Done must wrap to the first dialog control');
+      await page.keyboard.press('Shift+Tab');assert.equal(await dialog.locator('[data-rcs-crop-done]').evaluate(node=>node===document.activeElement),true,'Shift+Tab must wrap to the final dialog control');
       await page.keyboard.press('Escape');await dialog.waitFor({state:'detached'});assert.equal(await trigger.evaluate(node=>node===document.activeElement),true);assert.equal(await page.evaluate(key=>localStorage.getItem(key),key),initial);
       await trigger.click();await dialog.locator('[data-rcs-crop-fit="contain"]').click();await dialog.locator('[data-rcs-crop-cancel]').click();assert.equal(await page.evaluate(key=>localStorage.getItem(key),key),initial);
       await trigger.click();await dialog.locator('[data-rcs-crop-fit="contain"]').click();await dialog.click({position:{x:2,y:2}});await dialog.waitFor({state:'detached'});assert.equal(await page.evaluate(key=>localStorage.getItem(key),key),initial);

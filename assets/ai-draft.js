@@ -94,6 +94,7 @@
   function validateResult(result, request) {
     if (!request || !result) throw failure('This draft has no matching generation request.');
     const selected=validate(result.draft,request.channels),source=result.source,requirements=result.requirements;
+    if (request.companyName?.trim() && result.draft.companyName !== request.companyName.trim()) throw failure('The draft changed the explicitly supplied company name.');
     if (!source || !['provider','prompt-fallback'].includes(source.mode) || !Array.isArray(source.requestedChannels) || JSON.stringify([...new Set(source.requestedChannels)].sort())!==JSON.stringify([...selected].sort())) throw failure('The returned channels do not match the requested draft.');
     for(const channel of selected){
       const review=requirements?.channels?.[channel],turns=result.draft.scenarios[channel].turns;

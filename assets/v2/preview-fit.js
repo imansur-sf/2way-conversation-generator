@@ -1,6 +1,6 @@
 (() => {
-  const fitScale = (width, height, availableWidth, availableHeight, mode = 'auto') => mode === 'auto'
-    ? Math.min(1, Math.max(0, availableWidth / width), Math.max(0, availableHeight / height))
+  const fitScale = (width, height, availableWidth, availableHeight, mode = 'auto', focus = false) => mode === 'auto'
+    ? Math.min(focus ? 1.4 : 1, Math.max(0, availableWidth / width), Math.max(0, availableHeight / height))
     : ({ '1':1, '.85':0.85, '.7':0.7 }[mode] || 1);
   let scheduled = false;
   const update = () => {
@@ -21,11 +21,12 @@
     }
     const naturalWidth = device.offsetWidth, naturalHeight = device.offsetHeight;
     const mode = document.querySelector('#previewScale')?.value || 'auto';
-    const scale = fitScale(naturalWidth, naturalHeight, width, height, mode);
+    const scale = fitScale(naturalWidth, naturalHeight, width, height, mode, document.body.classList.contains('v2-focus-mode'));
     canvas.style.width = `${naturalWidth * scale}px`;
     canvas.style.height = `${naturalHeight * scale}px`;
-    device.style.setProperty('transform', `scale(${scale})`, 'important');
-    device.style.setProperty('transform-origin', 'top left', 'important');
+    // Keep the scale on the persistent stage so a freshly rendered device uses
+    // the same scale immediately, before its next measured fit pass.
+    stage.style.setProperty('--v2-device-scale', String(scale));
     stage.dataset.previewFit = mode;
     stage.dataset.previewScale = String(scale);
     stage.classList.remove('scaled');

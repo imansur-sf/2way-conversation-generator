@@ -347,7 +347,8 @@ try {
   await livePreviewPage.mouse.move(cropBox.x + cropBox.width * 0.75, cropBox.y + cropBox.height * 0.35);
   await livePreviewPage.mouse.up();
   assert.equal(await cropper.locator('[data-rcs-crop-frame] img').evaluate(image=>image.style.objectFit),'contain','Draft crop must update within the dialog');
-  const draftCrop = await livePreviewPage.evaluate(() => JSON.parse(localStorage.getItem('two-way-experience-studio-v2-scenarios')).scenarios[0].variants.rcs.steps.find(step => step.id === 'live-rich-card'));
+  const draftCrop = await livePreviewPage.evaluate(() => JSON.parse(localStorage.getItem('two-way-experience-studio-v2-scenarios')).scenarios.find(scenario=>scenario.id==='live-preview-journey').variants.rcs.steps.find(step => step.id === 'live-rich-card'));
+  assert.ok(draftCrop,'The crop fixture must be selected by its scenario identity');
   assert.notEqual(draftCrop.imageScale,1.4,'Draft adjustments must not persist before Done');
   await cropper.locator('[data-rcs-crop-done]').click();
   await livePreviewPage.waitForFunction(() => document.querySelector('#stage .card-img__asset')?.style.objectFit === 'contain');

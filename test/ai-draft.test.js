@@ -17,6 +17,38 @@ test('v2 mapping preserves exact text, names, sequence, choices and email mode w
   for(const channel of channels){const scenario=ai.toScenario(channel,draft);assert.deepEqual(scenario.steps.map(step=>step.text),draft.scenarios[channel].turns.map(turn=>turn.text));assert.deepEqual(scenario.steps.map(step=>step.author),['brand','customer','brand']);assert.deepEqual(scenario.steps[1].options,['Yes, please','No, thanks']);assert.deepEqual(scenario.persona,persona);assert.ok(scenario.steps.every(step=>typeof step.reusableSet==='boolean'));if(channel==='email'){assert.equal(scenario.emailBody,literal);assert.equal(scenario.emailMode,'plain');assert.equal(scenario.steps[2].emailMode,'branded');assert.equal(scenario.emailCtaLabel,'');assert.equal(scenario.emailHeroImage,'')}}
   assert.equal(JSON.stringify(draft),before);
 });
+function emailRenderer(scenario) {
+  const lines=fs.readFileSync(require.resolve('../interactive-simulator-builder.html'),'utf8').split('\n');
+  const context={active:()=>scenario,bubble:()=>'',esc:value=>String(value??''),link:value=>String(value??''),safeActionUrl:value=>value,emailAccent:()=>'#0176D3',richEmailHtml:value=>value.emailHtml??value.emailBody??'',plainEmailPreviewText:value=>value};
+  vm.runInNewContext([
+    lines.filter(line=>line.includes('function emailContentMarkup(row,scenario)')).at(-1),
+    lines.find(line=>line.includes('function effectiveEmailContent(')),
+    lines.find(line=>line.includes('const emailContentMarkupWithPerResponseDesign=')),
+    lines.find(line=>line.includes('const bubbleWithPerResponseEmailDesign=')),
+  ].join('\n'),context);
+  return context;
+}
+test('email renderer uses each branded turn’s metadata, not the opening email’s assets',()=>{
+  for(const openingMode of ['plain','branded']){
+    const draft=fixture(),turns=draft.scenarios.email.turns;
+    turns[0].presentation={kind:'email',mode:openingMode,heroImageUrl:'https://example.test/opening.png',preheader:'OPENING PREHEADER',ctaLabel:'Opening details',ctaUrl:'https://example.test/opening'};
+    turns[2].presentation={kind:'email',mode:'branded',heroImageUrl:'https://example.test/later.png',preheader:'LATER PREHEADER',ctaLabel:'Later details',ctaUrl:'https://example.test/later'};
+    const scenario=ai.toScenario('email',draft),before=JSON.stringify(scenario),render=emailRenderer(scenario),opening=render.emailContentMarkup({},scenario),later=render.bubble(scenario.steps[2]);
+    if(openingMode==='branded'){assert.match(opening,/https:\/\/example.test\/opening.png/);assert.match(opening,/href="https:\/\/example.test\/opening"/);}else assert.doesNotMatch(opening,/scenario-email-hero|scenario-email-cta/);
+    assert.match(later,/https:\/\/example.test\/later.png/);assert.match(later,/LATER PREHEADER/);assert.match(later,/href="https:\/\/example.test\/later"/);assert.doesNotMatch(later,/opening.png|OPENING PREHEADER|href="https:\/\/example.test\/opening"/);
+    scenario.steps[2].emailMode='plain';assert.doesNotMatch(render.bubble(scenario.steps[2]),/scenario-email-hero|scenario-email-cta|PREHEADER/);scenario.steps[2].emailMode='branded';assert.equal(JSON.stringify(scenario),before);
+  }
+});
+test('explicit empty per-turn email assets stay cleared; absent legacy fields keep shared assets',()=>{
+  const draft=fixture(),turns=draft.scenarios.email.turns;
+  turns[0].presentation={kind:'email',mode:'branded',heroImageUrl:'https://example.test/opening.png',preheader:'OPENING PREHEADER',ctaLabel:'Opening details',ctaUrl:'https://example.test/opening'};
+  turns[2].presentation={kind:'email',mode:'branded',heroImageUrl:'',preheader:'',ctaLabel:'',ctaUrl:''};
+  const scenario=ai.toScenario('email',draft),render=emailRenderer(scenario),later=scenario.steps[2];
+  assert.doesNotMatch(render.bubble(later),/opening.png|OPENING PREHEADER|scenario-email-hero|scenario-email-cta/);
+  later.emailCtaLabel='Label retained while URL is cleared';assert.match(render.bubble(later),/href="#"/);assert.doesNotMatch(render.bubble(later),/href="https:\/\/example.test\/opening"/);
+  later.emailCtaLabel='Legacy details';for(const key of ['emailHeroImage','emailPreheader','emailCtaUrl','emailLayout'])delete later[key];
+  const legacy=render.bubble(later);assert.match(legacy,/opening.png/);assert.match(legacy,/OPENING PREHEADER/);assert.match(legacy,/href="https:\/\/example.test\/opening"/);
+});
 test('rich RCS and WhatsApp presentations and image-only messages survive',()=>{
   const draft=fixture();
   for(const channel of ['rcs','whatsapp']){
@@ -25,16 +57,29 @@ test('rich RCS and WhatsApp presentations and image-only messages survive',()=>{
     const scenario=ai.toScenario(channel,draft);assert.equal(scenario.steps.length,3);assert.equal(scenario.steps[0].kind,'rich');assert.equal(scenario.steps[0].cardImage,'https://example.test/offer.png');assert.equal(scenario.steps[0].text,'');assert.equal(scenario.steps[2].cards[0].description,'Exact description');assert.equal(scenario.steps[2].kind,'carousel');
   }
 });
+test('WhatsApp rich and carousel cards omit empty CTAs and retain trimmed nonempty labels',()=>{
+  const lines=fs.readFileSync(require.resolve('../interactive-simulator-builder.html'),'utf8').split('\n'),context={state:{},esc:value=>String(value??''),link:value=>String(value??''),safeActionUrl:value=>value,ensureCarouselCards:step=>step.cards};
+  vm.runInNewContext([lines.find(line=>line.includes('function waCardMarkup(')),lines.find(line=>line.includes('function whatsappBubble('))].join('\n'),context);
+  const message=(kind,label)=>kind==='rich'?{id:'rich',author:'brand',kind,text:'Offer',cardTitle:'A card',cardCta:label,cardUrl:'https://example.test/details'}:{id:'carousel',author:'brand',kind,text:'Offers',cards:[{id:'first',title:'First',cta:label,url:'https://example.test/details'},{id:'second',title:'Second',cta:label,url:'https://example.test/details'}]};
+  for(const kind of ['rich','carousel']){
+    for(const label of [undefined,'',' \t\n '])assert.doesNotMatch(context.whatsappBubble(message(kind,label)),/<a\b|Learn more|↗/);
+    const rendered=context.whatsappBubble(message(kind,'  View details  '));
+    assert.equal((rendered.match(/<a\b/g)||[]).length,kind==='rich'?1:2);
+    assert.match(rendered,/<a href="https:\/\/example.test\/details" target="_blank">View details ↗<\/a>/);
+    assert.doesNotMatch(rendered,/>  View details/);
+  }
+});
 test('malformed provider content is rejected instead of repaired',()=>{
   for(const mutate of [draft=>delete draft.scenarios.rcs,draft=>draft.scenarios.sms.turns[0].speaker='unknown',draft=>draft.scenarios.sms.turns[0].text='',draft=>draft.scenarios.email.subject='',draft=>draft.initialSender='customer',draft=>draft.persona.customerName=123,draft=>draft.scenarios.sms.turns[0].presentation={kind:'card',cards:[{title:'Unsupported'}]},draft=>draft.scenarios.rcs.turns[0].presentation={kind:'card',cards:[{title:'Unsafe',ctaUrl:'javascript:alert(1)'}]}]){const draft=fixture();mutate(draft);assert.throws(()=>ai.validate(draft,channels),{code:'invalid_draft'})}
   const oneWay=fixture();oneWay.scenarios.sms.turns=oneWay.scenarios.sms.turns.filter(turn=>turn.speaker==='company');assert.throws(()=>ai.validate(oneWay,['sms']),{code:'invalid_draft'});
 });
 test('result validation binds channels, structured controls, supplied dialogue and persona',()=>{
-  const request={channels,controls:{initialSender:'company',expectedMessageCount:3},persona};
+  const request={channels,companyName:' Synthetic Co ',controls:{initialSender:'company',expectedMessageCount:3},persona};
   assert.deepEqual(ai.validateResult(result(),request),channels);
   for(const mutate of [response=>response.source.requestedChannels=['sms'],response=>response.draft.persona.customerName='Renamed',response=>response.requirements.channels.rcs.status='failed',response=>response.source.brief.scriptedTurns=[{speaker:'company',text:'Different supplied text'}]]){const response=result();mutate(response);assert.throws(()=>ai.validateResult(response,request),{code:'invalid_draft'})}
   assert.throws(()=>ai.validateResult(result(),{...request,controls:{expectedMessageCount:4}}),{code:'invalid_draft'});
   const inconsistent=result();inconsistent.requirements.channels.sms.checks[0].status='failed';assert.throws(()=>ai.validateResult(inconsistent,request),{code:'invalid_draft'});
+  const renamed=result();renamed.draft.companyName='Different Co';assert.throws(()=>ai.validateResult(renamed,request),/company name/);
 });
 test('backend-validated single quoted line and ordered multi-line dialogue pass the frontend unchanged',()=>{
   const contract=require('../server/draft-contract.cjs');

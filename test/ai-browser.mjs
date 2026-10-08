@@ -25,12 +25,14 @@ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 const base=`http://127.0.0.1:${server.address().port}`;
 let browser,latestPage;
 const card=(title,suffix)=>({title,description:`${title} description`,imageUrl:`https://assets.ai.test/${suffix}.png`,ctaLabel:'',ctaUrl:''});
+const laterEmailPresentation={kind:'email',mode:'branded',preheader:'Later email preheader',heroImageUrl:'https://assets.ai.test/later-email-hero.png',ctaLabel:'Later campaign details',ctaUrl:'https://example.test/later-campaign'};
+const emailDefaults={openingMode:'plain',laterMode:'branded',laterAssets:true};
 function responseFor(request,{fallback=false,unknown=false}={}){
   const scenarios=Object.fromEntries(request.channels.map(channel=>{
     const opening={speaker:'company',text:`${literal} ${channel}`,presentation:channel==='email'?{kind:'email',mode:'plain'}:{kind:'text'}};
     if(channel==='rcs'){opening.text='';opening.presentation={kind:'card',cards:[card('Image-led offer','opening')]};}
     if(channel==='whatsapp')opening.presentation={kind:'carousel',cards:[card('WhatsApp one','wa-one'),card('WhatsApp two','wa-two')]};
-    const ending={speaker:'company',text:`End ${channel}: Zoë is joining now.`,presentation:channel==='email'?{kind:'email',mode:'branded'}:{kind:'text'}};
+    const ending={speaker:'company',text:`End ${channel}: Zoë is joining now.`,presentation:channel==='email'?{...laterEmailPresentation}:{kind:'text'}};
     if(channel==='rcs')ending.presentation={kind:'carousel',cards:[card('Later first','future-one'),card('Later second','future-two')]};
     return [channel,{title:`Synthetic ${channel}`,sender:'Synthetic Co',subject:channel==='email'?'Exact email subject':undefined,turns:[opening,{speaker:'customer',text:'Yes, please',mode:'choices',options:['Yes, please','No, thanks']},ending]}];
   }));
@@ -59,25 +61,53 @@ async function requestDraft(page,selected,{named=true,prompt='Build three messag
   await page.locator('#generateAiDraft').click();
 }
 async function saved(page){await page.waitForFunction(()=>document.querySelector('#saveState')?.textContent==='Saved on this device');return page.evaluate(key=>JSON.parse(localStorage.getItem(key)),key);}
-async function playback(page,channel){
+async function playback(page,channel,emailExpected=emailDefaults){
+  await page.locator('[data-v2-preview-reset]').click();
   const thread=channel==='email'?'[data-email="0"]':channel==='whatsapp'?'[data-wa-thread="wa-main"]':'[data-thread="sms-main"]';
   await page.locator(thread).click();
+  if(channel==='whatsapp')assert.equal(await page.locator('#stage .wa-card a').count(),0,'Cards without CTA labels must not invent actions');
+  if(channel==='email'){
+    const opening=page.locator('#stage .mailbody');
+    assert.equal(await opening.locator('.scenario-email').count(),emailExpected.openingMode==='branded'?1:0);
+    if(emailExpected.openingMode==='branded'){
+      assert.equal(await opening.locator('.scenario-email-preheader').textContent(),'Opening email preheader');
+      assert.equal(await opening.locator('.scenario-email-cta').getAttribute('href'),'https://example.test/opening-campaign');
+    }
+  }
   const choices=page.locator(channel==='email'?'.email-reply-choices .chip':channel==='rcs'?'[data-rcs-reply]':'#transcript .chip');
   await choices.first().waitFor();assert.deepEqual(await choices.allTextContents(),['Yes, please','No, thanks']);
   await choices.first().click();await page.waitForFunction(channel=>document.querySelector('#stage')?.textContent.includes(`End ${channel}: Zoë is joining now.`),channel);
   assert.match(await page.locator('#stage').innerText(),/Yes, please/);
   assert.equal(await page.locator('#stage .ai-fallback-note, #stage .v2-requirements').count(),0);
+  if(channel==='email'){
+    const later=page.locator('#stage .email-thread-response').filter({hasText:'End email: Zoë is joining now.'});
+    assert.equal(await later.locator('.scenario-email').count(),emailExpected.laterMode==='branded'?1:0);
+    if(emailExpected.laterMode==='branded'&&emailExpected.laterAssets){
+      assert.equal(await later.locator('.scenario-email-preheader').textContent(),laterEmailPresentation.preheader);
+      assert.equal(await later.locator('.scenario-email-cta').textContent(),laterEmailPresentation.ctaLabel);
+      assert.equal(await later.locator('.scenario-email-cta').getAttribute('href'),laterEmailPresentation.ctaUrl);
+      assert.match(await later.locator('.scenario-email-hero').getAttribute('style'),page.url().startsWith('file:')?/data:image\//:/later-email-hero\.png/);
+    }else{
+      assert.equal(await later.locator('.scenario-email-hero, .scenario-email-cta').count(),0);
+      assert.doesNotMatch(await later.innerText(),/Opening email preheader|Opening campaign details/);
+    }
+  }
 }
-async function offlineExport(context,page,channel){
+async function offlineExport(context,page,channel,emailExpected=emailDefaults){
   const artifact=await Promise.all([page.waitForEvent('download'),page.locator('#export').click()]).then(([download])=>download),file=path.join(directory,`${channel}.html`);await artifact.saveAs(file);
   const exported=await context.newPage(),errors=[],requests=[];exported.setDefaultTimeout(15000);exported.on('pageerror',error=>errors.push(error.message));exported.on('request',request=>{if(/^(https?:|file:)/.test(request.url())&&request.url()!==`file://${file}`)requests.push(request.url());});
   await context.setOffline(true);await exported.goto(`file://${file}`,{waitUntil:'load'});await exported.waitForFunction(()=>!document.body.classList.contains('export-booting'));
   const data=JSON.parse(await exported.locator('#scenario-data').textContent()).scenarios[0];
   assert.deepEqual(data.steps[1].options,['Yes, please','No, thanks']);assert.equal(data.steps[2].text,`End ${channel}: Zoë is joining now.`);
-  if(channel==='email'){assert.equal(data.steps[0].text,`${literal} email`);assert.equal(data.emailMode,'plain');assert.equal(data.emailCtaLabel,'');}
+  if(channel==='email'){
+    assert.equal(data.steps[0].text,`${literal} email`);assert.equal(data.emailMode,emailExpected.openingMode);assert.equal(data.steps[2].emailMode,emailExpected.laterMode);
+    if(emailExpected.openingMode==='plain')assert.equal(data.emailCtaLabel,'');
+    if(emailExpected.laterAssets){assert.match(data.steps[2].emailHeroImage,/^data:image\//);assert.equal(data.steps[2].emailCtaUrl,laterEmailPresentation.ctaUrl);}
+    else{assert.equal(data.steps[2].emailHeroImage,'');assert.equal(data.steps[2].emailCtaUrl,'');}
+  }
   if(channel==='rcs'){assert.equal(data.steps[0].kind,'rich');assert.match(data.steps[0].cardImage,/^data:image\//);assert.ok(data.steps[2].cards.every(card=>card.image.startsWith('data:image/')));}
   if(channel==='whatsapp')assert.equal(data.steps[0].cards.length,2);
-  await playback(exported,channel);await exported.waitForFunction(()=>[...document.querySelectorAll('#stage img')].every(image=>image.complete&&image.naturalWidth>0));
+  await playback(exported,channel,emailExpected);await exported.waitForFunction(()=>[...document.querySelectorAll('#stage img')].every(image=>image.complete&&image.naturalWidth>0));
   assert.deepEqual(errors,[]);assert.deepEqual(requests,[]);await exported.close();await context.setOffline(false);
 }
 try{
@@ -95,6 +125,18 @@ try{
     assert.deepEqual(scenario.variants.sms.steps[1].options,['Yes, please','No, thanks']);assert.equal(scenario.variants.rcs.steps[0].text,'');assert.equal(scenario.variants.email.steps[0].emailMode,'plain');assert.equal(scenario.variants.email.steps[2].emailMode,'branded');
     for(const channel of channels){if(channel!=='sms'){await page.locator(`[data-channel="${channel}"]`).click();await saved(page);}await playback(page,channel);await offlineExport(context,page,channel);console.log(`PASS AI ${channel}: applied content, comma choices, offline download and playback`);}
     assert.deepEqual(errors,[]);await context.close();
+  }
+  for(const laterMode of ['branded','plain']){
+    const expected={openingMode:'branded',laterMode,laterAssets:laterMode==='plain'};
+    const {context,page,errors}=await fresh(request=>{
+      const response=responseFor(request),turns=response.draft.scenarios.email.turns;
+      turns[0].presentation={kind:'email',mode:'branded',preheader:'Opening email preheader',heroImageUrl:'https://assets.ai.test/opening-email-hero.png',ctaLabel:'Opening campaign details',ctaUrl:'https://example.test/opening-campaign'};
+      turns[2].presentation=laterMode==='plain'?{...laterEmailPresentation,mode:'plain'}:{kind:'email',mode:'branded',preheader:'',heroImageUrl:'',ctaLabel:'',ctaUrl:''};
+      return response;
+    });
+    await requestDraft(page,['email']);await page.locator('.ai-review').waitFor();await page.locator('#applyAiDraft').click();await saved(page);
+    await playback(page,'email',expected);await offlineExport(context,page,'email',expected);
+    assert.deepEqual(errors,[]);await context.close();console.log(`PASS AI email: branded opening, ${laterMode} later message, explicit assets/clears, offline parity`);
   }
   {
     const {context,page,errors}=await fresh(request=>{const response=responseFor(request);delete response.draft.scenarios.rcs;return response;});
