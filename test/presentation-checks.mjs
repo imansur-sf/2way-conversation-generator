@@ -74,6 +74,13 @@ export async function checkPresentationToolbar(page, { enterFromHeader = false, 
     assert.ok(after.height > before.height, 'Hiding the toolbar must release its space to the preview');
     assert.equal(await page.evaluate(() => !!document.activeElement?.closest('.v2-preview-mode')), false, 'Focus must not remain in hidden controls');
     if (onHidden) await onHidden();
+    const emailFrame = page.locator('.custom-html-email-frame').first();
+    if (await emailFrame.isVisible()) {
+      // Escape must also work after the user interacts with sandboxed email
+      // content, not only while the surrounding app still has keyboard focus.
+      await page.frameLocator('.custom-html-email-frame').first().locator('body').click({ position:{x:10,y:10} });
+      assert.equal(await emailFrame.evaluate(frame => document.activeElement === frame), true);
+    }
     await exit();
     await enter();
     await expect(toolbar).toBeVisible();

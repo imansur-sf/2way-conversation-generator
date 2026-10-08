@@ -11,8 +11,9 @@ const base = `http://127.0.0.1:${port}`;
 const server = spawn(process.execPath,['server.js'],{cwd:root,env:{...process.env,PORT:String(port),APP_ENV:'test',GEMINI_API_KEY:''},stdio:['ignore','pipe','pipe']});
 let browser;
 let serverLog='';server.stdout.on('data',chunk=>serverLog+=chunk);server.stderr.on('data',chunk=>serverLog+=chunk);
-const attack = `<p><b>Keep this formatting</b></p><img src="/missing-audit-image" onerror='window.__auditProbe=true'><a href="javascript:window.__auditProbe=true">Unsafe</a><svg onload="window.__auditProbe=true"></svg>`;
-const scenario = (mode='branded')=>({id:'security-fixture',name:'Security fixture',channel:'email',brandName:'Synthetic company',emailAddress:'audit@example.test',subject:'Safe markup test',emailBody:'Fallback text',initials:'SC',avatar:'',steps:[{id:'opening',author:'brand',kind:'text',text:'Opening',emailMode:mode,emailHtml:mode==='branded'?attack:'',customHtml:mode==='html'?attack:''},{id:'reply',author:'customer',kind:'free',text:''}]});
+const attack = `<p><b>Keep this formatting</b></p><script>window.__auditProbe=true;parent.__auditProbe=true</script><img src="/missing-audit-image" onerror='window.__auditProbe=true;parent.__auditProbe=true'><a href="javascript:window.__auditProbe=true;parent.__auditProbe=true">Unsafe</a><svg onload="window.__auditProbe=true"></svg>`;
+const frameAttack = attack + '<script src="/sandbox-script-check"></script><iframe src="/sandbox-child-check"></iframe><object data="/sandbox-object-check"></object><meta http-equiv="refresh" content="0;url=/sandbox-refresh-check"><a href="https://navigation.fixture.test/">Open destination</a>';
+const scenario = (mode='branded')=>({id:'security-fixture',name:'Security fixture',channel:'email',brandName:'Synthetic company',emailAddress:'audit@example.test',subject:'Safe markup test',emailBody:'Fallback text',initials:'SC',avatar:'',steps:[{id:'opening',author:'brand',kind:'text',text:'Opening',emailMode:mode,emailHtml:mode==='branded'?attack:'',customHtml:mode==='html'?frameAttack:''},{id:'reply',author:'customer',kind:'free',text:''}]});
 try {
   let ready=false;
   for(let i=0;i<50;i++){try{if((await fetch(base+'/api/health')).ok){ready=true;break}}catch{}await new Promise(r=>setTimeout(r,100));}
@@ -21,6 +22,9 @@ try {
   for(const kind of ['json-import','share-link','custom-html-sandbox']){
     const context=await browser.newContext();
     await context.route('https://**/*',route=>route.abort());
+    const forbiddenRequests=[];
+    await context.route(url=>url.pathname.startsWith('/sandbox-'),route=>{forbiddenRequests.push(route.request().url());return route.fulfill({contentType:'text/html',body:'<p>Forbidden destination</p>'})});
+    await context.route('https://navigation.fixture.test/**',route=>route.fulfill({contentType:'text/html',body:'<p>Destination</p><script>window.__auditProbe=true;parent.__auditProbe=true</script>'}));
     const page=await context.newPage();page.setDefaultTimeout(10000);
     const errors=[];page.on('pageerror',error=>errors.push(error.message));
     const fragment=kind==='share-link'?'#scenario='+encodeURIComponent(Buffer.from(JSON.stringify(scenario())).toString('base64')):'';
@@ -33,7 +37,25 @@ try {
     await page.waitForTimeout(150);
     assert.equal(await page.evaluate(()=>window.__auditProbe===true),false,`${kind} must not execute active markup`);
     assert.equal(errors.length,0,`${kind}: ${errors.join('; ')}`);
-    if(kind==='custom-html-sandbox')assert.equal(await page.locator('iframe.custom-html-email-frame').getAttribute('sandbox'),'');
+    if(kind==='custom-html-sandbox'){
+      const frame=page.frameLocator('iframe.custom-html-email-frame');
+      assert.equal(await page.locator('iframe.custom-html-email-frame').getAttribute('sandbox'),'allow-same-origin');
+      await frame.getByText('Unsafe',{exact:true}).click();
+      assert.equal(await frame.locator('body').evaluate(()=>window.__auditProbe===true),false,'Custom HTML scripts, handlers and javascript links must remain blocked inside the frame');
+      assert.equal(await page.evaluate(()=>window.__auditProbe===true),false,'Custom HTML must not execute in the parent');
+      await page.locator('[data-v2-preview-present]').click();
+      await frame.getByText('Keep this formatting',{exact:true}).click();
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(()=>!document.body.classList.contains('presentation'));
+      assert.deepEqual(forbiddenRequests,[],'External scripts, nested frames/objects and meta refresh must remain blocked');
+      await page.locator('[data-v2-preview-present]').click();
+      await frame.getByText('Open destination',{exact:true}).click();
+      await frame.getByText('Destination',{exact:true}).waitFor();
+      await page.waitForFunction(()=>!document.body.classList.contains('presentation'));
+      assert.equal(await page.locator('[data-v2-preview-present]').isVisible(),true,'Following an outgoing email link restores presentation controls');
+      assert.equal(await frame.locator('body').evaluate(()=>window.__auditProbe===true),false,'Script blocking survives navigation to another origin');
+      assert.equal(await page.evaluate(()=>window.__auditProbe===true),false);
+    }
     else{
       assert.equal(await page.locator('#stage [onerror*="__auditProbe"], #stage svg[onload], #stage a[href^="javascript:"]').count(),0);
       assert.equal(await page.locator('#stage .scenario-email-copy b').textContent(),'Keep this formatting');

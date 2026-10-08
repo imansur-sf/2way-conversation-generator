@@ -501,13 +501,15 @@ test('company email responses support sandboxed custom HTML previews', () => {
     "step?.emailMode==='html'?'html'",
     'data-response-custom-html',
     'customHtmlEmailMarkup',
-    'sandbox=""',
+    'sandbox="allow-same-origin"',
     'referrerpolicy="no-referrer"'
   ]) {
     assert.ok(html.includes(marker), `expected custom HTML email support: ${marker}`);
   }
   assert.ok(html.includes("if(!markup)return ''"), 'empty Custom HTML responses must not create an empty email preview');
   assert.ok(!html.includes('Paste your email HTML to preview it here.'), 'the Gmail preview must not show a Custom HTML placeholder');
+  assert.ok(html.includes("script-src 'none'; object-src 'none'; frame-src 'none'"), 'custom email keeps scripts and nested browsing contexts blocked');
+  assert.ok(!html.includes('sandbox="allow-same-origin allow-scripts"'), 'custom HTML must never receive both same-origin and script access');
 });
 
 test('email flow add controls are rebound after the enhanced email editor replaces its DOM', () => {

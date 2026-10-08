@@ -200,6 +200,38 @@
     document.querySelectorAll('.phone .status,.phone-side,.card-img__shade,.crop-safe-area').forEach(node => node.setAttribute('aria-hidden','true'));
     syncWorkspaceLayout();
   };
+  const emailEscapeDocuments = new WeakSet();
+  const bindCustomEmailEscape = root => {
+    root.querySelectorAll('.custom-html-email-frame').forEach(frame => {
+      const bind = () => {
+        let doc;
+        try { doc = frame.contentDocument; } catch {}
+        if (!doc) {
+          // A followed link may navigate away from the same-origin email.
+          // Restore controls rather than leave an inaccessible frame in Present.
+          if (document.body.classList.contains('presentation')) document.querySelector('#presentationExit')?.click();
+          return;
+        }
+        if (emailEscapeDocuments.has(doc)) return;
+        emailEscapeDocuments.add(doc);
+        const exit = () => { if (document.body.classList.contains('presentation')) document.querySelector('#presentationExit')?.click(); };
+        // These listeners run in the trusted parent realm. Pasted scripts stay
+        // disabled by the iframe sandbox; never enable allow-scripts here.
+        EventTarget.prototype.addEventListener.call(doc, 'keydown', event => {
+          if (event.key === 'Escape') { event.preventDefault(); exit(); }
+        });
+        EventTarget.prototype.addEventListener.call(doc, 'click', event => {
+          const link = event.target.nodeType === 1 ? Element.prototype.closest.call(event.target, 'a[href]') : null;
+          if (link && !link.getAttribute('href').trim().startsWith('#')) exit();
+        });
+      };
+      if (!frame.__v2EmailEscapeBound) {
+        frame.__v2EmailEscapeBound = true;
+        frame.addEventListener('load', bind);
+      }
+      bind();
+    });
+  };
   const bindPresentationControls = control => {
     const button = control.querySelector('[data-v2-preview-present]');
     if (!button) return;
@@ -283,6 +315,7 @@
     });
   };
   const hydratePreviewMode = root => {
+    bindCustomEmailEscape(root);
     mountWorkspaceLayout();
     const preview = root.querySelector('.preview');
     if (!preview) return;
