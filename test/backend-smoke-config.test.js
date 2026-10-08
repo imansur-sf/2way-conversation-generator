@@ -55,10 +55,19 @@ test('application smoke is staging-only and sends exactly two jobs with bounded 
     }
     const {body}=jobs.at(-1),first=body.controls.initialSender;
     const turns=Array.from({length:4},(_,index)=>({speaker:index===0?first:index%2?'customer':'company',text:body.persona.customerName+' and '+body.persona.representativeName+' discuss next steps.',presentation:{kind:'card',cards:[{title:'Synthetic invitation'}]}}));
-    return {body:{status:'completed',durationMs:5,draft:{schemaVersion:2,initialSender:first,persona:body.persona,scenarios:Object.fromEntries(body.channels.map(channel=>[channel,{subject:'Synthetic invitation',turns}]))},source:{mode:'provider',fallbackReason:null,requestedChannels:body.channels,grounding:{status:'unverified'},provider:{attempts:2}},requirements:{complete:true,scope:'structure-and-explicit-constraints',channels:Object.fromEntries(body.channels.map(channel=>[channel,{status:'passed'}]))}}};
+    return {body:{status:'completed',durationMs:5,draft:{schemaVersion:2,initialSender:first,persona:body.persona,scenarios:Object.fromEntries(body.channels.map(channel=>[channel,{sender:body.companyName,subject:'Synthetic invitation',turns}]))},source:{mode:'provider',fallbackReason:null,requestedChannels:body.channels,grounding:{status:'unverified'},provider:{attempts:2}},requirements:{complete:true,scope:'structure-and-explicit-constraints',channels:Object.fromEntries(body.channels.map(channel=>[channel,{status:'passed'}]))}}};
   }});
   assert.equal(jobs.length,2);assert.equal(result.calls.filter(call=>call.options.method==='POST').length,2);
   const logs=result.logs.map(JSON.parse);assert.equal(logs.filter(log=>log.event==='synthetic_draft_review').length,2);
   assert.equal(logs.at(-1).maxProviderRequests,4);assert.equal(logs.at(-1).providerRequests,4);
   assert.doesNotMatch(result.logs.join('\n'),/synthetic-test-key|x-goog-api-key/);
+});
+test('application smoke rejects a personal name used as the company sender before another job',async()=>{
+  let body;
+  await assert.rejects(run('ai-app-smoke.mjs',{env:smokeEnv,respond:call=>{
+    if(call.url.endsWith('/api/health'))return {body:health};
+    if(call.options.method==='POST'){body=JSON.parse(call.options.body);return {status:202,body:{poll:'/api/scenario-jobs/00000000-0000-0000-0000-000000000001'}};}
+    const turns=Array.from({length:4},(_,index)=>({speaker:index%2?'customer':'company',text:body.persona.customerName+' and '+body.persona.representativeName}));
+    return {body:{status:'completed',draft:{schemaVersion:2,initialSender:'company',scenarios:Object.fromEntries(body.channels.map(channel=>[channel,{sender:body.persona.customerName,turns}]))},source:{mode:'provider',fallbackReason:null,requestedChannels:body.channels,grounding:{status:'unverified'},provider:{attempts:1}},requirements:{complete:true,scope:'structure-and-explicit-constraints',channels:Object.fromEntries(body.channels.map(channel=>[channel,{status:'passed'}]))}}};
+  }}),error=>/sender must remain the company identity/.test(error.message)&&error.calls.filter(call=>call.options.method==='POST').length===1);
 });

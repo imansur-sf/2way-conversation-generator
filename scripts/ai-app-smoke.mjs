@@ -44,6 +44,7 @@ async function generate(sample){
     assert.ok(job.source.provider.attempts>=1&&job.source.provider.attempts<=config.maxAttempts);
     for(const channel of sample.channels){
       const scenario=job.draft.scenarios[channel];assert.equal(scenario.turns.length,4);assert.equal(scenario.turns[0].speaker,sample.controls.initialSender);assert.equal(job.requirements.channels[channel].status,'passed');
+      assert.equal(scenario.sender,body.companyName,channel+' sender must remain the company identity, including customer-first flows');
       const transcript=scenario.turns.map(turn=>turn.text).join('\n');for(const name of [sample.persona.customerName,sample.persona.representativeName])assert.ok(transcript.includes(name),channel+' must retain '+name);
       if(channel==='email')assert.ok(scenario.subject.trim());
       if(channel==='rcs')assert.ok(scenario.turns.some(turn=>['card','carousel'].includes(turn.presentation?.kind)),'RCS must retain its requested rich presentation');

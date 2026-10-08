@@ -132,6 +132,52 @@ test('all requested channels retain distinct meaningful presentation with truthf
   assert.deepEqual(clone(pipeline.calls[0].body.generationConfig.responseSchema.properties.scenarios.required),CHANNELS);
   assert.doesNotThrow(()=>validateAndNormalizeDraft(raw,request({channels:CHANNELS,useCase:'Use an RCS rich card, conversational WhatsApp, and email.'}),evidence),'RCS cards must not force WhatsApp cards');
 });
+test('customer-first drafts retain company sender identity through the frontend adapter',async()=>{
+  const input=request({companyName:'Example Company',channels:CHANNELS,persona:{customerName:'Morgan',representativeName:'Riley'},controls:{initialSender:'customer',expectedMessageCount:2}}),raw=draft(CHANNELS);
+  raw.initialSender='customer';
+  for(const channel of CHANNELS){raw.scenarios[channel].sender=channel==='email'?'Morgan':'Riley';raw.scenarios[channel].turns=[{speaker:'customer',text:'I am Morgan. Please connect me with Riley.',mode:'prefill'},{speaker:'company',text:'Hello Morgan. Riley can discuss your questions.',...(channel==='email'?{presentation:{kind:'email',mode:'plain'}}:{})}];}
+  const original=JSON.stringify(raw),pipeline=loadPipeline([raw]),result=await pipeline.generateScenarioDraft(input,'company-identity'),adapter=require('../assets/ai-draft.js');
+  assert.equal(result.draft.companyName,'Example Company');assert.equal(JSON.stringify(raw),original);
+  for(const channel of CHANNELS){
+    assert.equal(result.draft.scenarios[channel].sender,'Example Company');
+    assert.deepEqual(result.draft.scenarios[channel].turns.map(turn=>turn.text),raw.scenarios[channel].turns.map(turn=>turn.text));
+    assert.equal(adapter.toScenario(channel,result.draft,{id:()=>channel+'-id'}).smsAddress,'Example Company');
+  }
+  assert.equal(result.draft.persona.customerName,'Morgan');assert.equal(result.draft.persona.representativeName,'Riley');
+  assert.match(pipeline.calls[0].body.contents[0].parts[0].text,/scenario.sender is the COMPANY identity/);
+});
+test('dangling generated link references produce actionable nonblocking warnings rendered by existing review UI',async()=>{
+  const input=request({channels:['email']}),raw=draft(['email']);raw.scenarios.email.turns[0].text='Please visit our official website using the link below to get started.';
+  const pipeline=loadPipeline([raw]),result=await pipeline.generateScenarioDraft(input,'missing-link');
+  assert.equal(pipeline.calls.length,1);assert.equal(result.requirements.complete,true);assert.equal(result.source.grounding.status,'unverified');
+  assert.equal(result.requirements.warnings.length,1);const warning=result.requirements.warnings[0];
+  assert.equal(typeof warning,'string');assert.match(warning,/EMAIL message 1/);assert.match(warning,/Add a source-approved link\/CTA or revise/);
+  assert.equal(result.draft.scenarios.email.turns[0].text,raw.scenarios.email.turns[0].text);
+  const adapter=require('../assets/ai-draft.js');assert.doesNotThrow(()=>adapter.validateResult(result,input));
+  const ui=fs.readFileSync(path.join(root,'assets/v2-modern.js'),'utf8'),sections=[],review={querySelector:()=>null,append:section=>sections.push(section)};
+  const context={lastRequirements:result.requirements,lastSource:result.source,document:{createElement:()=>({})},root:{querySelector:()=>review}};
+  vm.runInNewContext(ui.match(/^  const htmlEscape = .+$/m)[0]+'\n'+ui.slice(ui.indexOf('  const hydrateRequirements ='),ui.indexOf('  const hydrateAiProgress ='))+'\nhydrateRequirements(root);',context);
+  assert.equal(sections.length,1);assert.ok(sections[0].innerHTML.includes(warning));assert.match(sections[0].innerHTML,/Factual accuracy is not verified/);
+  assert.match(pipeline.calls[0].body.contents[0].parts[0].text,/Never invent exclusivity, special access, named resources/);
+});
+test('link-reference warning checks visible body URLs and CTA presentation without changing supplied dialogue',()=>{
+  const input=request({channels:['email']}),raw=draft(['email']);raw.scenarios.email.turns[0].text='Use the button below.';
+  const p={kind:'email',mode:'plain',ctaLabel:'Details',ctaUrl:'https://example.com/details'};
+  raw.scenarios.email.turns[0].presentation=p;
+  assert.equal(validateAndNormalizeDraft(raw,input,evidence).requirements.warnings.length,1,'plain email does not show its CTA metadata');
+  p.mode='branded';assert.equal(validateAndNormalizeDraft(raw,input,evidence).requirements.warnings.length,0);
+  p.mode='plain';delete p.ctaLabel;delete p.ctaUrl;raw.scenarios.email.turns[0].text+=' https://example.com/details';
+  assert.equal(validateAndNormalizeDraft(raw,input,evidence).requirements.warnings.length,0);
+  for(const useCase of ['Company says "Use the button below."','Company says "Use the button below." Customer says "Thanks."']){
+    raw.scenarios.email.turns[0].text='Use the button below.';
+    const result=validateAndNormalizeDraft(raw,request({channels:['email'],useCase}),evidence);
+    assert.equal(result.draft.scenarios.email.turns[0].text,'Use the button below.');assert.equal(result.requirements.warnings.length,0,'supplied text is not presented as generated copy');
+  }
+  const rich=draft(['rcs']);rich.scenarios.rcs.turns[0].presentation={kind:'card',cards:[{title:'Details',description:'Use the link above.'}]};
+  assert.equal(validateAndNormalizeDraft(rich,request({channels:['rcs']}),evidence).requirements.warnings.length,1);
+  Object.assign(rich.scenarios.rcs.turns[0].presentation.cards[0],{ctaLabel:'Details',ctaUrl:'https://example.com/details'});
+  assert.equal(validateAndNormalizeDraft(rich,request({channels:['rcs']}),evidence).requirements.warnings.length,0);
+});
 test('provider schema specializes each channel and avoids the rejected union/cardinality complexity',()=>{
   const schema=draftResponseSchema(CHANNELS,{customerModes:['prefill','choices'],imageUrls:['','https://x.test/i'],imageEnumConstrained:true}),scenarios=schema.properties.scenarios;
   assert.deepEqual(scenarios.required,CHANNELS);
