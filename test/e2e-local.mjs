@@ -284,8 +284,14 @@ try {
   const navBox = await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.next').boundingBox();
   const imageBox = await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .card-img').first().boundingBox();
   assert.ok(navBox.y >= imageBox.y && navBox.y + navBox.height <= imageBox.y + imageBox.height, 'Carousel navigation must stay inside the card media area');
+  const waitForCarouselIndex=index=>livePreviewPage.waitForFunction(expectedIndex=>{
+    const track=document.querySelector('#stage [data-rcs-carousel="live-carousel"] .carousel-track');
+    if(!track||!track.offsetWidth)return false;
+    const transform=getComputedStyle(track).transform,offset=transform==='none'?0:new DOMMatrixReadOnly(transform).m41;
+    return Math.abs(offset+expectedIndex*track.offsetWidth)<=0.5;
+  },index);
   await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.next').click();
-  await livePreviewPage.waitForFunction(() => document.querySelector('#stage [data-rcs-carousel="live-carousel"] .carousel-track')?.style.transform === 'translateX(-100%)');
+  await waitForCarouselIndex(1);
   assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.next').count(), 0, 'The unavailable next-card control must be hidden');
   assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.prev').count(), 1, 'The previous-card control must return after advancing');
   const carouselWindow = await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-window').boundingBox();
@@ -303,12 +309,7 @@ try {
   await livePreviewPage.mouse.down();
   await livePreviewPage.mouse.move(carouselWindow.x + carouselWindow.width * 0.7, carouselWindow.y + carouselWindow.height * 0.5);
   await livePreviewPage.mouse.up();
-  await livePreviewPage.waitForFunction(() => {
-    const track=document.querySelector('#stage [data-rcs-carousel="live-carousel"] .carousel-track');
-    if(!track)return false;
-    const transform=getComputedStyle(track).transform;
-    return Math.abs(transform==='none'?0:new DOMMatrixReadOnly(transform).m41)<0.5;
-  }).catch(async error=>{
+  await waitForCarouselIndex(0).catch(async error=>{
     const diagnostics=await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"]').evaluate(carousel=>{
       const track=carousel.querySelector('.carousel-track'),computed=getComputedStyle(track).transform,offset=computed==='none'?0:new DOMMatrixReadOnly(computed).m41;
       const {stop,...swipe}=window.__carouselSwipeDiagnostic||{};
@@ -326,7 +327,7 @@ try {
   await livePreviewPage.mouse.down();
   await livePreviewPage.mouse.move(firstWindow.x + firstWindow.width * 0.25, firstWindow.y + firstWindow.height * 0.5);
   await livePreviewPage.mouse.up();
-  await livePreviewPage.waitForFunction(() => document.querySelector('#stage [data-rcs-carousel="live-carousel"] .carousel-track')?.style.transform === 'translateX(-100%)');
+  await waitForCarouselIndex(1);
   assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.prev').count(),1,'A leftward swipe must advance back to the second card');
   assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.next').count(),0,'The next-card control must disappear on the last card after swiping');
   const ctaPresentation = livePreviewPage.locator('[data-rcs-cta-presentation-step="live-rich-card"]');
@@ -346,7 +347,14 @@ try {
   await livePreviewPage.mouse.move(cropBox.x + cropBox.width * 0.75, cropBox.y + cropBox.height * 0.35);
   await livePreviewPage.mouse.up();
   await livePreviewPage.waitForFunction(() => document.querySelector('#stage .card-img__asset')?.style.objectFit === 'contain');
-  const savedCrop = await livePreviewPage.evaluate(() => JSON.parse(localStorage.getItem('two-way-experience-studio-v2-scenarios')).scenarios[0].variants.rcs.steps.find(step => step.id === 'live-rich-card'));
+  const readCropSnapshot=()=>livePreviewPage.evaluate(() => {
+    const record=JSON.parse(localStorage.getItem('two-way-experience-studio-v2-scenarios')||'null'),fixture=record?.scenarios?.find(scenario=>scenario.id==='live-preview-journey');
+    return {step:fixture?.variants?.rcs?.steps?.find(step=>step.id==='live-rich-card'),scenarioIds:record?.scenarios?.map(scenario=>scenario.id),activeId:record?.activeId,selectedId:document.querySelector('#scenarioSelect')?.value,stepIds:fixture?.variants?.rcs?.steps?.map(step=>step.id),saveState:document.querySelector('#saveState')?.textContent,savedAt:record?.savedAt};
+  });
+  await waitForAcknowledgedSave(livePreviewPage).catch(async error=>{console.error('Crop save acknowledgement missing:',JSON.stringify(await readCropSnapshot()));throw error});
+  const cropSnapshot=await readCropSnapshot();
+  const savedCrop=cropSnapshot.step;
+  assert.ok(savedCrop,`The acknowledged save must contain live-preview-journey / RCS / live-rich-card: ${JSON.stringify(cropSnapshot)}`);
   assert.equal(savedCrop.imageFit, 'contain', 'The selected RCS image-fit mode must persist with the card');
   assert.equal(savedCrop.imageScale, 1.4, 'The RCS image zoom must persist with the card');
   assert.ok(savedCrop.imagePositionX > 70 && savedCrop.imagePositionY < 40, 'Dragging inside the 5:2 crop frame must persist the selected focal point');
