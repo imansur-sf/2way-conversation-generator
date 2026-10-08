@@ -2,15 +2,17 @@
 
 Approved October 7, 2026. This execution plan consolidates the audit into **two phases**. Internal commits and tests are checkpoints, not additional delivery phases.
 
+**Current status — 2026-10-08 03:25 UTC:** both implementation phases and automated acceptance are complete. The verified code is `75cb87037ee8ab89f0e14fc38e79f3cb5a9fbb22`, deployed **only to staging v53** and protected by the Phase 2 tag. Production main remains `d8d8e2d` / Heroku v180. Authorized human staging review and production-promotion approval remain outstanding. Later ledger-only commits do not change the deployed/tested source.
+
 ## Rollback checkpoints
 
 | Checkpoint | Git reference | Runtime reference | Status |
 | --- | --- | --- | --- |
-| Production before Phase 1 | `rollback/quality-baseline-2026-10-07` at `d8d8e2d6ade2118c192f2cf053d59ae5ab19e32d` | `saasysolutions-2way-generator` release **v180**, succeeded; release ID `bb8ab77b-991b-48f7-904f-5595aa5a9be0`; eligible for rollback | Verified 2026-10-07T23:22Z |
+| Production before Phase 1 | `rollback/quality-baseline-2026-10-07` at `d8d8e2d6ade2118c192f2cf053d59ae5ab19e32d` | `saasysolutions-2way-generator` release **v180**, succeeded; release ID `bb8ab77b-991b-48f7-904f-5595aa5a9be0`; eligible for rollback | Reverified unchanged 2026-10-08T03:24Z |
 | Existing local work before Phase 1 | `rollback/quality-workspace-2026-10-07` | Not deployed | Snapshot includes existing export-filename change and audit report |
-| Staging before candidate verification | Existing staging code `aba6c237` (release description) | `twoway-studio-v2-staging` release **v47**, succeeded; release ID `0eed1c0c-0912-48d7-809d-e4c31214678b`; eligible for rollback | Rechecked before staging v48 and v49 deployments; retained pre-change rollback target |
-| Phase 1 complete / before Phase 2 | `rollback/quality-phase1-2026-10-07` | Not deployed; production remains v180, staging v47 | All Phase 1 CI groups passed on `0bb90c5`; tag includes this ledger update |
-| Phase 2 complete | `rollback/quality-phase2-2026-10-07` | Record staging/production release if deployed | Pending verification |
+| Staging before candidate verification | Existing staging code `aba6c237` (release description) | `twoway-studio-v2-staging` release **v47**, succeeded; release ID `0eed1c0c-0912-48d7-809d-e4c31214678b`; eligible for rollback | Rechecked immediately before staging v53; retained pre-change rollback target |
+| Phase 1 complete / before Phase 2 | `rollback/quality-phase1-2026-10-07` at `20819c241d0f4f703649586f2fb9eed7befc575b` | Not deployed separately; production v180 and staging v47 at that checkpoint | All Phase 1 CI groups passed on `0bb90c5`; tag includes its ledger update; published and verified |
+| Phase 2 complete | `rollback/quality-phase2-2026-10-07` at `75cb87037ee8ab89f0e14fc38e79f3cb5a9fbb22` | Staging **v53**, succeeded; release ID `bdfc0d28-8e30-459b-ba9a-fb14e23c4f08`; production unchanged v180 | 192 code tests, all browser groups and two live AI samples passed; tag published and verified remotely |
 
 Implementation branch: `codex/quality-two-phase-2026-10-07`. Production main must not advance automatically while either phase is unverified. Checkpoints are annotated Git tags pushed to GitHub; tags alone do not change the deployed main branch.
 
@@ -26,12 +28,12 @@ Implementation branch: `codex/quality-two-phase-2026-10-07`. Production main mus
 
 ## Phase 2 — Improve relevance, rendering and maintainability
 
-- [ ] Explicit dialogue/name preservation, final AI requirements validation, channel-specific generation and honest fallback reporting.
-- [ ] Stable jobs/idempotency, unified provider/release smoke configuration and safe release diagnostics.
-- [ ] Responsive preview fit, Editor/Preview navigation, accessible controls and reliable image framing.
-- [ ] Clear save/restore semantics and actionable content/asset QA.
-- [ ] Extract touched boundaries into testable modules; CI, documentation and release gates.
-- [ ] Review, verify, commit and publish Phase 2 rollback point.
+- [x] Explicit dialogue/name preservation, final AI requirements validation, channel-specific generation and honest fallback reporting.
+- [x] Stable jobs/idempotency, unified provider/release smoke configuration and safe release diagnostics.
+- [x] Responsive preview fit, Editor/Preview navigation, accessible controls and reliable image framing.
+- [x] Clear save/restore semantics and actionable content/asset QA.
+- [x] Extract touched boundaries into testable modules; CI, documentation and release gates.
+- [x] Review, verify, commit and publish Phase 2 rollback point.
 
 ### Phase 2 implementation boundaries
 
@@ -80,3 +82,14 @@ Code rollback is a deliberate release operation, not a reset of a dirty checkout
 - Candidate `98245b803393f3ec824a482744f1bf1e5e8ce63d` passes **189/189 code tests and every browser group** in [run 37719998735](https://github.com/imansur-sf/2way-conversation-generator/actions/runs/37719998735). Staging **v52** deployed it through build `abe32c64-f8ea-4ce4-9861-1a161ae3e092`, release `20ee166a-31f5-480f-8970-cb835fc01a6e`. Production remains v180.
 - Final v52 live acceptance passed the four-channel sample in one provider attempt, but the single-email sample failed `gemini_incomplete` after two attempts. A retained diagnostic reproduced HTTP 200 with `MAX_TOKENS`: the single-channel 2,400-token allowance yielded 2,300 thought tokens and only 84 visible tokens (1,069 prompt / 3,453 total). A bounded 8,000-token comparison returned `STOP` with valid JSON (1,146 thought / 440 visible / 1,069 prompt / 2,655 total). This comparison proves complete JSON for that sample, not application acceptance or factual accuracy. Two preceding comparison probes lost their terminal output and are not counted as verification evidence. Conservatively, at most **21 provider requests** have been used including those unverified probes.
 - The repair shares the existing **8,000-token maximum** across every channel count, preserving the model, schema, two-attempt limit, 20-second timeout and honest fallback rules. Incomplete-response diagnostics contain only an allowlisted finish reason and safe numeric usage counts; partial drafts are rejected with a specific reason. Independent review has no findings, and the complete local suite passes **192/192**. Full CI and live application acceptance of the exact deployed repair remain required before the Phase 2 checkpoint.
+- Final candidate `75cb87037ee8ab89f0e14fc38e79f3cb5a9fbb22` passes every group in [run 37721557796](https://github.com/imansur-sf/2way-conversation-generator/actions/runs/37721557796). Build `a2b17703-9318-438a-9eef-b7139592005e` deployed this exact source to staging **v53**, release `bdfc0d28-8e30-459b-ba9a-fb14e23c4f08`. The new web process was verified up on v53 before testing.
+- The first v53 live application sample failed `gemini_timeout` on both allowed attempts; the second sample was not submitted. A single bounded timing diagnostic then completed in **15,882 ms** with HTTP 200 / `STOP` and strict four-channel draft validation (1,095 prompt / 863 visible / 3,764 thought / 5,722 total tokens). This did not justify increasing the app's 20-second limit. One bounded application recheck passed **both samples**, each with one real provider attempt and no fallback: four-channel company-first **11,171 ms**, customer-first email **10,622 ms**. This adds five requests (two timeout attempts, one diagnostic, two successful application attempts), for at most **26 provider requests** across the entire verification effort, including earlier probes with unretained output. No more live requests were submitted.
+- Final content review confirms supplied names, company sender identity, four-turn ordering, requested RCS rich presentation and plain-text customer-first email. It also confirms the need for human review: the fictional invitation draft still adds generic unsupported marketing language such as an exclusive showcase/finalizing details. **Structural acceptance is not factual or relevance certification.** Transient provider timeouts remain possible and are not erased by the successful recheck.
+- The baseline, workspace, Phase 1 and Phase 2 annotated tags are all published and remotely verified. Final production main and Heroku checks remain unchanged at `d8d8e2d` / v180. Only staging has been updated; no credentials, configured model or environment settings were changed.
+
+## Remaining acceptance and operational follow-ups
+
+- Open [staging](https://twoway-studio-v2-staging-e6a463379b1d.azalea-virginia.herokuapp-internal.com/) from an authorized browser and review representative real work before approving promotion. This agent's managed-browser policy prevented a live UI visit; isolated CI Chromium and screenshots provide the automated UI evidence, not Safari/Firefox, real-device or screen-reader certification.
+- Export important scenarios as JSON before a production update. No tests reset real user storage. Local browser saving remains local, not a cloud backup.
+- Keep live-provider latency and generated claims visible in release decisions. Existing async jobs use a bounded two-attempt provider policy; no timeout increase was made. Future deadline work should coordinate UI, server and smoke budgets: browser polling currently has no per-fetch timeout, and a response-body abort can be classified as bad JSON. The legacy synchronous generation route is not the preferred path for work that can exceed a router's request window.
+- CI passed with advisories about older action runtimes and an upcoming `ubuntu-latest` image change. Pin/update those dependencies in a separately verified maintenance change; they did not fail this candidate's gate.
