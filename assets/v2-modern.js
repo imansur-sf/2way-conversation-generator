@@ -212,6 +212,9 @@
           if (document.body.classList.contains('presentation')) document.querySelector('#presentationExit')?.click();
           return;
         }
+        // A CSP-blocked embed can still leave a focusable blank frame. Remove
+        // those unsupported email elements so Escape stays in this document.
+        Document.prototype.querySelectorAll.call(doc, 'iframe,frame,object,embed').forEach(node => Element.prototype.remove.call(node));
         if (emailEscapeDocuments.has(doc)) return;
         emailEscapeDocuments.add(doc);
         const exit = () => { if (document.body.classList.contains('presentation')) document.querySelector('#presentationExit')?.click(); };

@@ -48,6 +48,7 @@ try {
       await page.keyboard.press('Escape');
       await page.waitForFunction(()=>!document.body.classList.contains('presentation'));
       assert.deepEqual(forbiddenRequests,[],'External scripts, nested frames/objects and meta refresh must remain blocked');
+      assert.equal(await frame.locator('iframe,frame,object,embed').count(),0,'Blocked nested browsing contexts must not leave focusable blank surfaces');
       await page.locator('[data-v2-preview-present]').click();
       await frame.getByText('Open destination',{exact:true}).click();
       await frame.getByText('Destination',{exact:true}).waitFor();

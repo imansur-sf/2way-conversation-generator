@@ -122,3 +122,5 @@ The user requested this adjustment before production promotion. The published in
 - [ ] Pass code and browser gates, publish a checkpoint and deploy only to staging. Production remains unchanged pending approval.
 
 Review found that Escape inside a focused Custom HTML iframe did not reach the surrounding app. Custom HTML now grants **only** `allow-same-origin` so trusted parent-realm listeners can handle Escape; `allow-scripts` remains absent. An initial CSP additionally blocks scripts, nested frames and objects, leaving email CSS/images permitted. Normal outgoing links exit presentation before navigation; an inaccessible-frame load also restores controls. Security checks now exercise child and parent probes, handlers, inline/external scripts, javascript links, nested frames/objects, refresh and cross-origin navigation. The browser gate must pass these protections before release.
+
+Blocked nested iframe/object/embed elements are removed from the rendered email as well: a blocked empty browsing context must not remain keyboard-focusable. This does not rewrite the user's stored HTML or remove normal email text, tables, styles or images.
