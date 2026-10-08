@@ -3,6 +3,9 @@
 const DEFAULT_MODEL = 'gemini-3.5-flash';
 const MAX_PROVIDER_ATTEMPTS = 2;
 const PROVIDER_TIMEOUT_MS = 20_000;
+// Thinking and visible JSON share this ceiling; do not scale it down for one channel.
+// https://ai.google.dev/gemini-api/docs/generate-content/thinking#token-limits-and-max_output_tokens
+const MAX_PROVIDER_OUTPUT_TOKENS = 8000;
 
 function aiConfig(env = process.env) {
   return {
@@ -10,6 +13,7 @@ function aiConfig(env = process.env) {
     model:String(env.GEMINI_MODEL || DEFAULT_MODEL).trim(),
     maxAttempts:MAX_PROVIDER_ATTEMPTS,
     timeoutMs:PROVIDER_TIMEOUT_MS,
+    maxOutputTokens:MAX_PROVIDER_OUTPUT_TOKENS,
   };
 }
 
@@ -25,4 +29,4 @@ function providerHealth(config, observation = {}) {
   };
 }
 
-module.exports = { DEFAULT_MODEL, MAX_PROVIDER_ATTEMPTS, PROVIDER_TIMEOUT_MS, aiConfig, providerHealth };
+module.exports = { DEFAULT_MODEL, MAX_PROVIDER_ATTEMPTS, PROVIDER_TIMEOUT_MS, MAX_PROVIDER_OUTPUT_TOKENS, aiConfig, providerHealth };

@@ -131,10 +131,11 @@ async function providerErrorDiagnostic(upstream) {
 async function callGemini(prompt, channels, policy) {
   if (!geminiApiKey) throw Object.assign(new Error('llm_not_configured'),{code:'llm_not_configured'});
   const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),aiSettings.timeoutMs);
+  const maxOutputTokens=aiSettings.maxOutputTokens;
   try {
     const upstream=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(geminiModel)}:generateContent`,{
       method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':geminiApiKey},signal:controller.signal,
-      body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{responseMimeType:'application/json',responseSchema:draftResponseSchema(channels,policy),maxOutputTokens:Math.min(8000,2400*channels.length)}})
+      body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{responseMimeType:'application/json',responseSchema:draftResponseSchema(channels,policy),maxOutputTokens}})
     });
     if (!upstream.ok) {
       const code=upstream.status===400?'gemini_bad_request':upstream.status===401||upstream.status===403?'gemini_auth_failed':upstream.status===404?'gemini_model_not_found':upstream.status===429?'gemini_rate_limited':'gemini_failed';
@@ -147,7 +148,14 @@ async function callGemini(prompt, channels, policy) {
     try {payload=await upstream.json();} catch {throw Object.assign(new Error('gemini_bad_json'),{code:'gemini_bad_json'});}
     const candidate=payload?.candidates?.[0],finish=candidate?.finishReason;
     if (payload?.promptFeedback?.blockReason || ['SAFETY','RECITATION','BLOCKLIST','PROHIBITED_CONTENT','SPII'].includes(finish)) throw Object.assign(new Error('gemini_blocked'),{code:'gemini_blocked'});
-    if (finish && finish!=='STOP') throw Object.assign(new Error('gemini_incomplete'),{code:'gemini_incomplete'});
+    if (finish && finish!=='STOP') {
+      const finishReason=['MAX_TOKENS','OTHER','FINISH_REASON_UNSPECIFIED','MALFORMED_FUNCTION_CALL','UNEXPECTED_TOOL_CALL','NO_IMAGE'].includes(finish)?finish:'UNRECOGNIZED';
+      const usage=Object.fromEntries(['promptTokenCount','candidatesTokenCount','thoughtsTokenCount','totalTokenCount'].filter(key=>Number.isSafeInteger(payload?.usageMetadata?.[key]) && payload.usageMetadata[key]>=0).map(key=>[key,payload.usageMetadata[key]]));
+      // Do not log provider text, thought parts, finish messages or arbitrary metadata.
+      console.error(JSON.stringify({event:'gemini_response_incomplete',model:geminiModel,finishReason,maxOutputTokens,usage}));
+      const issue=finishReason==='MAX_TOKENS'?{code:'provider_output_limit',message:'The provider reached its output-token limit (including reasoning) before completing the draft. Its partial response was not accepted.'}:{code:'provider_incomplete',message:'The provider stopped before completing the draft. Its partial response was not accepted.'};
+      throw Object.assign(new Error('gemini_incomplete'),{code:'gemini_incomplete',issues:[issue]});
+    }
     const raw=candidate?.content?.parts?.filter(part=>!part.thought).map(part=>part.text || '').join('') || '';
     return parseJson(raw);
   } catch (error) {

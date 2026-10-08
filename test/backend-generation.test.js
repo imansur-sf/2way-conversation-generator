@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const {createRequire} = require('node:module');
 const test = require('node:test');
 const {CHANNELS, normalizeControls, storyBrief, explicitTurns, generationPolicy, validateAndNormalizeDraft, promptFallback, draftPrompt, draftResponseSchema} = require('../server/draft-contract.cjs');
-const {aiConfig, providerHealth, MAX_PROVIDER_ATTEMPTS} = require('../server/ai-config.cjs');
+const {aiConfig, providerHealth, MAX_PROVIDER_ATTEMPTS, MAX_PROVIDER_OUTPUT_TOKENS} = require('../server/ai-config.cjs');
 
 const root = path.resolve(__dirname, '..');
 const serverSource = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
@@ -372,6 +372,36 @@ test('invalid final output gets one targeted repair and never a third provider a
   assert.equal(result.requirements.complete,true);assert.equal(pipeline.calls.length,2);assert.match(pipeline.calls[1].body.contents[0].parts[0].text,/CORRECT_THESE_VALIDATION_ISSUES=/);
   const broken=loadPipeline([{envelope:{candidates:[{finishReason:'MAX_TOKENS',content:{parts:[{text:'{}'}]}}]}}]);
   await assert.rejects(broken.generateScenarioDraft(request(),'truncated'),{code:'gemini_incomplete'});assert.equal(broken.calls.length,MAX_PROVIDER_ATTEMPTS);
+});
+test('all channel counts and repair attempts share the bounded reasoning-aware output allowance',async()=>{
+  const config=aiConfig({});assert.equal(config.maxOutputTokens,8000);assert.equal(MAX_PROVIDER_OUTPUT_TOKENS,8000);
+  assert.equal(config.maxAttempts,2);assert.equal(config.timeoutMs,20000);assert.equal(config.model,'gemini-3.5-flash');
+  for(const channels of [['email'],['sms','email'],['sms','rcs','email'],CHANNELS]){
+    const pipeline=loadPipeline([{envelope:{candidates:[{finishReason:'MAX_TOKENS'}]}},draft(channels)]);
+    const result=await pipeline.generateScenarioDraft(request({channels}),'output-allowance');
+    assert.equal(result.source.mode,'provider');assert.equal(pipeline.calls.length,2);
+    for(const call of pipeline.calls){assert.equal(call.body.generationConfig.maxOutputTokens,8000);assert.equal(call.body.generationConfig.thinkingConfig,undefined);assert.equal(call.body.generationConfig.responseMimeType,'application/json');}
+  }
+});
+test('incomplete output reports a fixed token-limit issue with only allowlisted numeric usage',async()=>{
+  const secret='PRIVATE_PROMPT synthetic-offline-key https://private.example/?key=secret';
+  const envelope={candidates:[{finishReason:'MAX_TOKENS',finishMessage:secret,content:{parts:[{text:secret},{thought:true,text:secret}]}}],usageMetadata:{promptTokenCount:2000,candidatesTokenCount:100,thoughtsTokenCount:2300,totalTokenCount:4400,extra:secret}};
+  const pipeline=loadPipeline([{envelope}]);
+  await assert.rejects(pipeline.generateScenarioDraft(request(),'token-limit'),error=>error.code==='gemini_incomplete'&&error.issues[0].code==='provider_output_limit'&&/including reasoning/.test(error.issues[0].message));
+  assert.equal(pipeline.calls.length,2);assert.equal(pipeline.draftCache.size,0);
+  const entries=pipeline.logs.map(JSON.parse).filter(entry=>entry.event==='gemini_response_incomplete');assert.equal(entries.length,2);
+  for(const entry of entries){assert.equal(entry.finishReason,'MAX_TOKENS');assert.equal(entry.maxOutputTokens,8000);assert.deepEqual(entry.usage,{promptTokenCount:2000,candidatesTokenCount:100,thoughtsTokenCount:2300,totalTokenCount:4400});}
+  assert.doesNotMatch(pipeline.logs.join('\n'),/PRIVATE_PROMPT|synthetic-offline-key|private\.example|finishMessage|thoughtParts/);
+  const unknown=loadPipeline([{envelope:{...envelope,candidates:[{finishReason:secret}],usageMetadata:{promptTokenCount:-1,candidatesTokenCount:1.5,thoughtsTokenCount:secret,totalTokenCount:Number.MAX_SAFE_INTEGER+1}}}]);
+  await assert.rejects(unknown.generateScenarioDraft(request(),'unknown-finish'),error=>error.code==='gemini_incomplete'&&error.issues[0].code==='provider_incomplete');
+  const diagnostic=unknown.logs.map(JSON.parse).find(entry=>entry.event==='gemini_response_incomplete');assert.equal(diagnostic.finishReason,'UNRECOGNIZED');assert.deepEqual(diagnostic.usage,{});
+  assert.doesNotMatch(unknown.logs.join('\n'),/PRIVATE_PROMPT|synthetic-offline-key|private\.example/);
+});
+test('an existing deterministic starter after truncation is never presented or cached as provider success',async()=>{
+  const pipeline=loadPipeline([{envelope:{candidates:[{finishReason:'MAX_TOKENS',content:{parts:[{text:JSON.stringify(draft())}]}}]}}]);
+  const result=await pipeline.generateScenarioDraft(request({useCase:'Company says "Welcome." Customer says "Thanks."'}),'token-fallback');
+  assert.equal(result.source.mode,'prompt-fallback');assert.equal(result.source.fallbackReason,'gemini_incomplete');assert.equal(result.source.provider.attempts,2);
+  assert.match(result.requirements.warnings.join(' '),/not a successful AI generation/);assert.equal(pipeline.calls.length,2);assert.equal(pipeline.draftCache.size,0);
 });
 test('provider timeout fallback preserves a complete script and is identified and never cached',async()=>{
   const timeout=Object.assign(new Error('synthetic timeout'),{name:'AbortError'}),pipeline=loadPipeline([timeout]);
