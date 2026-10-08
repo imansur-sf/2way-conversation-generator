@@ -223,7 +223,7 @@ function validateAndNormalizeDraft(raw, request, evidence, brief = storyBrief(re
         const supplied=brief.scriptedTurns.some(line=>line.speaker===next.speaker && line.text===next.text);
         const generatedText=[supplied?'':next.text,...cardText].join('\n');
         const visibleText=[next.text,...cardText].join('\n');
-        const visibleCta=cards.some(card=>card.ctaLabel && card.ctaUrl) || next.presentation?.kind==='email' && next.presentation.mode==='branded' && next.presentation.ctaLabel && next.presentation.ctaUrl;
+        const visibleCta=cards.some(card=>text(card.ctaLabel) && text(card.ctaUrl)) || next.presentation?.kind==='email' && next.presentation.mode==='branded' && next.presentation.ctaLabel && next.presentation.ctaUrl;
         if (/\b(?:links?|buttons?)\s+(?:(?:shown|located|provided)\s+)?(?:below|above)\b/i.test(generatedText) && !/\b(?:https?:\/\/|www\.)\S+/i.test(visibleText) && !visibleCta) warnings.push(`${channel.toUpperCase()} message ${index+1}: generated copy refers to a link or button above/below, but this message has no visible URL or CTA. Add a source-approved link/CTA or revise that reference.`);
       }
       normalized.turns.push(next);

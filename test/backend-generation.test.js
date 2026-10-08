@@ -178,6 +178,19 @@ test('link-reference warning checks visible body URLs and CTA presentation witho
   Object.assign(rich.scenarios.rcs.turns[0].presentation.cards[0],{ctaLabel:'Details',ctaUrl:'https://example.com/details'});
   assert.equal(validateAndNormalizeDraft(rich,request({channels:['rcs']}),evidence).requirements.warnings.length,0);
 });
+test('whitespace-only card CTA labels do not hide a missing-button warning',()=>{
+  const raw=draft(['whatsapp']);raw.scenarios.whatsapp.turns[0].text='Use button below.';
+  raw.scenarios.whatsapp.turns[0].presentation={kind:'card',cards:[{title:'Details',ctaLabel:'   ',ctaUrl:'https://example.com/details'}]};
+  const input=request({channels:['whatsapp']}),result=validateAndNormalizeDraft(raw,input,evidence);
+  assert.equal(result.requirements.complete,true);assert.equal(result.requirements.warnings.length,1);
+  assert.match(result.requirements.warnings[0],/WHATSAPP message 1/);
+  const step=require('../assets/ai-draft.js').toScenario('whatsapp',result.draft,{id:()=> 'card-id'}).steps[0];
+  const renderer=fs.readFileSync(path.join(root,'interactive-simulator-builder.html'),'utf8').split('\n').find(line=>line.includes('function waCardMarkup('));
+  const context={esc:value=>String(value??''),safeActionUrl:value=>value};vm.runInNewContext(renderer,context);
+  assert.doesNotMatch(context.waCardMarkup({title:step.cardTitle,cta:step.cardCta,url:step.cardUrl}),/<a\b/);
+  raw.scenarios.whatsapp.turns[0].presentation.cards[0].ctaLabel=' Details ';
+  assert.equal(validateAndNormalizeDraft(raw,input,evidence).requirements.warnings.length,0);
+});
 test('provider schema specializes each channel and avoids the rejected union/cardinality complexity',()=>{
   const schema=draftResponseSchema(CHANNELS,{customerModes:['prefill','choices'],imageUrls:['','https://x.test/i'],imageEnumConstrained:true}),scenarios=schema.properties.scenarios;
   assert.deepEqual(scenarios.required,CHANNELS);
