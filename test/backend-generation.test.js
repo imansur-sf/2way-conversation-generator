@@ -4,7 +4,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const {createRequire} = require('node:module');
 const test = require('node:test');
-const {CHANNELS, normalizeControls, storyBrief, explicitTurns, validateAndNormalizeDraft, promptFallback, draftResponseSchema} = require('../server/draft-contract.cjs');
+const {CHANNELS, normalizeControls, storyBrief, explicitTurns, generationPolicy, validateAndNormalizeDraft, promptFallback, draftPrompt, draftResponseSchema} = require('../server/draft-contract.cjs');
 const {aiConfig, providerHealth, MAX_PROVIDER_ATTEMPTS} = require('../server/ai-config.cjs');
 
 const root = path.resolve(__dirname, '..');
@@ -140,7 +140,7 @@ test('provider schema specializes each channel and avoids the rejected union/car
   for(const channel of CHANNELS){
     const scenario=scenarios.properties[channel],turn=scenario.properties.turns.items,presentation=turn.properties.presentation;
     assert.deepEqual(turn.required,['speaker','text']);assert.deepEqual(turn.properties.speaker.enum,['company','customer']);
-    assert.deepEqual(turn.properties.mode.enum,['prefill','free','choices']);assert.equal(turn.properties.options.items.type,'STRING');
+    assert.deepEqual(turn.properties.mode.enum,['prefill','choices']);assert.equal(turn.properties.options.items.type,'STRING');
     assert.deepEqual(scenario.required,channel==='email'?['title','subject','turns']:['title','turns']);
     if(channel==='sms'){
       assert.deepEqual(presentation.properties.kind.enum,['text']);assert.deepEqual(Object.keys(presentation.properties),['kind']);
@@ -165,6 +165,62 @@ test('provider schema specializes each channel and avoids the rejected union/car
   // The rejected schema had 115 nodes, 70 optional fields and 4,764 bytes.
   assert.equal(nodes,80);assert.equal(optional,39);assert.ok(JSON.stringify(schema).length<3500);
   assert.deepEqual(Object.keys(draftResponseSchema(['email']).properties.scenarios.properties),['email']);
+});
+test('generation sends request-aware modes and explicit empty-image enums through both attempts',async()=>{
+  const good=draft(CHANNELS);good.logoUrl='';good.scenarios.rcs.turns[0].presentation={kind:'card',cards:[{title:'Invitation details',description:'Ask for details.',imageUrl:''}]};
+  const bad=clone(good);bad.scenarios.sms.turns[1].mode='free';bad.scenarios.email.turns[1].mode='free';bad.scenarios.rcs.turns[0].presentation.cards[0].imageUrl='https://invented.example/card.png';bad.logoUrl='https://invented.example/logo.png';
+  const pipeline=loadPipeline([bad,good]);
+  pipeline.context.fetchRemote=async()=>({url:'https://example.com/',contentType:'text/html',body:Buffer.from('<title>Example</title><p>No published images.</p>')});
+  const result=await pipeline.generateScenarioDraft(request({channels:CHANNELS,controls:{initialSender:'company',expectedMessageCount:2},useCase:'A customer asks for details. Use an RCS rich card.'}),'request-policy');
+  assert.equal(pipeline.calls.length,2);assert.equal(result.source.mode,'provider');assert.equal(pipeline.draftCache.size,1);
+  assert.equal(result.draft.logoUrl,'');assert.equal(result.draft.scenarios.rcs.turns[0].presentation.cards[0].imageUrl,'');
+  for(const call of pipeline.calls){
+    const schema=call.body.generationConfig.responseSchema,prompt=call.body.contents[0].parts[0].text;
+    const policy=JSON.parse(prompt.match(/^GENERATION_POLICY=(.+)$/m)[1]);
+    assert.deepEqual(policy,{customerModes:['prefill','choices'],imageUrls:[''],imageEnumConstrained:true});
+    for(const channel of CHANNELS)assert.deepEqual(schema.properties.scenarios.properties[channel].properties.turns.items.properties.mode.enum,['prefill','choices']);
+    assert.deepEqual(schema.properties.logoUrl.enum,['']);assert.deepEqual(schema.properties.heroImageUrl.enum,['']);
+    assert.deepEqual(schema.properties.scenarios.properties.rcs.properties.turns.items.properties.presentation.properties.cards.items.properties.imageUrl.enum,['']);
+    assert.deepEqual(schema.properties.scenarios.properties.email.properties.turns.items.properties.presentation.properties.heroImageUrl.enum,['']);
+    assert.match(prompt,/NO approved images/);assert.match(prompt,/not a request for a free-input UI/);assert.match(prompt,/rich card can have title\/description and no image/);
+  }
+  const repair=JSON.parse(pipeline.calls[1].body.contents[0].parts[0].text.match(/^CORRECT_THESE_VALIDATION_ISSUES=(.+)$/m)[1]);
+  assert.equal(repair.filter(item=>item.code==='unrequested_free_input').length,2);assert.equal(repair.filter(item=>item.code==='unlisted_url').length,2);
+});
+test('source-listed and explicit image URLs remain literal, deterministic choices; requested free input stays available',async()=>{
+  const supplied='https://assets.example/selected.png?size=large&version=2';
+  const input=request({channels:CHANNELS,useCase:`Use this supplied image ${supplied} and open-ended customer input.`});
+  const policy=generationPolicy(input,evidence,storyBrief(input));
+  assert.deepEqual(policy.customerModes,['prefill','free','choices']);assert.equal(policy.imageEnumConstrained,true);
+  assert.deepEqual(policy.imageUrls,['',supplied,'https://example.com/logo.svg','https://example.com/hero.png']);
+  assert.deepEqual(generationPolicy(input,evidence,storyBrief(input)),policy);
+  const raw=draft(CHANNELS);raw.logoUrl=supplied;raw.scenarios.rcs.turns[0].presentation={kind:'card',cards:[{title:'Details',imageUrl:'https://example.com/hero.png'}]};
+  for(const channel of CHANNELS)raw.scenarios[channel].turns[1]={speaker:'customer',text:'',mode:'free',options:[]};
+  const pipeline=loadPipeline([raw]),result=await pipeline.generateScenarioDraft(input,'selected-images');
+  assert.equal(pipeline.calls.length,1);assert.equal(result.draft.logoUrl,supplied);
+  const schema=pipeline.calls[0].body.generationConfig.responseSchema;
+  assert.deepEqual(schema.properties.logoUrl.enum,policy.imageUrls);
+  assert.deepEqual(schema.properties.scenarios.properties.sms.properties.turns.items.properties.mode.enum,['prefill','free','choices']);
+  assert.equal(result.draft.scenarios.sms.turns[1].mode,'free');
+});
+test('image enum overflow retains every explicit source in the prompt and final validation without rejecting requests',async()=>{
+  const sources=Array.from({length:7},(_,index)=>`https://assets.example/image-${index}.png`);
+  const longUrl='https://assets.example/selected.png?signature='+'a'.repeat(1600);
+  for(const supplied of [sources,[longUrl]]){
+    const input=request({channels:CHANNELS,useCase:'Demonstrate a helpful conversation using these supplied references: '+supplied.join(' ')});
+    const policy=generationPolicy(input,evidence,storyBrief(input)),schema=draftResponseSchema(CHANNELS,policy),prompt=draftPrompt(input,evidence,storyBrief(input),[],policy);
+    assert.equal(policy.imageEnumConstrained,false);assert.equal(schema.properties.logoUrl.enum,undefined);assert.equal(schema.properties.logoUrl.type,'STRING');
+    assert.ok(JSON.stringify(schema).length<3500,'overflow does not expand the accepted schema topology');
+    for(const url of supplied){assert.ok(policy.imageUrls.includes(url));assert.ok(prompt.includes(url));}
+    const raw=draft(CHANNELS);raw.logoUrl=supplied.at(-1);
+    const pipeline=loadPipeline([raw]);assert.doesNotThrow(()=>pipeline.validateDraftRequest(input));
+    const result=await pipeline.generateScenarioDraft(input,'overflow');assert.equal(result.draft.logoUrl,supplied.at(-1));assert.equal(pipeline.calls.length,1);
+    const sent=pipeline.calls[0].body;assert.equal(sent.generationConfig.responseSchema.properties.logoUrl.enum,undefined);
+    for(const url of supplied)assert.ok(sent.contents[0].parts[0].text.includes(url));
+    const malicious=clone(raw);malicious.logoUrl='https://not-listed.example/logo.png';
+    const rejected=loadPipeline([malicious]);await assert.rejects(rejected.generateScenarioDraft(input,'overflow-invalid'),error=>error.code==='draft_invalid'&&error.issues.some(item=>item.code==='unlisted_url'));
+    assert.equal(rejected.calls.length,2);assert.equal(rejected.draftCache.size,0);
+  }
 });
 test('server still rejects oversized turns, reply choices and carousels with simplified provider schema',async()=>{
   const turns=draft();turns.scenarios.sms.turns=Array.from({length:13},(_,index)=>({speaker:index%2?'customer':'company',text:'Message'}));

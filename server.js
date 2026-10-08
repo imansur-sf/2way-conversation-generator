@@ -4,7 +4,7 @@ const { randomUUID, createHash } = require('node:crypto');
 const path = require('node:path');
 const { clientIp:trustedClientIp, createRemoteFetcher, publicFilePath, supportedImageTypes, svgContentSecurityPolicy } = require('./server/security.cjs');
 const { aiConfig, providerHealth } = require('./server/ai-config.cjs');
-const { CHANNELS, normalizePersona, normalizeControls, storyBrief, draftPrompt, draftResponseSchema, validateAndNormalizeDraft, promptFallback } = require('./server/draft-contract.cjs');
+const { CHANNELS, normalizePersona, normalizeControls, storyBrief, generationPolicy, draftPrompt, draftResponseSchema, validateAndNormalizeDraft, promptFallback } = require('./server/draft-contract.cjs');
 
 const port = Number(process.env.PORT) || 3000;
 const root = __dirname;
@@ -58,7 +58,7 @@ function normalizedWebsiteUrl(value) {
 async function fetchRemote(value, maxBytes, allowPartial = false) {
   return secureRemoteFetch(normalizedWebsiteUrl(value),maxBytes,allowPartial);
 }
-function absoluteUrl(value, base) { try { const url = new URL(value, base); return ['http:','https:'].includes(url.protocol) ? url.toString() : ''; } catch { return ''; } }
+function absoluteUrl(value, base) { if (typeof value!=='string' || !value.trim()) return ''; try { const url = new URL(value, base); return ['http:','https:'].includes(url.protocol) ? url.toString() : ''; } catch { return ''; } }
 function decodeEntities(value = '') { return value.replace(/&amp;/gi,'&').replace(/&quot;/gi,'"').replace(/&#39;|&apos;/gi,"'").replace(/&lt;/gi,'<').replace(/&gt;/gi,'>'); }
 function stripMarkup(value = '') { return decodeEntities(value.replace(/<(script|style|noscript|svg|iframe|template)[^>]*>[\s\S]*?<\/\1>/gi,' ').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim()); }
 function metaValue(html, name) {
@@ -128,13 +128,13 @@ async function providerErrorDiagnostic(upstream) {
 }
 /* Exactly one upstream attempt. The generation loop owns the shared retry
    budget, including structural/semantic validation failures. */
-async function callGemini(prompt, channels) {
+async function callGemini(prompt, channels, policy) {
   if (!geminiApiKey) throw Object.assign(new Error('llm_not_configured'),{code:'llm_not_configured'});
   const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),aiSettings.timeoutMs);
   try {
     const upstream=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(geminiModel)}:generateContent`,{
       method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':geminiApiKey},signal:controller.signal,
-      body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{responseMimeType:'application/json',responseSchema:draftResponseSchema(channels),maxOutputTokens:Math.min(8000,2400*channels.length)}})
+      body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{responseMimeType:'application/json',responseSchema:draftResponseSchema(channels,policy),maxOutputTokens:Math.min(8000,2400*channels.length)}})
     });
     if (!upstream.ok) {
       const code=upstream.status===400?'gemini_bad_request':upstream.status===401||upstream.status===403?'gemini_auth_failed':upstream.status===404?'gemini_model_not_found':upstream.status===429?'gemini_rate_limited':'gemini_failed';
@@ -212,12 +212,13 @@ async function generateScenarioDraft(body, requestId) {
   const remote=await fetchRemote(request.website,scrapeLimitBytes,true);
   if (!/html|xml|text\//i.test(remote.contentType)) throw Object.assign(new Error('not_html'),{code:'not_html'});
   const evidence=extractWebsite(remote.body.toString('utf8'),remote.url);
+  const policy=generationPolicy(request,evidence,brief);
   let validated,failure,attempts=0;
   const retryable=new Set(['gemini_timeout','gemini_failed','gemini_bad_json','gemini_incomplete','gemini_rate_limited','draft_invalid']);
   for (let attempt=0;attempt<aiSettings.maxAttempts;attempt+=1) {
     attempts+=1;
     try {
-      const raw=await callGemini(draftPrompt(request,evidence,brief,failure?.issues || []),request.channels);
+      const raw=await callGemini(draftPrompt(request,evidence,brief,failure?.issues || [],policy),request.channels,policy);
       validated=validateAndNormalizeDraft(raw,request,evidence,brief);
       providerObservation.lastSuccessAt=Date.now();
       break;
