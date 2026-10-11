@@ -115,7 +115,7 @@
   }
   function brandingScenario(channel, branding, selection, {avatar = '', hero = '', failureReason = '', assetWarnings = [], id = () => root.crypto.randomUUID()} = {}) {
     if (!branding.requestedChannels.includes(channel) || !channels.includes(channel) || !nonempty(selection.companyName) || selection.companyName.trim().length > 200 || !['company','customer'].includes(selection.initialSender)) throw failure('Choose a company name and opening sender for the manual scenario.');
-    const embedded = value => value === '' || /^data:image\/(?:png|jpeg|gif|webp|avif|svg\+xml);base64,[a-z0-9+/=\s]+$/i.test(value);
+    const embedded = value => value === '' || /^data:image\/(?:png|jpeg|gif|webp|avif|svg\+xml|x-icon|vnd\.microsoft\.icon);base64,[a-z0-9+/=\s]+$/i.test(value);
     if (!embedded(avatar) || !embedded(hero)) throw failure('Manual branding images must be safely embedded before creation.');
     const company = selection.companyName.trim(), scenario = {id:id(),channel,name:`${company} — Manual`,generatedByAi:false,brandName:company,smsAddress:company,emailAddress:'',initials:company.split(/\s+/).map(word=>Array.from(word)[0]).join('').slice(0,3),avatar,avatarKind:avatar?'company-logo':'',steps:[],brandingRecovery:{sourceUrl:branding.source.url,failureReason,assetWarnings:[...assetWarnings]}};
     const companyStep = {id:id(),author:'brand',kind:'text',text:'',matchTerms:'',allowRepeat:false,reusableSet:true};

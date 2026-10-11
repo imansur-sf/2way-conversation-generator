@@ -75,6 +75,12 @@ async function requestDraft(page,selected,{named=true,prompt='Build three messag
   await page.locator('#generateAiDraft').click();
 }
 async function saved(page){await page.waitForFunction(()=>document.querySelector('#saveState')?.textContent==='Saved on this device');return page.evaluate(key=>JSON.parse(localStorage.getItem(key)),key);}
+async function recovered(page){
+  // Image embedding happens before the new scenario is saved. The previous
+  // scenario's already-saved status is not an acknowledgement of this creation.
+  await page.waitForFunction(key=>{const record=JSON.parse(localStorage.getItem(key));return record?.activeId!=='ai-target'&&record?.scenarios.length===2},key);
+  return saved(page);
+}
 async function playback(page,channel,emailExpected=emailDefaults){
   await page.locator('[data-v2-preview-reset]').click();
   const thread=channel==='email'?'[data-email="0"]':channel==='whatsapp'?'[data-wa-thread="wa-main"]':'[data-thread="sms-main"]';
@@ -170,7 +176,7 @@ try{
     assert.match(await page.locator('.ai-error').innerText(),/opening sender/);assert.equal(await page.locator('#applyAiDraft').count(),0);
     await mkdir('test-results',{recursive:true});await page.locator('.ai-brand-recovery').screenshot({path:'test-results/branding-recovery.png'});
     await page.locator('#recovery-initialSender').selectOption('customer');await page.locator('#useAiBranding').click();
-    const record=await saved(page),scenario=record.scenarios.find(item=>item.id===record.activeId);
+    const record=await recovered(page),scenario=record.scenarios.find(item=>item.id===record.activeId);
     assert.notEqual(scenario.id,'ai-target');assert.deepEqual(record.scenarios.find(item=>item.id==='ai-target'),before);assert.deepEqual(Object.keys(scenario.variants),channels);
     for(const variant of Object.values(scenario.variants)){assert.equal(variant.generatedByAi,false);assert.ok(variant.steps.every(step=>step.text===''));assert.equal(variant.steps[0].author,'customer');assert.match(variant.avatar,/^data:image\/png/);assert.match(variant.brandingRecovery.failureReason,/opening sender/);}
     assert.match(scenario.variants.rcs.steps[1].cardImage,/^data:image/);assert.match(scenario.variants.whatsapp.steps[1].cardImage,/^data:image/);assert.match(scenario.variants.email.steps[1].emailHeroImage,/^data:image/);
@@ -191,7 +197,7 @@ try{
   {
     const {context,page,errors}=await fresh(request=>({status:'failed',error:'gemini_timeout',branding:brandingFor(request)}));await mockBrandingAssets(context,{failHero:true});
     await requestDraft(page,['email']);await page.locator('#useAiBranding').waitFor();await page.locator('#useAiBranding').click();
-    const record=await saved(page),scenario=record.scenarios.find(item=>item.id===record.activeId);assert.match(scenario.avatar,/^data:image/);assert.equal(scenario.emailHeroImage,'');assert.equal(scenario.steps[0].author,'brand');
+    const record=await recovered(page),scenario=record.scenarios.find(item=>item.id===record.activeId);assert.match(scenario.avatar,/^data:image/);assert.equal(scenario.emailHeroImage,'');assert.equal(scenario.steps[0].author,'brand');
     assert.match(scenario.brandingRecovery.assetWarnings.join(' '),/Header \/ card image.*omitted/);assert.match(await page.locator('#setupAssistant').innerText(),/provider took too long/);
     assert.deepEqual(errors,[]);await context.close();console.log('PASS branding-only asset failure: useful logo retained, failed hero omitted with specific warning');
   }
@@ -208,15 +214,22 @@ try{
     await page.waitForFunction(()=>document.querySelector('#appStatus')?.textContent.includes('branding selection, or destination changed'));assert.equal((await saved(page)).scenarios.length,1);assert.deepEqual(errors,[]);await context.close();console.log('PASS late branding asset completion cannot apply after its request changes');
   }
   {
+    let releaseFailure;const gate=new Promise(resolve=>releaseFailure=resolve);
+    const {context,page,errors}=await fresh(async request=>{await gate;return {status:'failed',error:'draft_invalid',branding:brandingFor(request)}});
+    await requestDraft(page,['sms']);await page.locator('#aiCompanyName').fill('Changed company');await page.locator('#aiWebsite').fill('https://changed.test');await page.locator('[data-ai-channel="sms"]').uncheck();await page.locator('[data-ai-channel="email"]').check();releaseFailure();
+    await page.locator('.ai-error').waitFor();assert.equal(await page.locator('#useAiBranding').count(),0);assert.equal((await saved(page)).scenarios.length,1);
+    assert.deepEqual(errors,[]);await context.close();console.log('PASS edits made during generation reject old website branding when failure arrives');
+  }
+  {
     const {context,page,errors}=await fresh(request=>({status:'failed',error:'gemini_incomplete',branding:brandingFor(request,{empty:true})}));
     await requestDraft(page,['email']);await page.locator('#useAiBranding').waitFor();assert.match(await page.locator('.ai-brand-recovery').innerText(),/No image candidates were found/);
-    await page.locator('#useAiBranding').click();const record=await saved(page),scenario=record.scenarios.find(item=>item.id===record.activeId);assert.equal(scenario.avatar,'');assert.equal(scenario.emailHeroImage,'');assert.ok(scenario.steps.every(step=>step.text===''));
+    await page.locator('#useAiBranding').click();const record=await recovered(page),scenario=record.scenarios.find(item=>item.id===record.activeId);assert.equal(scenario.avatar,'');assert.equal(scenario.emailHeroImage,'');assert.ok(scenario.steps.every(step=>step.text===''));
     assert.deepEqual(errors,[]);await context.close();console.log('PASS branding without discovered images is labeled honestly and creates only blank manual fields');
   }
   {
     const {context,page,errors}=await fresh(request=>({status:'running',branding:brandingFor(request)}));await mockBrandingAssets(context);
     await requestDraft(page,['sms']);await page.locator('#useAiBranding').waitFor({timeout:70000});assert.match(await page.locator('.ai-error').innerText(),/deadline/);
-    await page.locator('#useAiBranding').click();const record=await saved(page);assert.equal(record.scenarios.length,2);assert.match(record.scenarios.find(item=>item.id===record.activeId).avatar,/^data:image/);
+    await page.locator('#useAiBranding').click();const record=await recovered(page);assert.equal(record.scenarios.length,2);assert.match(record.scenarios.find(item=>item.id===record.activeId).avatar,/^data:image/);
     assert.deepEqual(errors,[]);await context.close();console.log('PASS browser polling deadline preserves branding from a running job without claiming AI success');
   }
 }catch(error){

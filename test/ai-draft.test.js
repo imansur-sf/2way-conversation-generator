@@ -148,3 +148,7 @@ test('branding manual creation omits unavailable images and rejects unembedded r
   for(const avatar of ['https://example.test/logo.png','javascript:alert(1)','data:text/html;base64,aaaa'])assert.throws(()=>ai.brandingScenario('sms',branding,selection,{avatar}),{code:'invalid_draft'});
   assert.throws(()=>ai.brandingScenario('email',branding,{...selection,companyName:' '}),{code:'invalid_draft'});
 });
+test('branding recovery accepts every image type supported by the guarded asset endpoint, including favicons',()=>{
+  const {supportedImageTypes}=require('../server/security.cjs'),{request,branding}=brandingFixture(),selection=ai.brandingSelection(branding,request);
+  for(const mime of supportedImageTypes){const avatar=`data:${mime};base64,aGVsbG8=`;assert.equal(ai.brandingScenario('sms',branding,selection,{avatar}).avatar,avatar,mime);}
+});
