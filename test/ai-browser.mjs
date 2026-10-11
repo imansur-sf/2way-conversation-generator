@@ -198,7 +198,9 @@ try{
     const {context,page,errors}=await fresh(request=>({status:'failed',error:'gemini_timeout',branding:brandingFor(request)}));await mockBrandingAssets(context,{failHero:true});
     await requestDraft(page,['email']);await page.locator('#useAiBranding').waitFor();await page.locator('#useAiBranding').click();
     const record=await recovered(page),scenario=record.scenarios.find(item=>item.id===record.activeId);assert.match(scenario.avatar,/^data:image/);assert.equal(scenario.emailHeroImage,'');assert.equal(scenario.steps[0].author,'brand');
-    assert.match(scenario.brandingRecovery.assetWarnings.join(' '),/Header \/ card image.*omitted/);assert.match(await page.locator('#setupAssistant').innerText(),/provider took too long/);
+    assert.match(scenario.brandingRecovery.assetWarnings.join(' '),/Header \/ card image.*omitted/);
+    await page.locator('.ai-brand-recovery summary').click();
+    const visibleStatus=await page.locator('.ai-brand-recovery').innerText();assert.match(visibleStatus,/provider took too long/);assert.match(visibleStatus,/Header \/ card image.*omitted/);
     assert.deepEqual(errors,[]);await context.close();console.log('PASS branding-only asset failure: useful logo retained, failed hero omitted with specific warning');
   }
   {
