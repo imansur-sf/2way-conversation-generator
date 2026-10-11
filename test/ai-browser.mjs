@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
-import {readFile,mkdtemp,rm} from 'node:fs/promises';
+import {readFile,mkdtemp,mkdir,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -38,6 +38,17 @@ function responseFor(request,{fallback=false,unknown=false}={}){
   }));
   const identity=unknown?{customerName:'',representativeName:'',representativeRole:''}:persona;
   return {status:'completed',draft:{schemaVersion:2,companyName:'Synthetic Co',initialSender:'company',persona:identity,emailAddress:'hello@example.test',website:'https://example.test',logoUrl:'',heroImageUrl:'',scenarios},source:{mode:fallback?'prompt-fallback':'provider',fallbackReason:fallback?'gemini_rate_limited':null,stage:fallback?'provider':null,coverage:'partial',requestedChannels:[...request.channels],url:'https://example.test',title:'Synthetic research',imageCandidates:[],brief:{persona:identity,initialSender:'company',expectedMessageCount:3,scriptedTurns:[]}},requirements:{complete:true,channels:Object.fromEntries(request.channels.map(channel=>[channel,{status:'passed',checks:[{id:'structure',label:'Message structure',status:'passed'},{id:'factual_accuracy',label:'Factual accuracy',status:'unverified'}]}])),warnings:[]}};
+}
+function brandingFor(request,{empty=false}={}){
+  return {schemaVersion:1,mode:'website-only',companyName:request.companyName.trim(),requestedWebsite:new URL(request.website).href,requestedChannels:[...request.channels],source:{url:new URL(request.website).href,title:'Synthetic website branding',partial:false,assets:'unverified'},imageCandidates:empty?[]:[{url:'https://assets.ai.test/recovery-logo.png',role:'logo'},{url:'https://assets.ai.test/recovery-hero.png',role:'hero'}]};
+}
+async function mockBrandingAssets(context,{failHero=false,gate}={}){
+  await context.route(`${base}/api/asset?*`,async route=>{
+    const query=new URL(route.request().url()).searchParams;
+    if(!query.has('raw')&&gate)await gate;
+    if(failHero&&query.get('url')?.includes('recovery-hero')){await route.fulfill({status:502,contentType:'application/json',body:JSON.stringify({error:'remote_http_error'})});return;}
+    await route.fulfill(query.has('raw')?{contentType:'image/png',body:tinyImage}:{contentType:'application/json',body:JSON.stringify({dataUrl:`data:image/png;base64,${tinyImage.toString('base64')}`})});
+  });
 }
 async function fresh(makeResponse){
   const context=await browser.newContext({acceptDownloads:true,viewport:{width:1600,height:1100}}),requests=[];
@@ -151,6 +162,62 @@ try{
     assert.match(await page.locator('.ai-fallback-note').innerText(),/rate limit/);assert.doesNotMatch(await page.locator('.ai-fallback-note').innerText(),/slow|named people/);assert.match(await page.locator('.v2-requirements').innerText(),/Customer: Not specified/);
     await page.locator('#regenerateAiDraft').click();assert.equal(await page.locator('#aiUseCase').inputValue(),prompt);assert.equal(requests.length,1);assert.equal(await page.locator('.v2-requirements').count(),0);
     assert.deepEqual(errors,[]);await context.close();console.log('PASS fallback provenance, unknown identity, regenerate preserves prompt');
+  }
+  {
+    const {context,page,errors}=await fresh(request=>({status:'failed',error:'draft_invalid',issues:[{message:'The requested opening sender was not preserved.'}],branding:brandingFor(request)}));
+    await mockBrandingAssets(context);const before=(await saved(page)).scenarios.find(item=>item.id==='ai-target');
+    await requestDraft(page,channels);await page.locator('#useAiBranding').waitFor();
+    assert.match(await page.locator('.ai-error').innerText(),/opening sender/);assert.equal(await page.locator('#applyAiDraft').count(),0);
+    await mkdir('test-results',{recursive:true});await page.locator('.ai-brand-recovery').screenshot({path:'test-results/branding-recovery.png'});
+    await page.locator('#recovery-initialSender').selectOption('customer');await page.locator('#useAiBranding').click();
+    const record=await saved(page),scenario=record.scenarios.find(item=>item.id===record.activeId);
+    assert.notEqual(scenario.id,'ai-target');assert.deepEqual(record.scenarios.find(item=>item.id==='ai-target'),before);assert.deepEqual(Object.keys(scenario.variants),channels);
+    for(const variant of Object.values(scenario.variants)){assert.equal(variant.generatedByAi,false);assert.ok(variant.steps.every(step=>step.text===''));assert.equal(variant.steps[0].author,'customer');assert.match(variant.avatar,/^data:image\/png/);assert.match(variant.brandingRecovery.failureReason,/opening sender/);}
+    assert.match(scenario.variants.rcs.steps[1].cardImage,/^data:image/);assert.match(scenario.variants.whatsapp.steps[1].cardImage,/^data:image/);assert.match(scenario.variants.email.steps[1].emailHeroImage,/^data:image/);
+    assert.match(await page.locator('#setupAssistant').innerText(),/No dialogue was generated/);
+    await page.reload();await page.evaluate(()=>window.__twoWayScenarioInitialization);if(await page.locator('#chooseManual').isVisible())await page.locator('#chooseManual').click();
+    const acceptDialog=dialog=>dialog.accept();page.on('dialog',acceptDialog);
+    for(const channel of channels){
+      await page.locator(`[data-channel="${channel}"]`).click();
+      const download=await Promise.all([page.waitForEvent('download'),page.locator('#export').click()]).then(([item])=>item),file=path.join(directory,`branding-${channel}.html`);await download.saveAs(file);
+      const exported=await context.newPage(),offlineRequests=[];exported.on('request',request=>{if(/^https?:/.test(request.url()))offlineRequests.push(request.url())});
+      await context.setOffline(true);await exported.goto(`file://${file}`,{waitUntil:'load'});await exported.waitForFunction(()=>!document.body.classList.contains('export-booting'));
+      const data=JSON.parse(await exported.locator('#scenario-data').textContent()).scenarios[0];assert.equal(data.channel,channel);assert.match(data.avatar,/^data:image/);assert.equal(data.steps[0].author,'customer');assert.ok(data.steps.every(step=>step.text===''));assert.deepEqual(offlineRequests,[]);
+      assert.equal(await exported.locator('.ai-brand-recovery:visible').count(),0,'Recovery notices are builder-only, not part of the simulated conversation');
+      await exported.close();await context.setOffline(false);
+    }
+    page.off('dialog',acceptDialog);assert.deepEqual(errors,[]);await context.close();console.log('PASS branding-only recovery: separate scenario, both speaker modes, four independent channels, reload and offline exports');
+  }
+  {
+    const {context,page,errors}=await fresh(request=>({status:'failed',error:'gemini_timeout',branding:brandingFor(request)}));await mockBrandingAssets(context,{failHero:true});
+    await requestDraft(page,['email']);await page.locator('#useAiBranding').waitFor();await page.locator('#useAiBranding').click();
+    const record=await saved(page),scenario=record.scenarios.find(item=>item.id===record.activeId);assert.match(scenario.avatar,/^data:image/);assert.equal(scenario.emailHeroImage,'');assert.equal(scenario.steps[0].author,'brand');
+    assert.match(scenario.brandingRecovery.assetWarnings.join(' '),/Header \/ card image.*omitted/);assert.match(await page.locator('#setupAssistant').innerText(),/provider took too long/);
+    assert.deepEqual(errors,[]);await context.close();console.log('PASS branding-only asset failure: useful logo retained, failed hero omitted with specific warning');
+  }
+  {
+    const {context,page,requests,errors}=await fresh(request=>requests.length===1?{status:'failed',error:'draft_invalid',branding:brandingFor(request)}:{status:'failed',error:'website_fetch_failed'});await mockBrandingAssets(context);
+    await requestDraft(page,['rcs']);await page.locator('#useAiBranding').waitFor();await page.locator('#aiWebsite').fill('https://other.test');assert.equal(await page.locator('#useAiBranding').count(),0);
+    await page.locator('#generateAiDraft').click();await page.locator('.ai-error').waitFor();await page.waitForFunction(()=>!document.querySelector('#generateAiDraft').disabled);
+    assert.equal(await page.locator('#useAiBranding').count(),0);assert.match(await page.locator('#setupAssistant').innerText(),/No website branding is available/);assert.equal((await saved(page)).scenarios.length,1);
+    assert.deepEqual(errors,[]);await context.close();console.log('PASS failed retry cannot retain another website’s branding');
+  }
+  {
+    const {context,page,errors}=await fresh(request=>({status:'failed',error:'gemini_timeout',branding:brandingFor(request)}));let release;const gate=new Promise(resolve=>release=resolve);await mockBrandingAssets(context,{gate});
+    await requestDraft(page,['sms']);await page.locator('#useAiBranding').waitFor();await page.locator('#useAiBranding').click();await page.locator('#aiWebsite').fill('https://changed.test');release();
+    await page.waitForFunction(()=>document.querySelector('#appStatus')?.textContent.includes('branding selection, or destination changed'));assert.equal((await saved(page)).scenarios.length,1);assert.deepEqual(errors,[]);await context.close();console.log('PASS late branding asset completion cannot apply after its request changes');
+  }
+  {
+    const {context,page,errors}=await fresh(request=>({status:'failed',error:'gemini_incomplete',branding:brandingFor(request,{empty:true})}));
+    await requestDraft(page,['email']);await page.locator('#useAiBranding').waitFor();assert.match(await page.locator('.ai-brand-recovery').innerText(),/No image candidates were found/);
+    await page.locator('#useAiBranding').click();const record=await saved(page),scenario=record.scenarios.find(item=>item.id===record.activeId);assert.equal(scenario.avatar,'');assert.equal(scenario.emailHeroImage,'');assert.ok(scenario.steps.every(step=>step.text===''));
+    assert.deepEqual(errors,[]);await context.close();console.log('PASS branding without discovered images is labeled honestly and creates only blank manual fields');
+  }
+  {
+    const {context,page,errors}=await fresh(request=>({status:'running',branding:brandingFor(request)}));await mockBrandingAssets(context);
+    await requestDraft(page,['sms']);await page.locator('#useAiBranding').waitFor({timeout:70000});assert.match(await page.locator('.ai-error').innerText(),/deadline/);
+    await page.locator('#useAiBranding').click();const record=await saved(page);assert.equal(record.scenarios.length,2);assert.match(record.scenarios.find(item=>item.id===record.activeId).avatar,/^data:image/);
+    assert.deepEqual(errors,[]);await context.close();console.log('PASS browser polling deadline preserves branding from a running job without claiming AI success');
   }
 }catch(error){
   if(latestPage&&!latestPage.isClosed()){console.error('AI browser failure:',await latestPage.evaluate(()=>({error:document.querySelector('.ai-error')?.textContent,save:document.querySelector('#saveState')?.textContent,review:document.querySelector('.v2-requirements')?.textContent,stage:document.querySelector('#stage')?.textContent?.slice(0,600)})).catch(()=>'<page unavailable>'));await latestPage.screenshot({path:'test-results/ai-browser-failure.png',fullPage:true}).catch(()=>{});}

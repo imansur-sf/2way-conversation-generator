@@ -91,6 +91,43 @@
     if (sender && !['company','customer'].includes(sender)) throw failure('Choose a supported opening sender.');
     return {controls:{initialSender:sender || null,expectedMessageCount:total},persona:{customerName:value('[data-v2-customer-name]'),representativeName:value('[data-v2-representative-name]'),representativeRole:value('[data-v2-representative-role]')}};
   }
+  // Website evidence is not an AI draft. Validate it independently so a failed
+  // generation cannot smuggle partial dialogue into the manual recovery path.
+  function validateBranding(branding, request) {
+    const selected = request?.channels;
+    if (!branding || branding.schemaVersion !== 1 || branding.mode !== 'website-only' || !Array.isArray(selected) || !selected.length || selected.some(channel => !channels.includes(channel))) throw failure('Website branding does not match this request.');
+    if (!nonempty(branding.requestedWebsite) || !publicUrl(branding.requestedWebsite) || !nonempty(request.website) || !publicUrl(request.website) || new URL(branding.requestedWebsite).href !== new URL(request.website).href || !Array.isArray(branding.requestedChannels) || JSON.stringify([...branding.requestedChannels].sort()) !== JSON.stringify([...new Set(selected)].sort())) throw failure('Website branding belongs to a different request.');
+    if (!text(branding.companyName) || branding.companyName.length > 200 || branding.companyName !== (request.companyName || '').trim()) throw failure('Website branding changed the supplied company name.');
+    const source = branding.source;
+    if (!source || !nonempty(source.url) || !publicUrl(source.url) || !text(source.title) || source.title.length > 300 || source.assets !== 'unverified' || typeof source.partial !== 'boolean') throw failure('Website branding has invalid source details.');
+    if (!Array.isArray(branding.imageCandidates) || branding.imageCandidates.length > 16) throw failure('Website branding has invalid image options.');
+    const seen = new Set(), imageCandidates = branding.imageCandidates.map(candidate => {
+      if (!candidate || !nonempty(candidate.url) || candidate.url.length > 2048 || !publicUrl(candidate.url) || !text(candidate.role) || candidate.role.length > 80 || seen.has(candidate.url)) throw failure('Website branding has an invalid image URL.');
+      seen.add(candidate.url); return {url:candidate.url, role:candidate.role};
+    });
+    return {schemaVersion:1,mode:'website-only',companyName:branding.companyName,requestedWebsite:branding.requestedWebsite,requestedChannels:[...selected],source:{url:source.url,title:source.title,partial:source.partial,assets:'unverified'},imageCandidates};
+  }
+  function brandingSelection(branding, request) {
+    const checked = validateBranding(branding, request), candidates = checked.imageCandidates;
+    const logo = candidates.find(candidate => /logo|icon|brand/i.test(candidate.role));
+    const hero = candidates.find(candidate => /hero|social|og|banner/i.test(candidate.role) && candidate.url !== logo?.url);
+    return {companyName:checked.companyName || '',initialSender:request.controls?.initialSender === 'customer' ? 'customer' : 'company',logoUrl:logo?.url || '',heroImageUrl:hero?.url || ''};
+  }
+  function brandingScenario(channel, branding, selection, {avatar = '', hero = '', failureReason = '', assetWarnings = [], id = () => root.crypto.randomUUID()} = {}) {
+    if (!branding.requestedChannels.includes(channel) || !channels.includes(channel) || !nonempty(selection.companyName) || selection.companyName.trim().length > 200 || !['company','customer'].includes(selection.initialSender)) throw failure('Choose a company name and opening sender for the manual scenario.');
+    const embedded = value => value === '' || /^data:image\/(?:png|jpeg|gif|webp|avif|svg\+xml);base64,[a-z0-9+/=\s]+$/i.test(value);
+    if (!embedded(avatar) || !embedded(hero)) throw failure('Manual branding images must be safely embedded before creation.');
+    const company = selection.companyName.trim(), scenario = {id:id(),channel,name:`${company} — Manual`,generatedByAi:false,brandName:company,smsAddress:company,emailAddress:'',initials:company.split(/\s+/).map(word=>Array.from(word)[0]).join('').slice(0,3),avatar,avatarKind:avatar?'company-logo':'',steps:[],brandingRecovery:{sourceUrl:branding.source.url,failureReason,assetWarnings:[...assetWarnings]}};
+    const companyStep = {id:id(),author:'brand',kind:'text',text:'',matchTerms:'',allowRepeat:false,reusableSet:true};
+    const customerStep = {id:id(),author:'customer',kind:'free',text:'',options:[],reusableSet:false};
+    if (['rcs','whatsapp'].includes(channel) && hero) Object.assign(companyStep,{kind:'rich',cardTitle:'',cardDescription:'',cardImage:hero,cardCta:'',cardUrl:''});
+    if (channel === 'email') {
+      const design = {emailMode:'branded',emailLogo:avatar,emailHeroImage:hero,emailLayout:hero?'hero':'simple',emailPreheader:'',emailCtaLabel:'',emailCtaUrl:''};
+      Object.assign(companyStep,design);Object.assign(scenario,design,{subject:'',emailBody:''});
+    }
+    scenario.steps = selection.initialSender === 'customer' ? [customerStep,companyStep] : [companyStep,customerStep];
+    return scenario;
+  }
   function validateResult(result, request) {
     if (!request || !result) throw failure('This draft has no matching generation request.');
     const selected=validate(result.draft,request.channels),source=result.source,requirements=result.requirements;
@@ -124,7 +161,7 @@
     const reason = {gemini_timeout:'The provider timed out.',generation_timeout:'The generation deadline was reached.',gemini_rate_limited:'The provider rate limit was reached.',gemini_bad_json:'The provider returned an unreadable draft.',invalid_draft:'The provider draft did not pass validation.',gemini_failed:'The provider could not complete the request.'}[source?.fallbackReason] || 'The provider draft was unavailable or did not pass validation.';
     return `${reason} This is a prompt-guided starter, not a provider-verified result. Coverage is ${source?.coverage === 'complete' ? 'complete for the reported checks' : 'partial'}; facts still require review.`;
   }
-  const api = {validate,validateResult,toScenario,options,readControls,reviewScenario,fallbackMessage};
+  const api = {validate,validateResult,toScenario,options,readControls,reviewScenario,fallbackMessage,validateBranding,brandingSelection,brandingScenario};
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.TwoWayAi = api;
 })(typeof window === 'object' ? window : globalThis);

@@ -6,6 +6,8 @@ const {createRequire} = require('node:module');
 const test = require('node:test');
 const {CHANNELS, normalizeControls, storyBrief, explicitTurns, generationPolicy, validateAndNormalizeDraft, promptFallback, draftPrompt, draftResponseSchema} = require('../server/draft-contract.cjs');
 const {aiConfig, providerHealth, MAX_PROVIDER_ATTEMPTS, MAX_PROVIDER_OUTPUT_TOKENS} = require('../server/ai-config.cjs');
+const {websiteBranding} = require('../server/branding-recovery.cjs');
+const {Readable} = require('node:stream');
 
 const root = path.resolve(__dirname, '..');
 const serverSource = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
@@ -18,10 +20,10 @@ function draft(channels = ['sms']) {
     turns:[{speaker:'company',text:`Welcome to Example via ${channel}.`, ...(channel==='email'?{presentation:{kind:'email',mode:'plain'}}:{})},{speaker:'customer',text:'Please share the details.',mode:'prefill',options:[]}]
   }]))};
 }
-function loadPipeline(responses, env = {}) {
+function loadPipeline(responses, env = {}, contractOverrides = {}) {
   const calls = [], network = [], logs=[], requireHere=createRequire(path.join(root,'server.js'));
   const context=vm.createContext({
-    require:name=>name==='node:http'?{createServer(){return {listen(){}};}}:requireHere(name),
+    require:name=>name==='node:http'?{createServer(){return {listen(){}};}}:name==='./server/draft-contract.cjs'?{...requireHere(name),...contractOverrides}:requireHere(name),
     __dirname:root,process:{env:{APP_ENV:'test',GEMINI_API_KEY:'synthetic-offline-key',...env}},
     console:{log(value){logs.push(value);},error(value){logs.push(value);},warn(){}},Buffer,URL,AbortController,queueMicrotask,
     setTimeout:(callback,delay)=>setTimeout(callback,delay===350?0:delay),clearTimeout,
@@ -33,7 +35,7 @@ function loadPipeline(responses, env = {}) {
       return {ok:true,json:async()=>next?.envelope || {candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(next)}]}}]}};
     },
   });
-  vm.runInContext(`${serverSource}\nthis.api={parseJson,generateScenarioDraft,validateDraftRequest,startGenerationJob,publicJob,draftCache,generationJobs,active:()=>activeGenerations,health:()=>providerHealth(aiSettings,providerObservation)};`,context);
+  vm.runInContext(`${serverSource}\nthis.api={parseJson,generateScenarioDraft,validateDraftRequest,startGenerationJob,publicJob,handleApi,publicGenerationMetrics,draftCache,generationJobs,active:()=>activeGenerations,health:()=>providerHealth(aiSettings,providerObservation)};`,context);
   context.fetchRemote=async url=>{network.push(url);return {url:'https://example.com/',contentType:'text/html',body:Buffer.from('<title>Example</title><link rel="icon" href="/logo.svg"><meta property="og:image" content="/hero.png"><a href="/details">Details</a><a href="mailto:support@example.com">Contact</a><p>Synthetic reference page.</p>')};};
   return {...context.api,context,calls,network,logs};
 }
@@ -485,4 +487,111 @@ test('failed jobs expose actionable validation issues and release their admissio
   const publicResult=JSON.parse(JSON.stringify(pipeline.publicJob(job)));
   assert.equal(publicResult.error,'draft_invalid');assert.ok(publicResult.issues.some(item=>item.code==='invalid_schema'));assert.equal(publicResult.draft,undefined);
   const replay=pipeline.startGenerationJob(request(),'retry','failed-key','synthetic-client');assert.equal(replay.reused,true);assert.equal(replay.job,job);assert.equal(pipeline.calls.length,2);
+});
+
+async function finishBrandingJob(job) {
+  for(let attempt=0;attempt<100&&['queued','running'].includes(job.status);attempt++)await new Promise(resolve=>setTimeout(resolve,2));
+  assert.ok(['completed','failed'].includes(job.status),'mocked job must settle');
+}
+
+test('website branding is a bounded non-AI projection with safe candidate URLs',()=>{
+  const input=request({channels:['sms','email']});
+  const candidates=[
+    {url:'javascript:alert(1)',role:'logo'},{url:'data:image/png;base64,AA',role:'image'},
+    {url:'https://user:secret@example.com/logo.svg',role:'logo'},
+    {url:'https://example.com/'+ 'x'.repeat(2048),role:'logo'},
+    {url:'https://example.com/unknown.png',role:'invented-role'},
+    {url:'https://example.com/logo.svg',role:'logo',html:'<script>bad</script>'},
+    {url:'https://example.com/logo.svg',role:'hero'},
+    ...Array.from({length:20},(_,index)=>({url:`https://example.com/image-${index}.png`,role:'image'})),
+  ];
+  const branding=websiteBranding(input,{...evidence,title:'t'.repeat(400),candidates,companyName:'Invented',brandColor:'#FF0000',turns:['Invented dialogue']},true);
+  assert.deepEqual(Object.keys(branding).sort(),['companyName','imageCandidates','mode','requestedChannels','requestedWebsite','schemaVersion','source']);
+  assert.equal(branding.schemaVersion,1);assert.equal(branding.mode,'website-only');assert.equal(branding.companyName,'Example');
+  assert.equal(branding.requestedWebsite,input.website);assert.deepEqual(branding.requestedChannels,input.channels);
+  assert.deepEqual(branding.source,{url:evidence.url,title:'t'.repeat(300),assets:'unverified',partial:true});
+  assert.equal(branding.imageCandidates.length,16);assert.equal(new Set(branding.imageCandidates.map(item=>item.url)).size,16);
+  assert.deepEqual(branding.imageCandidates[0],{url:'https://example.com/logo.svg',role:'logo'});
+  assert.ok(branding.imageCandidates.every(item=>item.url.length<=2048&&['logo','hero','image'].includes(item.role)));
+  assert.doesNotMatch(JSON.stringify(branding),/javascript:|data:|secret|Invented|<script>|brandColor/);
+  branding.requestedChannels.push('rcs');assert.deepEqual(input.channels,['sms','email'],'snapshot channels do not alias the request');
+  assert.equal(websiteBranding(request({companyName:''}),evidence).companyName,'','page title is not promoted to a supplied company name');
+});
+
+test('failed provider jobs retain website branding without changing their failure or success accounting',async()=>{
+  const timeout=Object.assign(new Error('aborted'),{name:'AbortError'});
+  for(const [reply,expected,attempts] of [[timeout,'gemini_timeout',2],[{envelope:{candidates:[{finishReason:'STOP',content:{parts:[{text:'not JSON'}]}}]}},'gemini_bad_json',2],[{envelope:{candidates:[{finishReason:'MAX_TOKENS'}]}},'gemini_incomplete',2],[{httpStatus:400},'gemini_bad_request',1],[{httpStatus:403},'gemini_auth_failed',1],[{httpStatus:429},'gemini_rate_limited',2],[{httpStatus:500},'gemini_failed',2],[new Error('synthetic provider crash'),'scenario_generation_failed',1],[{},'draft_invalid',2]]){
+    const pipeline=loadPipeline([reply]);
+    const {job}=pipeline.startGenerationJob(request(),'brand-failure','brand-key','client');
+    assert.equal(pipeline.publicJob(job).branding,undefined,'no branding before extraction');
+    await finishBrandingJob(job);
+    const result=clone(pipeline.publicJob(job));
+    assert.equal(result.status,'failed');assert.equal(result.error,expected);assert.equal(result.draft,undefined);assert.equal(result.source,undefined);
+    assert.deepEqual(result.branding.imageCandidates,[{url:'https://example.com/hero.png',role:'hero'},{url:'https://example.com/logo.svg',role:'logo'}]);
+    assert.equal(result.branding.source.assets,'unverified');assert.equal(result.branding.source.partial,false);
+    if(expected==='draft_invalid')assert.ok(result.issues.some(issue=>issue.code==='invalid_schema'));
+    assert.equal(pipeline.calls.length,attempts);assert.equal(pipeline.network.length,1);assert.equal(pipeline.draftCache.size,0);assert.equal(pipeline.active(),0);
+    const metrics=pipeline.publicGenerationMetrics();assert.equal(metrics.failed,1);assert.equal(metrics.completed,0);assert.equal(metrics.fallback,0);
+    const replay=pipeline.startGenerationJob(request(),'replay','brand-key','client');assert.equal(replay.reused,true);assert.deepEqual(clone(pipeline.publicJob(replay.job).branding),result.branding);assert.equal(pipeline.calls.length,attempts);
+  }
+});
+
+test('branding is exposed while the provider is still running and remains additive on completion',async()=>{
+  const pipeline=loadPipeline([]);let release;
+  const gate=new Promise(resolve=>{release=resolve;});
+  pipeline.context.fetch=async()=>{pipeline.calls.push('mocked-provider');await gate;return {ok:true,json:async()=>({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(draft())}]}}]})};};
+  const {job}=pipeline.startGenerationJob(request(),'running-branding');
+  let runningBranding;
+  try{
+    await new Promise(resolve=>setImmediate(resolve));
+    const running=clone(pipeline.publicJob(job));assert.equal(running.status,'running');assert.equal(running.draft,undefined);assert.equal(running.error,undefined);
+    runningBranding=running.branding;assert.equal(runningBranding.mode,'website-only');assert.equal(pipeline.calls.length,1);assert.equal(pipeline.network.length,1);
+  }finally{release();await finishBrandingJob(job);}
+  const completed=clone(pipeline.publicJob(job));assert.equal(completed.status,'completed');assert.equal(completed.source.mode,'provider');assert.equal(completed.requirements.complete,true);assert.deepEqual(completed.branding,runningBranding);
+});
+
+test('website failure and request rejection do not fabricate branding or trigger provider calls',async()=>{
+  for(const fail of ['request_timeout','blocked_host','not_html','extraction_failed']){
+    const pipeline=loadPipeline([]);
+    pipeline.context.fetchRemote=async()=>{pipeline.network.push('mocked-page');if(['request_timeout','blocked_host'].includes(fail))throw Object.assign(new Error(fail),{code:fail});return {url:evidence.url,contentType:fail==='not_html'?'image/png':'text/html',body:Buffer.from('<title>Example</title>')};};
+    if(fail==='extraction_failed')pipeline.context.extractWebsite=()=>{throw Object.assign(new Error(fail),{code:fail});};
+    const {job}=pipeline.startGenerationJob(request(),'no-branding');await finishBrandingJob(job);
+    const result=pipeline.publicJob(job);assert.equal(result.error,fail);assert.equal(result.branding,undefined);assert.equal(pipeline.calls.length,0);assert.equal(pipeline.draftCache.size,0);
+  }
+  const rejected=loadPipeline([]);assert.throws(()=>rejected.startGenerationJob(request({controls:{initialSender:'invalid'}}),'rejected'),{code:'invalid_controls'});assert.equal(rejected.network.length,0);assert.equal(rejected.calls.length,0);assert.equal(rejected.generationJobs.size,0);
+});
+
+test('empty and partial page evidence preserve requested identity without invented image candidates',async()=>{
+  for(const partial of [false,true]){
+    const pipeline=loadPipeline([{}]);
+    pipeline.context.fetchRemote=async()=>({url:'https://example.com/final/',contentType:'text/html',partial,body:Buffer.from('<title>Discovered page title</title>')});
+    const {job}=pipeline.startGenerationJob(request({companyName:'  Supplied company  ',website:'example.com',channels:['sms','sms']}),'empty-assets');await finishBrandingJob(job);
+    const result=clone(pipeline.publicJob(job));assert.equal(result.status,'failed');assert.equal(result.branding.companyName,'Supplied company');assert.equal(result.branding.requestedWebsite,'https://example.com/');assert.deepEqual(result.branding.requestedChannels,['sms']);
+    assert.deepEqual(result.branding.imageCandidates,[]);assert.deepEqual(result.branding.source,{url:'https://example.com/final/',title:'Discovered page title',assets:'unverified',partial});
+  }
+});
+
+test('a deterministic fallback crash cannot discard already extracted branding',async()=>{
+  const pipeline=loadPipeline([{}],{},{promptFallback(){throw new Error('synthetic fallback crash');}});
+  const {job}=pipeline.startGenerationJob(request(),'fallback-crash');await finishBrandingJob(job);
+  const result=pipeline.publicJob(job);assert.equal(result.status,'failed');assert.equal(result.error,'scenario_generation_failed');assert.equal(result.branding.mode,'website-only');assert.equal(result.branding.imageCandidates.length,2);
+  assert.equal(pipeline.calls.length,2);assert.equal(pipeline.draftCache.size,0);assert.equal(pipeline.active(),0);
+});
+
+test('cached provider success retains branding and prompt-fallback remains explicitly distinct and uncached',async()=>{
+  const pipeline=loadPipeline([draft()]),snapshots=[];
+  const first=await pipeline.generateScenarioDraft(request(),'original',{onBranding:value=>snapshots.push(clone(value))});
+  const second=await pipeline.generateScenarioDraft(request(),'cached',{onBranding:value=>snapshots.push(clone(value))});
+  assert.deepEqual(clone(first),clone(second));assert.deepEqual(snapshots,[clone(first.branding),clone(first.branding)]);assert.equal(pipeline.calls.length,1);assert.equal(pipeline.network.length,1);assert.equal(pipeline.draftCache.size,1);
+  const fallback=loadPipeline([{}]),input=request({useCase:'Company says "Welcome." Customer says "Thanks."'});
+  const result=await fallback.generateScenarioDraft(input,'starter');assert.equal(result.source.mode,'prompt-fallback');assert.equal(result.source.fallbackReason,'draft_invalid');assert.equal(result.branding.mode,'website-only');assert.equal(result.branding.imageCandidates.length,2);assert.equal(fallback.draftCache.size,0);assert.equal(fallback.calls.length,2);
+});
+
+test('synchronous error responses retain extracted branding and exact validation issues',async()=>{
+  const pipeline=loadPipeline([{}]);
+  const incoming=Readable.from([Buffer.from(JSON.stringify(request()))]);Object.assign(incoming,{method:'POST',headers:{'x-request-id':'sync-branding'},socket:{remoteAddress:'127.0.0.1'}});
+  let status,body;
+  const outgoing={writeHead(value){status=value;},end(value){body=JSON.parse(value);}};
+  await pipeline.handleApi(incoming,outgoing,new URL('http://localhost/api/scenario-draft'));
+  assert.equal(status,502);assert.equal(body.error,'draft_invalid');assert.ok(body.issues.some(issue=>issue.code==='invalid_schema'));assert.equal(body.requestId,'sync-branding');assert.equal(body.branding.mode,'website-only');assert.equal(body.draft,undefined);assert.equal(pipeline.active(),0);assert.equal(pipeline.calls.length,2);
 });
