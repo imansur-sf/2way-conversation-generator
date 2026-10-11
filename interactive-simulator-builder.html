@@ -281,9 +281,10 @@ function renderPreview(){if(active().channel==='email')renderEmail();else render
       const ai=state.aiSetup,form=panel.querySelector('.ai-setup-form');
       panel.querySelector('.ai-error')?.setAttribute('role','alert');
       if(state.setupMode==='manual'){
-        const recovery=active()?.brandingRecovery;if(!recovery)return;
+        const recovery=active()?.brandingRecovery;if(!recovery||typeof recovery!=='object'||Array.isArray(recovery))return;
+        const failure=typeof recovery.failureReason==='string'&&recovery.failureReason.trim()?recovery.failureReason:'The scenario could not be generated.',warnings=Array.isArray(recovery.assetWarnings)?recovery.assetWarnings.filter(warning=>typeof warning==='string'):[];
         const note=document.createElement('aside');note.className='ai-brand-recovery';
-        note.innerHTML=`<strong>Branding-only manual starting point</strong><p>AI scenario generation did not succeed. No dialogue was generated; add your messages in the conversation editor.</p><details><summary>Generation error and image status</summary><p>${esc(recovery.failureReason||'The scenario could not be generated.')}</p>${(recovery.assetWarnings||[]).map(warning=>`<p>${esc(warning)}</p>`).join('')}</details>`;
+        note.innerHTML=`<strong>Branding-only manual starting point</strong><p>AI scenario generation did not succeed. No dialogue was generated; add your messages in the conversation editor.</p><details><summary>Generation error and image status</summary><p>${esc(failure)}</p>${warnings.map(warning=>`<p>${esc(warning)}</p>`).join('')}</details>`;
         panel.querySelector('.setup-assistant')?.append(note);return;
       }
       if(!form||!ai.error||ai.loading)return;

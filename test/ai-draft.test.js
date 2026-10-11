@@ -152,3 +152,14 @@ test('branding recovery accepts every image type supported by the guarded asset 
   const {supportedImageTypes}=require('../server/security.cjs'),{request,branding}=brandingFixture(),selection=ai.brandingSelection(branding,request);
   for(const mime of supportedImageTypes){const avatar=`data:${mime};base64,aGVsbG8=`;assert.equal(ai.brandingScenario('sms',branding,selection,{avatar}).avatar,avatar,mime);}
 });
+test('manual recovery notice tolerates malformed imported metadata and escapes valid details',()=>{
+  const html=fs.readFileSync(require.resolve('../interactive-simulator-builder.html'),'utf8'),source=html.slice(html.indexOf('    function renderAiBrandingRecovery(panel){'),html.indexOf('    async function applyAiBranding(){'));
+  const render=recovery=>{
+    const notes=[],panel={querySelector:selector=>selector==='.setup-assistant'?{append:note=>notes.push(note)}:null};
+    const context={state:{setupMode:'manual',aiSetup:{}},active:()=>({brandingRecovery:recovery}),document:{createElement:()=>({})},esc:value=>String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')};
+    vm.runInNewContext(source,context);context.renderAiBrandingRecovery(panel);return notes[0]?.innerHTML||'';
+  };
+  for(const assetWarnings of ['unexpected',42,{},null,[null,42,{},'IMAGE WARNING']])assert.match(render({failureReason:{bad:'value'},assetWarnings}),/The scenario could not be generated/);
+  for(const invalid of ['unexpected metadata',42,[],null])assert.equal(render(invalid),'');
+  const output=render({failureReason:'<script>failure</script>',assetWarnings:['<img src=x onerror=alert(1)>']});assert.doesNotMatch(output,/<script>|<img/);assert.match(output,/&lt;script&gt;failure/);assert.match(output,/&lt;img/);
+});
