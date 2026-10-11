@@ -647,6 +647,14 @@ test('natural EWC dialogue passes all channels without verbatim descriptive pros
   const prompt=draftPrompt(ewc.request,evidence,brief);assert.match(prompt,/natural dialogue, not verbatim/);assert.match(prompt,/do not invent benefit details, bonus amounts/);
 });
 
+test('EWC auto-sender brief completes the application pipeline without repair or fallback',async()=>{
+  const pipeline=loadPipeline([clone(ewc.rawDraft)]);
+  const result=await pipeline.generateScenarioDraft(clone(ewc.request),'ewc-alias-regression');
+  assert.equal(pipeline.calls.length,1);assert.equal(result.source.mode,'provider');assert.equal(result.source.fallbackReason,null);
+  assert.equal(result.source.brief.initialSender,'company');assert.equal(result.requirements.complete,true);
+  for(const channel of CHANNELS){assert.equal(result.requirements.channels[channel].status,'passed');assert.equal(result.draft.scenarios[channel].turns.length,6);}
+});
+
 test('each EWC requirement remains enforced with stable fields and no literal-description requirement',()=>{
   const input={...clone(ewc.request),channels:['sms']};
   const cases=[
