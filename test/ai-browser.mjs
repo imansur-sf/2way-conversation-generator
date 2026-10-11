@@ -6,6 +6,8 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {chromium} from '@playwright/test';
 import {browserOptions} from './browser-options.mjs';
+import contract from '../server/draft-contract.cjs';
+import ewc from './fixtures/ewc.cjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const directory=await mkdtemp(path.join(tmpdir(),'two-way-ai-test-'));
@@ -67,10 +69,10 @@ async function fresh(makeResponse){
   await page.locator('#switchToAi').click();await page.locator('.v2-generation-controls').waitFor();
   return {context,page,requests,errors,baseline};
 }
-async function requestDraft(page,selected,{named=true,prompt='Build three messages for each selected channel.'}={}){
-  await page.locator('#aiCompanyName').fill('Synthetic Co');await page.locator('#aiWebsite').fill('https://example.test');await page.locator('#aiUseCase').fill(prompt);
+async function requestDraft(page,selected,{named=true,prompt='Build three messages for each selected channel.',initialSender='company',companyName='Synthetic Co',website='https://example.test',messageTotal='3'}={}){
+  await page.locator('#aiCompanyName').fill(companyName);await page.locator('#aiWebsite').fill(website);await page.locator('#aiUseCase').fill(prompt);
   for(const channel of channels)await page.locator(`[data-ai-channel="${channel}"]`).setChecked(selected.includes(channel));
-  await page.locator('.v2-generation-controls summary').click();await page.locator('[data-v2-opening-sender]').selectOption('company');await page.locator('[data-v2-message-total]').fill('3');
+  await page.locator('.v2-generation-controls summary').click();await page.locator('[data-v2-opening-sender]').selectOption(initialSender);await page.locator('[data-v2-message-total]').fill(messageTotal);
   if(named){await page.locator('[data-v2-customer-name]').fill(persona.customerName);await page.locator('[data-v2-representative-name]').fill(persona.representativeName);await page.locator('[data-v2-representative-role]').fill(persona.representativeRole);}
   await page.locator('#generateAiDraft').click();
 }
@@ -130,8 +132,41 @@ async function offlineExport(context,page,channel,emailExpected=emailDefaults){
   await playback(exported,channel,emailExpected);await exported.waitForFunction(()=>[...document.querySelectorAll('#stage img')].every(image=>image.complete&&image.naturalWidth>0));
   assert.deepEqual(errors,[]);assert.deepEqual(requests,[]);await exported.close();await context.setOffline(false);
 }
+async function ewcPlayback(page,channel){
+  const turns=ewc.rawDraft.scenarios[channel].turns;
+  await page.locator('[data-v2-preview-reset]').click();
+  await page.locator(channel==='email'?'[data-email="0"]':channel==='whatsapp'?'[data-wa-thread="wa-main"]':'[data-thread="sms-main"]').click();
+  for(const index of [1,3]){
+    if(channel==='email')await page.locator('#openEmailReply').click();
+    const input=page.locator(channel==='email'?'#emailInput':'#phoneInput');
+    await input.fill(turns[index].text);await page.locator(channel==='email'?'#emailSend':'#phoneSend').click();
+    await page.waitForFunction(text=>document.querySelector('#stage')?.textContent.includes(text),turns[index+1].text);
+  }
+  await page.waitForFunction(text=>document.querySelector('#stage')?.textContent.includes(text),turns.at(-1).text);
+  const visible=await page.locator('#stage').innerText();for(const turn of turns)assert.ok(visible.includes(turn.text),`${channel} must retain every authored turn`);
+}
 try{
   browser=await chromium.launch(browserOptions);
+  {
+    const {context,page,requests,errors}=await fresh(request=>{
+      assert.deepEqual(request,ewc.request);const brief=contract.storyBrief(request);
+      assert.equal(brief.initialSender,'company');const validated=contract.validateAndNormalizeDraft(ewc.rawDraft,request,{url:request.website,candidates:[]},brief);
+      return {status:'completed',...validated,source:{mode:'provider',fallbackReason:null,requestedChannels:request.channels,url:request.website,title:'Synthetic EWC fixture',imageCandidates:[],brief}};
+    });
+    await requestDraft(page,channels,{named:false,prompt:ewc.useCase,initialSender:'',messageTotal:'',companyName:'EWC',website:ewc.request.website});
+    await page.locator('.ai-review').waitFor();assert.equal(requests.length,1);await page.locator('#applyAiDraft').click();
+    const record=await saved(page),scenario=record.scenarios.find(item=>item.id==='ai-target');
+    for(const channel of channels){
+      assert.deepEqual(scenario.variants[channel].steps.map(step=>step.text),ewc.rawDraft.scenarios[channel].turns.map(turn=>turn.text));
+      if(channel!=='sms'){await page.locator(`[data-channel="${channel}"]`).click();await saved(page);}
+      await ewcPlayback(page,channel);
+      const download=await Promise.all([page.waitForEvent('download'),page.locator('#export').click()]).then(([item])=>item),file=path.join(directory,`ewc-${channel}.html`);await download.saveAs(file);
+      const exported=await context.newPage(),offlineRequests=[],exportErrors=[];exported.on('pageerror',error=>exportErrors.push(error.message));exported.on('request',request=>{if(/^(https?:|file:)/.test(request.url())&&request.url()!==`file://${file}`)offlineRequests.push(request.url())});
+      await context.setOffline(true);await exported.goto(`file://${file}`,{waitUntil:'load'});await exported.waitForFunction(()=>!document.body.classList.contains('export-booting'));
+      await ewcPlayback(exported,channel);assert.deepEqual(offlineRequests,[]);assert.deepEqual(exportErrors,[]);await exported.close();await context.setOffline(false);
+    }
+    assert.deepEqual(errors,[]);await context.close();console.log('PASS backend-validated EWC narrative: inferred company start, both customer replies, human handoff, all four previews and offline exports');
+  }
   {
     const {context,page,requests,errors}=await fresh(request=>responseFor(request));
     const prompt='Deliberate prompt: José O’Neil meets Zoë. Preserve punctuation, commas, and channel-specific presentations.';
@@ -200,7 +235,7 @@ try{
     const record=await recovered(page),scenario=record.scenarios.find(item=>item.id===record.activeId);assert.match(scenario.avatar,/^data:image/);assert.equal(scenario.emailHeroImage,'');assert.equal(scenario.steps[0].author,'brand');
     assert.match(scenario.brandingRecovery.assetWarnings.join(' '),/Header \/ card image.*omitted/);
     await page.locator('.ai-brand-recovery summary').click();
-    const visibleStatus=await page.locator('.ai-brand-recovery').innerText();assert.match(visibleStatus,/provider took too long/);assert.match(visibleStatus,/Header \/ card image.*omitted/);
+    const visibleStatus=await page.locator('.ai-brand-recovery').innerText();assert.match(visibleStatus,/did not finish a complete scenario before the deadline/);assert.match(visibleStatus,/gemini_timeout/);assert.match(visibleStatus,/Header \/ card image.*omitted/);
     assert.deepEqual(errors,[]);await context.close();console.log('PASS branding-only asset failure: useful logo retained, failed hero omitted with specific warning');
   }
   {
@@ -229,8 +264,44 @@ try{
     assert.deepEqual(errors,[]);await context.close();console.log('PASS branding without discovered images is labeled honestly and creates only blank manual fields');
   }
   {
+    const prompt="Express Wash Concepts sends out message reminding a current customer that their membership is set to renew in 14 days. Customer responds with a question about what all the membership includes. EWC provides insight into the membership benefits, as well as notices that the customer hasn't signed up for the loyalty program that would also provide some additional benefits to their EWC membership. Customer still debates not renewing, to which EWC brings in a human rep on the same thread to explore options. Human agent offers the person a bonus of extra loyalty points for renewing, which they can use on the loyalty marketplace for additional discounts, events, and gift cards at partner organizations.";
+    const originalIssues=channels.map(channel=>({channel,code:'sender_mismatch',expectedSender:'company',message:'The company must open the conversation.'}));
+    originalIssues.push({code:'missing_requirement',requirementId:'loyalty',message:'Missing loyalty invitation <img src=x onerror="alert(1)">'});
+    const {context,page,errors,baseline}=await fresh(request=>({status:'failed',error:'draft_invalid',issues:originalIssues,branding:brandingFor(request)}));
+    await mockBrandingAssets(context);await requestDraft(page,channels,{prompt,initialSender:''});await page.locator('.ai-failure-guidance').waitFor();
+    assert.equal(await page.locator('.ai-failure-guidance li').count(),2,'Four equivalent sender errors have one next step');
+    assert.equal(await page.locator('.ai-error').count(),1);assert.doesNotMatch(await page.locator('.ai-error').innerText(),/must open.*must open/);
+    assert.match(await page.locator('.ai-failure-guidance').innerText(),/choose Company opens/);
+    assert.equal(await page.locator('.ai-failure-guidance img').count(),0,'Untrusted technical errors must remain text');
+    const details=JSON.parse(await page.locator('.ai-failure-guidance pre').textContent());assert.deepEqual(details.issues,originalIssues);assert.ok(details.requestId);
+    await page.locator('[data-ai-guidance-target="opening-sender"]').click();
+    assert.equal(await page.locator('.v2-generation-controls').getAttribute('open'),'');assert.equal(await page.locator('[data-v2-opening-sender]').inputValue(),'');
+    assert.equal(await page.evaluate(()=>document.activeElement?.hasAttribute('data-v2-opening-sender')),true);
+    assert.equal(await page.locator('#aiUseCase').inputValue(),prompt);assert.deepEqual((await saved(page)).scenarios,baseline.scenarios);
+    await page.locator('.ai-failure-guidance details summary').click();
+    await mkdir('test-results',{recursive:true});await page.locator('#setupAssistant').screenshot({path:'test-results/generation-guidance.png'});
+    await page.locator('#generateAiDraft').click();await page.waitForFunction(()=>!document.querySelector('.ai-failure-guidance'));await page.locator('.ai-failure-guidance').waitFor();
+    assert.equal(await page.locator('.ai-failure-guidance').count(),1);assert.equal(await page.locator('#useAiBranding').count(),1);assert.deepEqual(errors,[]);await context.close();
+    console.log('PASS EWC error recovery: deduplicated advice, controls focus without changes, escaped details, request ID, branding and retry');
+  }
+  for(const [issue,target,selector] of [[{code:'sender_mismatch',expectedSender:'company'},'opening-sender','[data-v2-opening-sender]'],[{code:'count_mismatch',expectedMessageCount:3},'message-total','[data-v2-message-total]'],[{code:'missing_required_fact',field:'representativeName'},'representative-name','[data-v2-representative-name]']]){
+    const {context,page,errors}=await fresh(()=>({status:'failed',error:'draft_invalid',issues:[issue]}));await requestDraft(page,['email']);await page.locator('.ai-failure-guidance').waitFor();
+    assert.match(await page.locator('.ai-failure-guidance').innerText(),/For this attempt/);const before=await page.locator(selector).inputValue();
+    await page.locator(`[data-ai-guidance-target="${target}"]`).click();assert.equal(await page.locator(selector).inputValue(),before);assert.equal(await page.evaluate(selector=>document.activeElement?.matches(selector),selector),true);
+    assert.deepEqual(errors,[]);await context.close();
+  }
+  {
+    let finish;const gate=new Promise(resolve=>{finish=resolve});
+    const {context,page,errors}=await fresh(async()=>{await gate;return {status:'failed',error:'draft_invalid',issues:[{code:'sender_mismatch',expectedSender:'company'},{code:'count_mismatch',expectedMessageCount:3}]}});
+    await requestDraft(page,['sms']);await page.locator('.v2-generation-controls summary').click();
+    await page.locator('[data-v2-opening-sender]').selectOption('customer');await page.locator('[data-v2-message-total]').fill('6');finish();
+    await page.locator('.ai-failure-guidance').waitFor();const advice=await page.locator('.ai-failure-guidance').innerText();assert.match(advice,/For this attempt.*was set to Company opens/);assert.match(advice,/For this attempt.*was set to 3/);
+    await page.locator('[data-ai-guidance-target="opening-sender"]').click();assert.equal(await page.locator('[data-v2-opening-sender]').inputValue(),'customer');assert.equal(await page.locator('[data-v2-message-total]').inputValue(),'6');
+    assert.deepEqual(errors,[]);await context.close();console.log('PASS failure advice distinguishes failed-request controls from newer unsent edits');
+  }
+  {
     const {context,page,errors,baseline}=await fresh(request=>({status:'running',branding:brandingFor(request)}));await mockBrandingAssets(context);
-    await requestDraft(page,['sms']);await page.locator('#useAiBranding').waitFor({timeout:70000});assert.match(await page.locator('.ai-error').innerText(),/deadline/);
+    await requestDraft(page,['sms']);await page.locator('#useAiBranding').waitFor({timeout:70000});assert.match(await page.locator('.ai-error').innerText(),/did not finish a complete scenario before the deadline/);assert.match(await page.locator('.ai-failure-guidance pre').textContent(),/generation_timeout/);
     await page.locator('#useAiBranding').click();const record=await recovered(page);assert.equal(record.scenarios.length,baseline.scenarios.length+1);assert.match(record.scenarios.find(item=>item.id===record.activeId).avatar,/^data:image/);
     assert.deepEqual(errors,[]);await context.close();console.log('PASS browser polling deadline preserves branding from a running job without claiming AI success');
   }

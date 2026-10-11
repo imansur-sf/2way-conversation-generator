@@ -81,6 +81,37 @@ test('result validation binds channels, structured controls, supplied dialogue a
   const inconsistent=result();inconsistent.requirements.channels.sms.checks[0].status='failed';assert.throws(()=>ai.validateResult(inconsistent,request),{code:'invalid_draft'});
   const renamed=result();renamed.draft.companyName='Different Co';assert.throws(()=>ai.validateResult(renamed,request),/company name/);
 });
+test('client validation provides actionable sender/count issue metadata without accepting mismatches',()=>{
+  const {format}=require('../assets/ai-error-guidance.js');
+  const request={channels,controls:{initialSender:'customer',expectedMessageCount:4},persona};
+  assert.throws(()=>ai.validateResult(result(),request),error=>{
+    assert.equal(error.code,'invalid_draft');
+    assert.deepEqual(error.issues.map(issue=>[issue.code,issue.field,issue.channel]),[['sender_mismatch','initialSender','sms'],['count_mismatch','expectedMessageCount','sms']]);
+    assert.equal(error.issues[0].expectedSender,'customer');assert.equal(error.issues[1].expectedMessageCount,4);
+    const guidance=format(error,request);assert.equal(guidance.actions.length,2);assert.match(guidance.actions[0].text,/For this attempt.*was set to Customer opens/);assert.match(guidance.actions[1].text,/For this attempt.*was set to 4/);
+    return true;
+  });
+  const inferred=result();inferred.source.brief.initialSender='customer';
+  assert.throws(()=>ai.validateResult(inferred,{channels}),error=>{assert.equal(error.issues[0].expectedSender,'customer');assert.match(format(error,{channels}).actions[0].text,/choose Customer opens/);return true;});
+});
+test('client validation identifies each changed persona field and handles malformed values safely',()=>{
+  const {format}=require('../assets/ai-error-guidance.js');
+  const targets={customerName:'customer-name',representativeName:'representative-name',representativeRole:'representative-role'};
+  for(const [field,target] of Object.entries(targets)){
+    const response=result(),request={channels,persona};response.draft.persona[field]='Changed';
+    assert.throws(()=>ai.validateResult(response,request),error=>{assert.equal(error.code,'invalid_draft');assert.equal(error.issues[0].code,'persona_mismatch');assert.equal(error.issues[0].field,field);const guidance=format(error,request);assert.equal(guidance.controlTarget,target);assert.match(guidance.actions[0].text,/For this attempt, you supplied an entry/);return true;});
+    assert.throws(()=>ai.validateResult(result(),{channels,persona:{[field]:42}}),error=>{assert.equal(error.code,'invalid_draft');assert.equal(error.issues[0].code,'invalid_persona');assert.equal(error.issues[0].field,field);return true;});
+    const malformed=result();malformed.draft.persona=null;assert.throws(()=>ai.validateResult(malformed,request),{code:'invalid_draft'});
+  }
+  assert.deepEqual(ai.validateResult(result(),{channels,persona:null}),channels);
+});
+test('client script integrity errors target the brief and never relax verbatim matching',()=>{
+  const {format}=require('../assets/ai-error-guidance.js');
+  for(const scriptedTurns of [[{speaker:'company',text:'Not what was supplied.'}],[{speaker:'company',text:'Changed opening.'},{speaker:'customer',text:'Changed reply.'},{speaker:'company',text:'Changed close.'}],[null]]){
+    const response=result();response.source.brief.scriptedTurns=scriptedTurns;
+    assert.throws(()=>ai.validateResult(response,{channels}),error=>{assert.equal(error.code,'invalid_draft');assert.equal(error.issues[0].code,'dialogue_mismatch');assert.equal(error.issues[0].channel,'sms');assert.equal(error.issues[0].field,'scriptedTurns');const guidance=format(error,{channels});assert.equal(guidance.actions[0].target,'brief');assert.equal(guidance.controlTarget,undefined);return true;});
+  }
+});
 test('backend-validated single quoted line and ordered multi-line dialogue pass the frontend unchanged',()=>{
   const contract=require('../server/draft-contract.cjs');
   for(const useCase of ['Company says "Welcome." Continue the conversation.','Company: Welcome.\nCompany: Zoë is joining.\nCustomer: Thank you.']){
@@ -99,6 +130,13 @@ test('array choices survive saved-scenario normalization and legacy comma lists 
 test('structured controls never mutate the prompt and reject fractional totals',()=>{
   const values={'[data-v2-message-total]':'3','[data-v2-opening-sender]':'customer','[data-v2-customer-name]':'José O’Neil'},document={querySelector:selector=>({value:values[selector]||''})};
   assert.deepEqual(ai.readControls(document).controls,{initialSender:'customer',expectedMessageCount:3});values['[data-v2-message-total]']='2.5';assert.throws(()=>ai.readControls(document),/whole number/);
+});
+test('invalid local controls identify the offending user setting rather than blaming generation',()=>{
+  const {format}=require('../assets/ai-error-guidance.js');
+  const values={'[data-v2-message-total]':'2.5'},document={querySelector:selector=>({value:values[selector]||''})};
+  assert.throws(()=>ai.readControls(document),error=>{assert.equal(error.code,'invalid_draft');assert.equal(error.issues[0].code,'invalid_count');assert.equal(error.issues[0].origin,'user-input');assert.equal(format(error).controlTarget,'message-total');return true;});
+  values['[data-v2-message-total]']='';values['[data-v2-opening-sender]']='unlisted';
+  assert.throws(()=>ai.readControls(document),error=>{assert.equal(error.issues[0].code,'invalid_sender');assert.equal(error.issues[0].origin,'user-input');const guidance=format(error);assert.equal(guidance.controlTarget,'opening-sender');assert.match(guidance.summary,/Choose a valid opening sender/);assert.doesNotMatch(guidance.summary,/AI did not follow/);return true;});
 });
 test('QA treats rich/image content as meaningful and does not claim export or factual verification',()=>{
   const scenario={channel:'rcs',steps:[{id:'card',author:'brand',kind:'rich',text:'',cardImage:'https://example.test/card.png'},{id:'input',author:'customer',kind:'free',reusableSet:true,text:''},{id:'response',author:'brand',kind:'text',text:'Reply'}]};

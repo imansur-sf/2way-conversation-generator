@@ -4,6 +4,7 @@ const path=require('node:path');
 const vm=require('node:vm');
 const test=require('node:test');
 const {webcrypto}=require('node:crypto');
+const ewc=require('./fixtures/ewc.cjs');
 
 // Execute the actual smoke scripts with imports supplied by the harness and
 // every network operation mocked. These tests cannot contact a live provider.
@@ -22,6 +23,7 @@ async function run(name,{env={},respond}={}){
       return {ok:result.status===undefined||result.status===200,status:result.status||200,json:async()=>vm.runInContext('JSON.parse('+JSON.stringify(JSON.stringify(result.body))+')',context),text:async()=>result.text||''};
     },
   });
+  context.ewc=vm.runInContext('JSON.parse('+JSON.stringify(JSON.stringify(ewc))+')',context);
   const code=source.replace(/import\.meta\.url/g,"'file:///synthetic/scripts/ai-app-smoke.mjs'");
   try {await vm.runInContext('(async()=>{'+code+'})()',context);return {calls,logs};}
   catch(error){error.calls=calls;throw error;}
@@ -70,4 +72,17 @@ test('application smoke rejects a personal name used as the company sender befor
     const turns=Array.from({length:4},(_,index)=>({speaker:index%2?'customer':'company',text:body.persona.customerName+' and '+body.persona.representativeName}));
     return {body:{status:'completed',draft:{schemaVersion:2,initialSender:'company',scenarios:Object.fromEntries(body.channels.map(channel=>[channel,{sender:body.persona.customerName,turns}]))},source:{mode:'provider',fallbackReason:null,requestedChannels:body.channels,grounding:{status:'unverified'},provider:{attempts:1}},requirements:{complete:true,scope:'structure-and-explicit-constraints',channels:Object.fromEntries(body.channels.map(channel=>[channel,{status:'passed'}]))}}};
   }}),error=>/sender must remain the company identity/.test(error.message)&&error.calls.filter(call=>call.options.method==='POST').length===1);
+});
+test('narrative smoke sends the original EWC alias brief with auto controls and keeps the two-job cap',async()=>{
+  const jobs=[];
+  const result=await run('ai-app-smoke.mjs',{env:{...smokeEnv,SMOKE_SUITE:'narrative'},respond:call=>{
+    if(call.url.endsWith('/api/health'))return {body:health};
+    if(call.options.method==='POST'){const body=JSON.parse(call.options.body);jobs.push(body);return {status:202,body:{poll:'/api/scenario-jobs/00000000-0000-0000-0000-000000000001'}};}
+    const body=jobs.at(-1),first=body.controls.initialSender||'company';
+    const scenarios=jobs.length===1?ewc.rawDraft.scenarios:{email:{sender:body.companyName,subject:'Synthetic reply',turns:Array.from({length:4},(_,index)=>({speaker:index===0?first:index%2?'company':'customer',text:'Morgan and Riley discuss next steps.'}))}};
+    return {body:{status:'completed',draft:{schemaVersion:2,initialSender:first,scenarios},source:{mode:'provider',fallbackReason:null,requestedChannels:body.channels,grounding:{status:'unverified'},provider:{attempts:1},brief:{initialSender:first,narrativeRequirements:[{id:'synthetic'}]}},requirements:{complete:true,scope:'structure-and-explicit-constraints',channels:Object.fromEntries(body.channels.map(channel=>[channel,{status:'passed'}]))}}};
+  }});
+  assert.equal(jobs.length,2);assert.deepEqual(jobs[0],ewc.request);assert.equal(jobs[1].controls.initialSender,'customer');
+  assert.equal(JSON.parse(result.logs.at(-1)).suite,'narrative');assert.equal(JSON.parse(result.logs.at(-1)).maxProviderRequests,4);
+  await assert.rejects(run('ai-app-smoke.mjs',{env:{...smokeEnv,SMOKE_SUITE:'unknown'}}),error=>/SMOKE_SUITE/.test(error.message)&&error.calls.length===0);
 });

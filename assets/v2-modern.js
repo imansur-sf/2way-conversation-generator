@@ -86,6 +86,32 @@
     controls.addEventListener('input', save);
     controls.addEventListener('change', save);
   };
+  const focusGenerationGuidance = (root, target) => {
+    const fields = {
+      'opening-sender':'[data-v2-opening-sender]',
+      'message-total':'[data-v2-message-total]',
+      'customer-name':'[data-v2-customer-name]',
+      'representative-name':'[data-v2-representative-name]',
+      'representative-role':'[data-v2-representative-role]',
+      brief:'#aiUseCase', website:'#aiWebsite',
+    };
+    if (!Object.hasOwn(fields, target)) return;
+    // Controls are recreated after each render. Resolve the current disclosure
+    // and field on click, including clicks before the next hydration frame.
+    hydrateGenerationControls(root);
+    const field = root.querySelector(`#setupAssistant ${fields[target]}`);
+    if (!field) return;
+    const controls = field.closest('.v2-generation-controls');
+    if (controls) controls.open = true;
+    field.scrollIntoView({behavior:'smooth', block:'center'});
+    field.focus({preventScroll:true});
+    announce(controls ? 'Generation controls opened. Review the focused field; its value has not changed.' : 'Review the focused generation field; your entry has not changed.');
+  };
+  document.addEventListener('click', event => {
+    const button = event.target.closest?.('[data-ai-guidance-target]');
+    if (!button?.closest('#setupAssistant')) return;
+    focusGenerationGuidance(document, button.dataset.aiGuidanceTarget);
+  });
   const hydrateFlowMap = root => {
     const steps = root.querySelector('#steps');
     if (!steps) return;

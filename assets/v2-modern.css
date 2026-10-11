@@ -382,3 +382,10 @@ dialog.rcs-image-cropper::backdrop { background:transparent; }
 :root .ai-brand-recovery [data-branding-preview] img{display:block;max-width:100%;height:90px;object-fit:contain;margin:8px auto;background:white;border:1px solid #cbdbe8;border-radius:6px}
 :root .ai-brand-recovery [data-branding-apply-error]{color:#a21515}
 :root .ai-brand-recovery summary{cursor:pointer;font-weight:700}
+:root .ai-failure-guidance{margin:10px 0;padding:12px;border:1px solid #f1c18a;border-radius:10px;background:#fff8ee;color:#513511;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+:root .ai-failure-guidance ul{margin:0;padding-left:18px}
+:root .ai-failure-guidance li+li{margin-top:10px}
+:root .ai-failure-guidance button{display:block;margin-top:7px}
+:root .ai-failure-guidance details{margin-top:12px}
+:root .ai-failure-guidance summary{cursor:pointer;font-weight:700}
+:root .ai-failure-guidance pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;max-height:240px;overflow:auto}

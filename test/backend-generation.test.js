@@ -4,7 +4,8 @@ const path = require('node:path');
 const vm = require('node:vm');
 const {createRequire} = require('node:module');
 const test = require('node:test');
-const {CHANNELS, normalizeControls, storyBrief, explicitTurns, generationPolicy, validateAndNormalizeDraft, promptFallback, draftPrompt, draftResponseSchema} = require('../server/draft-contract.cjs');
+const {CHANNELS, normalizeControls, storyBrief, explicitTurns, requestedInitialSender, generationPolicy, validateAndNormalizeDraft, promptFallback, draftPrompt, draftResponseSchema} = require('../server/draft-contract.cjs');
+const ewc = require('./fixtures/ewc.cjs');
 const {aiConfig, providerHealth, MAX_PROVIDER_ATTEMPTS, MAX_PROVIDER_OUTPUT_TOKENS} = require('../server/ai-config.cjs');
 const {websiteBranding} = require('../server/branding-recovery.cjs');
 const {Readable} = require('node:stream');
@@ -594,4 +595,144 @@ test('synchronous error responses retain extracted branding and exact validation
   const outgoing={writeHead(value){status=value;},end(value){body=JSON.parse(value);}};
   await pipeline.handleApi(incoming,outgoing,new URL('http://localhost/api/scenario-draft'));
   assert.equal(status,502);assert.equal(body.error,'draft_invalid');assert.ok(body.issues.some(issue=>issue.code==='invalid_schema'));assert.equal(body.requestId,'sync-branding');assert.equal(body.branding.mode,'website-only');assert.equal(body.draft,undefined);assert.equal(pipeline.active(),0);assert.equal(pipeline.calls.length,2);
+});
+
+test('original EWC narrative recognizes the company alias and does not parse marketplace as markets',()=>{
+  const brief=storyBrief(ewc.request);
+  assert.equal(brief.initialSender,'company');assert.equal(brief.scriptedTurns.length,0);assert.equal(brief.story.openingTopic,'');
+  assert.deepEqual(brief.narrativeRequirements.map(item=>item.id),['renewal_reminder','membership_inquiry','membership_benefits','loyalty_invitation','renewal_hesitation','human_handoff','renewal_incentive','loyalty_redemption']);
+  assert.deepEqual(brief.narrativeRequirements[0].duration,{amount:14,unit:'day'});
+  for(const [companyName,useCase,expected] of [
+    ['EWC','Express Wash Concepts sends a reminder to a current customer who asks about renewal. Customer responds later.','company'],
+    ['Express Wash Concepts','EWC sends a reminder. Customer responds with a question.','company'],
+    ['Express Wash Concepts (EWC)','EWC will send a reminder.','company'],
+    ['MWC','Metro Wellness Clinic sends an appointment reminder. A customer asks about the appointment.','company'],
+    ['Metro Wellness Clinic','MWC reminds a customer that their appointment is tomorrow.','company'],
+    ['EWC','A customer asks about membership. EWC provides the answer.','customer'],
+    ['EWC','A demo for a customer who asks questions. EWC sends the opening reminder.','company'],
+    ['EWC','A customer receives a reminder. Later the customer responds with a question.',null],
+    ['EWC','Customer responds with a question. EWC provides an answer.',null],
+    ['EWC','Do not start with the customer. EWC sends the reminder.','company'],
+    ['Example','Company immediately sends a membership renewal reminder. Customer asks what the membership includes.','company'],
+    ['Example','Company quickly sends a reminder. Customer responds with a question.','company'],
+    ['Example','Company very politely sends a reminder to the customer.','company'],
+  ])assert.equal(requestedInitialSender(useCase,companyName),expected,useCase);
+  assert.equal(storyBrief(request({useCase:'Customers can visit the marketplace for gift cards.'})).story.openingTopic,'');
+  assert.equal(storyBrief(request({useCase:'Company markets a service for small businesses.'})).story.openingTopic,'small businesses');
+});
+
+test('structured controls and exact dialogue remain authoritative and genuine conflicts stay actionable',()=>{
+  assert.equal(storyBrief({...ewc.request,controls:{initialSender:'customer'}}).initialSender,'customer','explicit control overrides narrative inference');
+  const transcript='Company: "Your membership will not renew in 14 days."\nCustomer: "Keep these exact words."';
+  const input=request({useCase:transcript}),brief=storyBrief(input),result=validateAndNormalizeDraft(draft(),input,evidence,brief);
+  assert.deepEqual(result.draft.scenarios.sms.turns.map(turn=>turn.text),explicitTurns(transcript).map(turn=>turn.text));
+  assert.deepEqual(brief.narrativeRequirements,[],'script text is not reinterpreted as narrative requirements');
+  assert.throws(()=>storyBrief({...input,controls:{initialSender:'customer'}}),error=>error.code==='conflicting_requirements'&&error.issues.some(item=>item.code==='sender_conflict'&&item.field==='initialSender'&&item.expectedSender==='company'));
+  assert.throws(()=>storyBrief(request({useCase:'Start with company. Begin with customer.'})),error=>error.code==='conflicting_requirements'&&error.issues[0].field==='initialSender');
+  const customerFirst=request({useCase:'Company sends a reminder in the background.\nCustomer: "I have a question."\nCompany: "How can I help?"'});
+  assert.equal(storyBrief(customerFirst).initialSender,'customer');
+});
+
+test('natural EWC dialogue passes all channels without verbatim descriptive prose or invented benefits',()=>{
+  const brief=storyBrief(ewc.request),result=validateAndNormalizeDraft(clone(ewc.rawDraft),ewc.request,evidence,brief);
+  assert.equal(result.requirements.complete,true);
+  for(const channel of CHANNELS){
+    const scenario=result.draft.scenarios[channel];assert.equal(scenario.turns[0].speaker,'company');assert.equal(scenario.sender,'EWC');
+    assert.equal(scenario.turns[1].text,"What's included?");assert.equal(scenario.turns[4].speaker,'company');assert.equal(scenario.turns[5].speaker,'company');
+    assert.equal(result.requirements.channels[channel].checks.find(item=>item.id==='factual_accuracy').status,'unverified');
+    assert.match(result.requirements.channels[channel].checks.find(item=>item.id==='required_facts').detail,/lexical.*unverified/);
+    assert.ok(!scenario.turns.map(turn=>turn.text).join(' ').includes(brief.story.questionTopic));
+  }
+  assert.equal(result.draft.scenarios.rcs.turns[0].presentation.kind,'card');
+  const prompt=draftPrompt(ewc.request,evidence,brief);assert.match(prompt,/natural dialogue, not verbatim/);assert.match(prompt,/do not invent benefit details, bonus amounts/);
+});
+
+test('each EWC requirement remains enforced with stable fields and no literal-description requirement',()=>{
+  const input={...clone(ewc.request),channels:['sms']};
+  const cases=[
+    ['renewal_reminder',turns=>{turns[0].text='Hello from EWC.';}],
+    ['membership_inquiry',turns=>{turns[1].text='Hello.';}],
+    ['membership_benefits',turns=>{turns[2].text='Would you like to join the rewards program?';}],
+    ['loyalty_invitation',turns=>{turns[2].text='Your plan includes membership benefits; details need confirmation.';}],
+    ['renewal_hesitation',turns=>{turns[3].text='I will renew today.';}],
+    ['human_handoff',turns=>{turns[4].text='Here are some options.';turns[5].text=turns[5].text.replace("I'm your agent. ",'');}],
+    ['renewal_incentive',turns=>{turns[5].text='Redeem loyalty points for savings, event tickets and gift certificates with participating businesses.';}],
+    ['loyalty_redemption',turns=>{turns[5].text="I'm your agent. If you renew, I can offer extra loyalty points.";}],
+    ['loyalty_redemption',turns=>{turns[5].text=turns[5].text.replace(' and gift certificates','');}],
+  ];
+  for(const [id,mutate] of cases){
+    const raw=clone(ewc.rawDraft);mutate(raw.scenarios.sms.turns);
+    assert.throws(()=>validateAndNormalizeDraft(raw,input,evidence),error=>error.code==='draft_invalid'&&error.issues.some(item=>item.code==='missing_requirement'&&item.requirementId===id&&item.field==='requirements.'+id&&item.channel==='sms'),id);
+  }
+});
+
+test('supported negative predicates and timing contradictions cannot pass by keyword presence',()=>{
+  const input={...clone(ewc.request),channels:['sms']};
+  for(const [id,index,replacement] of [
+    ['renewal_reminder',0,'Your membership will renew in 15 days.'],
+    ['renewal_reminder',0,'Your membership will not renew in 14 days.'],
+    ['renewal_reminder',0,'Your membership renews in 14 days. Your membership will not renew in 14 days.'],
+    ['renewal_reminder',0,'Your membership renews in 14 days. Actually, your membership renews in 30 days.'],
+    ['renewal_reminder',0,'Your membership renews in 14 days and renews in 30 days.'],
+    ['membership_benefits',2,"Your plan doesn't include any membership benefits. Join the rewards program."],
+    ['loyalty_invitation',2,"Your plan includes membership benefits. Don't join the rewards program."],
+    ['renewal_incentive',5,'Renewing will not earn any extra loyalty points. Redeem points for savings, event tickets and gift certificates with participating businesses.'],
+    ['loyalty_redemption',5,'Renew and earn extra loyalty points. You cannot redeem points for savings, event tickets and gift certificates with participating businesses.'],
+  ]){
+    const raw=clone(ewc.rawDraft);raw.scenarios.sms.turns[index].text=replacement;
+    assert.throws(()=>validateAndNormalizeDraft(raw,input,evidence),error=>error.issues.some(item=>item.code==='contradicted_requirement'&&item.requirementId===id),id);
+  }
+  const benign=clone(ewc.rawDraft);benign.scenarios.sms.turns[2].text="Your plan includes benefits. You haven't signed up yet; don't forget to join the loyalty program.";
+  assert.doesNotThrow(()=>validateAndNormalizeDraft(benign,input,evidence));
+});
+
+test('renewal timing belongs to its renewal cue rather than another duration in the sentence',()=>{
+  for(const useCase of [
+    'Company reminds the customer that the 30 day membership renews in 14 days. Customer thanks them.',
+    'Company reminds a customer who joined 6 months ago that their membership renews in 14 days. Customer thanks them.',
+    'Company reminds the customer their membership renewal is due in two weeks. Customer thanks them.',
+  ]){
+    const input=request({useCase}),brief=storyBrief(input),raw=draft();
+    assert.deepEqual(brief.narrativeRequirements.find(item=>item.id==='renewal_reminder').duration,{amount:14,unit:'day'});
+    raw.scenarios.sms.turns[0].text='Your 30 day membership renews in fourteen days.';raw.scenarios.sms.turns[1].text='Thanks.';
+    assert.doesNotThrow(()=>validateAndNormalizeDraft(raw,input,evidence,brief));
+  }
+  const ambiguous=storyBrief(request({useCase:'Company discusses a 30 day membership with a customer who joined six months ago.'}));
+  assert.ok(!ambiguous.narrativeRequirements.some(item=>item.id==='renewal_reminder'),'unbound durations are not invented renewal deadlines');
+});
+
+test('membership timing, pricing and cancellation questions do not become benefits inquiries',()=>{
+  for(const [useCase,question,answer] of [
+    ['Customer asks when the membership renews. Company responds with the renewal date.','When will my membership renew?','Your renewal date needs confirmation.'],
+    ['Customer asks about membership pricing. Company responds with pricing details.','How much is my membership?','The price needs confirmation.'],
+    ['Customer asks whether the membership can be canceled. Company responds with cancellation details.','Can I cancel my membership?','The cancellation terms need confirmation.'],
+  ]){
+    const input=request({useCase}),brief=storyBrief(input),raw=draft();
+    assert.ok(!brief.narrativeRequirements.some(item=>item.id==='membership_inquiry'),useCase);
+    raw.initialSender='customer';raw.scenarios.sms.turns=[{speaker:'customer',text:question,mode:'prefill'},{speaker:'company',text:answer}];
+    assert.doesNotThrow(()=>validateAndNormalizeDraft(raw,input,evidence,brief),useCase);
+  }
+});
+
+test('requested ordering is enforced but naturally combined checkpoints and adjacent company turns pass',()=>{
+  const input={...clone(ewc.request),channels:['sms']},raw=clone(ewc.rawDraft);
+  [raw.scenarios.sms.turns[2],raw.scenarios.sms.turns[3]]=[raw.scenarios.sms.turns[3],raw.scenarios.sms.turns[2]];
+  assert.throws(()=>validateAndNormalizeDraft(raw,input,evidence),error=>error.issues.some(item=>item.code==='requirement_order'&&item.requirementId==='renewal_hesitation'));
+  const combined=clone(ewc.rawDraft);combined.scenarios.sms.turns[4].text+=' '+combined.scenarios.sms.turns[5].text;combined.scenarios.sms.turns.pop();
+  assert.doesNotThrow(()=>validateAndNormalizeDraft(combined,input,evidence));
+  const wrongSender=clone(ewc.rawDraft);wrongSender.scenarios.sms.turns[0].speaker='customer';
+  assert.throws(()=>validateAndNormalizeDraft(wrongSender,input,evidence),error=>{
+    const sender=error.issues.filter(item=>item.code==='sender_mismatch');
+    return sender.length===1&&sender[0].field==='initialSender'&&sender[0].expectedSender==='company';
+  });
+});
+
+test('unrelated narrative topics accept common paraphrases but still reject omitted topic cues',()=>{
+  const input=request({companyName:'Harbor Fitness Center',useCase:'HFC sends an invitation for the Healthy Movement Workshop. A customer asks about cost and accessibility.'});
+  const raw=draft();raw.scenarios.sms.turns[0].text='Join our Healthy Movement Workshop.';raw.scenarios.sms.turns[1].text='What is the price, and is it accessible?';
+  assert.equal(storyBrief(input).initialSender,'company');assert.doesNotThrow(()=>validateAndNormalizeDraft(raw,input,evidence));
+  raw.scenarios.sms.turns[1].text='What is the price?';
+  assert.throws(()=>validateAndNormalizeDraft(raw,input,evidence),error=>error.issues.some(item=>item.code==='missing_requirement'&&item.requirementId==='question_topic'));
+  const unknown=storyBrief(request({useCase:'Create an evocative conversation illustrating the nuanced relationship between belonging and trust.'}));
+  assert.deepEqual(unknown.narrativeRequirements,[]);assert.match(unknown.narrativeScope,/not-semantic-or-factual-verification/);
 });

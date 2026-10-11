@@ -2,7 +2,7 @@
 (function (global) {
   'use strict';
 
-  const uiAssets = ['assets/vendor/purify.min.js', 'assets/email-safety.js', 'assets/ai-draft.js', 'assets/export-runtime.js', 'assets/v2/live-region.js', 'assets/v2/preview-fit.js', 'assets/v2-modern.js'];
+  const uiAssets = ['assets/vendor/purify.min.js', 'assets/email-safety.js', 'assets/ai-draft.js', 'assets/ai-error-guidance.js', 'assets/export-runtime.js', 'assets/v2/live-region.js', 'assets/v2/preview-fit.js', 'assets/v2-modern.js'];
   const imageFields = new Set(['avatar', 'recipientAvatar', 'emailLogo', 'emailHeroImage', 'cardImage', 'image', 'imageUrl']);
   const inlineUrl = value => !value || /^(?:data:|#)/i.test(value);
   const safeJson = value => JSON.stringify(value).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');

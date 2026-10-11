@@ -87,8 +87,8 @@
   function readControls(rootDocument) {
     const value = selector => rootDocument.querySelector(selector)?.value || '';
     const raw = value('[data-v2-message-total]'), total = raw === '' ? null : Number(raw), sender = value('[data-v2-opening-sender]');
-    if (total !== null && (!Number.isInteger(total) || total < 2 || total > 12)) throw failure('Exact message total must be a whole number from 2 to 12.');
-    if (sender && !['company','customer'].includes(sender)) throw failure('Choose a supported opening sender.');
+    if (total !== null && (!Number.isInteger(total) || total < 2 || total > 12)) throw failure('Exact message total must be a whole number from 2 to 12.', [{code:'invalid_count',field:'expectedMessageCount',origin:'user-input',message:'Exact message total must be a whole number from 2 to 12.'}]);
+    if (sender && !['company','customer'].includes(sender)) throw failure('Choose a supported opening sender.', [{code:'invalid_sender',field:'initialSender',origin:'user-input',message:'Choose a supported opening sender.'}]);
     return {controls:{initialSender:sender || null,expectedMessageCount:total},persona:{customerName:value('[data-v2-customer-name]'),representativeName:value('[data-v2-representative-name]'),representativeRole:value('[data-v2-representative-role]')}};
   }
   // Website evidence is not an AI draft. Validate it independently so a failed
@@ -137,11 +137,18 @@
       const review=requirements?.channels?.[channel],turns=result.draft.scenarios[channel].turns;
       if(!review||!['passed','needs-review'].includes(review.status)||!Array.isArray(review.checks)||review.checks.some(check=>!nonempty(check.label)||!['passed','unverified','not-applicable'].includes(check.status))) throw failure('Channel validation results are incomplete or contain failed checks.');
       const sender=request.controls?.initialSender||source.brief?.initialSender,count=request.controls?.expectedMessageCount||source.brief?.expectedMessageCount,script=source.brief?.scriptedTurns;
-      if(sender&&turns[0].speaker!==sender||count&&turns.length!==count)throw failure('The draft does not match the requested sender or message count.');
-      if(Array.isArray(script)&&script.length>1&&(script.length!==turns.length||script.some((turn,index)=>turn.speaker!==turns[index].speaker||turn.text!==turns[index].text)))throw failure('The draft changed supplied dialogue or its order.');
-      if(Array.isArray(script)&&script.length===1&&!turns.some(turn=>turn.speaker===script[0].speaker&&turn.text===script[0].text))throw failure('The draft changed a supplied dialogue line.');
+      const contractIssues=[];
+      if(sender&&turns[0].speaker!==sender)contractIssues.push({code:'sender_mismatch',field:'initialSender',expectedSender:sender,channel,message:'The draft does not match the requested opening sender.'});
+      if(count&&turns.length!==count)contractIssues.push({code:'count_mismatch',field:'expectedMessageCount',expectedMessageCount:count,channel,message:'The draft does not match the requested message count.'});
+      if(contractIssues.length)throw failure('The draft does not match the requested sender or message count.',contractIssues);
+      if(Array.isArray(script)&&script.length>1&&(script.length!==turns.length||script.some((turn,index)=>turn?.speaker!==turns[index].speaker||turn?.text!==turns[index].text)))throw failure('The draft changed supplied dialogue or its order.',[{code:'dialogue_mismatch',field:'scriptedTurns',channel,message:'The draft changed supplied dialogue or its order.'}]);
+      if(Array.isArray(script)&&script.length===1&&!turns.some(turn=>turn.speaker===script[0]?.speaker&&turn.text===script[0]?.text))throw failure('The draft changed a supplied dialogue line.',[{code:'dialogue_mismatch',field:'scriptedTurns',channel,message:'The draft changed a supplied dialogue line.'}]);
     }
-    for(const key of ['customerName','representativeName','representativeRole'])if(request.persona?.[key]?.trim()&&result.draft.persona[key]!==request.persona[key].trim())throw failure('The draft changed an explicitly named person.');
+    for(const key of ['customerName','representativeName','representativeRole']){
+      const requested=request.persona?.[key];
+      if(requested!=null&&!text(requested))throw failure('A supplied persona field must be text.',[{code:'invalid_persona',field:key,origin:'user-input',message:`${key} must be text.`}]);
+      if(requested?.trim()&&result.draft.persona[key]!==requested.trim())throw failure('The draft changed an explicitly named person.',[{code:'persona_mismatch',field:key,message:'The draft changed an explicitly named person or role.'}]);
+    }
     return selected;
   }
   function reviewScenario(scenario, emailContent) {
