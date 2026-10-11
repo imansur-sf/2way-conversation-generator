@@ -63,9 +63,9 @@ async function fresh(makeResponse){
   if(await page.locator('#chooseManual').isVisible())await page.locator('#chooseManual').click();
   // The seed starts in the legacy browser backup. Establish an acknowledged
   // durable baseline through the real save control before testing AI mutations.
-  await page.locator('#save').click();await saved(page);
+  await page.locator('#save').click();const baseline=await saved(page);
   await page.locator('#switchToAi').click();await page.locator('.v2-generation-controls').waitFor();
-  return {context,page,requests,errors};
+  return {context,page,requests,errors,baseline};
 }
 async function requestDraft(page,selected,{named=true,prompt='Build three messages for each selected channel.'}={}){
   await page.locator('#aiCompanyName').fill('Synthetic Co');await page.locator('#aiWebsite').fill('https://example.test');await page.locator('#aiUseCase').fill(prompt);
@@ -78,7 +78,7 @@ async function saved(page){await page.waitForFunction(()=>document.querySelector
 async function recovered(page){
   // Image embedding happens before the new scenario is saved. The previous
   // scenario's already-saved status is not an acknowledgement of this creation.
-  await page.waitForFunction(key=>{const record=JSON.parse(localStorage.getItem(key));return record?.activeId!=='ai-target'&&record?.scenarios.length===2},key);
+  await page.waitForFunction(key=>{const record=JSON.parse(localStorage.getItem(key));return record?.activeId!=='ai-target'&&record?.scenarios.some(scenario=>scenario.id===record.activeId&&scenario.brandingRecovery)},key);
   return saved(page);
 }
 async function playback(page,channel,emailExpected=emailDefaults){
@@ -170,14 +170,14 @@ try{
     assert.deepEqual(errors,[]);await context.close();console.log('PASS fallback provenance, unknown identity, regenerate preserves prompt');
   }
   {
-    const {context,page,errors}=await fresh(request=>({status:'failed',error:'draft_invalid',issues:[{message:'The requested opening sender was not preserved.'}],branding:brandingFor(request)}));
+    const {context,page,errors,baseline}=await fresh(request=>({status:'failed',error:'draft_invalid',issues:[{message:'The requested opening sender was not preserved.'}],branding:brandingFor(request)}));
     await mockBrandingAssets(context);const before=(await saved(page)).scenarios.find(item=>item.id==='ai-target');
     await requestDraft(page,channels);await page.locator('#useAiBranding').waitFor();
     assert.match(await page.locator('.ai-error').innerText(),/opening sender/);assert.equal(await page.locator('#applyAiDraft').count(),0);
     await mkdir('test-results',{recursive:true});await page.locator('.ai-brand-recovery').screenshot({path:'test-results/branding-recovery.png'});
     await page.locator('#recovery-initialSender').selectOption('customer');await page.locator('#useAiBranding').click();
     const record=await recovered(page),scenario=record.scenarios.find(item=>item.id===record.activeId);
-    assert.notEqual(scenario.id,'ai-target');assert.deepEqual(record.scenarios.find(item=>item.id==='ai-target'),before);assert.deepEqual(Object.keys(scenario.variants),channels);
+    assert.notEqual(scenario.id,'ai-target');assert.equal(record.scenarios.length,baseline.scenarios.length+1);assert.deepEqual(record.scenarios.filter(item=>item.id!==scenario.id),baseline.scenarios);assert.deepEqual(record.scenarios.find(item=>item.id==='ai-target'),before);assert.deepEqual(Object.keys(scenario.variants),channels);
     for(const variant of Object.values(scenario.variants)){assert.equal(variant.generatedByAi,false);assert.ok(variant.steps.every(step=>step.text===''));assert.equal(variant.steps[0].author,'customer');assert.match(variant.avatar,/^data:image\/png/);assert.match(variant.brandingRecovery.failureReason,/opening sender/);}
     assert.match(scenario.variants.rcs.steps[1].cardImage,/^data:image/);assert.match(scenario.variants.whatsapp.steps[1].cardImage,/^data:image/);assert.match(scenario.variants.email.steps[1].emailHeroImage,/^data:image/);
     assert.match(await page.locator('#setupAssistant').innerText(),/No dialogue was generated/);
@@ -202,22 +202,22 @@ try{
     assert.deepEqual(errors,[]);await context.close();console.log('PASS branding-only asset failure: useful logo retained, failed hero omitted with specific warning');
   }
   {
-    const {context,page,requests,errors}=await fresh(request=>requests.length===1?{status:'failed',error:'draft_invalid',branding:brandingFor(request)}:{status:'failed',error:'website_fetch_failed'});await mockBrandingAssets(context);
+    const {context,page,requests,errors,baseline}=await fresh(request=>requests.length===1?{status:'failed',error:'draft_invalid',branding:brandingFor(request)}:{status:'failed',error:'website_fetch_failed'});await mockBrandingAssets(context);
     await requestDraft(page,['rcs']);await page.locator('#useAiBranding').waitFor();await page.locator('#aiWebsite').fill('https://other.test');assert.equal(await page.locator('#useAiBranding').count(),0);
     await page.locator('#generateAiDraft').click();await page.locator('.ai-error').waitFor();await page.waitForFunction(()=>!document.querySelector('#generateAiDraft').disabled);
-    assert.equal(await page.locator('#useAiBranding').count(),0);assert.match(await page.locator('#setupAssistant').innerText(),/No website branding is available/);assert.equal((await saved(page)).scenarios.length,1);
+    assert.equal(await page.locator('#useAiBranding').count(),0);assert.match(await page.locator('#setupAssistant').innerText(),/No website branding is available/);assert.deepEqual((await saved(page)).scenarios,baseline.scenarios);
     assert.deepEqual(errors,[]);await context.close();console.log('PASS failed retry cannot retain another website’s branding');
   }
   {
-    const {context,page,errors}=await fresh(request=>({status:'failed',error:'gemini_timeout',branding:brandingFor(request)}));let release;const gate=new Promise(resolve=>release=resolve);await mockBrandingAssets(context,{gate});
+    const {context,page,errors,baseline}=await fresh(request=>({status:'failed',error:'gemini_timeout',branding:brandingFor(request)}));let release;const gate=new Promise(resolve=>release=resolve);await mockBrandingAssets(context,{gate});
     await requestDraft(page,['sms']);await page.locator('#useAiBranding').waitFor();await page.locator('#useAiBranding').click();await page.locator('#aiWebsite').fill('https://changed.test');release();
-    await page.waitForFunction(()=>document.querySelector('#appStatus')?.textContent.includes('branding selection, or destination changed'));assert.equal((await saved(page)).scenarios.length,1);assert.deepEqual(errors,[]);await context.close();console.log('PASS late branding asset completion cannot apply after its request changes');
+    await page.waitForFunction(()=>document.querySelector('#appStatus')?.textContent.includes('branding selection, or destination changed'));assert.deepEqual((await saved(page)).scenarios,baseline.scenarios);assert.deepEqual(errors,[]);await context.close();console.log('PASS late branding asset completion cannot apply after its request changes');
   }
   {
     let releaseFailure;const gate=new Promise(resolve=>releaseFailure=resolve);
-    const {context,page,errors}=await fresh(async request=>{await gate;return {status:'failed',error:'draft_invalid',branding:brandingFor(request)}});
+    const {context,page,errors,baseline}=await fresh(async request=>{await gate;return {status:'failed',error:'draft_invalid',branding:brandingFor(request)}});
     await requestDraft(page,['sms']);await page.locator('#aiCompanyName').fill('Changed company');await page.locator('#aiWebsite').fill('https://changed.test');await page.locator('[data-ai-channel="sms"]').uncheck();await page.locator('[data-ai-channel="email"]').check();releaseFailure();
-    await page.locator('.ai-error').waitFor();assert.equal(await page.locator('#useAiBranding').count(),0);assert.equal((await saved(page)).scenarios.length,1);
+    await page.locator('.ai-error').waitFor();assert.equal(await page.locator('#useAiBranding').count(),0);assert.deepEqual((await saved(page)).scenarios,baseline.scenarios);
     assert.deepEqual(errors,[]);await context.close();console.log('PASS edits made during generation reject old website branding when failure arrives');
   }
   {
@@ -227,9 +227,9 @@ try{
     assert.deepEqual(errors,[]);await context.close();console.log('PASS branding without discovered images is labeled honestly and creates only blank manual fields');
   }
   {
-    const {context,page,errors}=await fresh(request=>({status:'running',branding:brandingFor(request)}));await mockBrandingAssets(context);
+    const {context,page,errors,baseline}=await fresh(request=>({status:'running',branding:brandingFor(request)}));await mockBrandingAssets(context);
     await requestDraft(page,['sms']);await page.locator('#useAiBranding').waitFor({timeout:70000});assert.match(await page.locator('.ai-error').innerText(),/deadline/);
-    await page.locator('#useAiBranding').click();const record=await recovered(page);assert.equal(record.scenarios.length,2);assert.match(record.scenarios.find(item=>item.id===record.activeId).avatar,/^data:image/);
+    await page.locator('#useAiBranding').click();const record=await recovered(page);assert.equal(record.scenarios.length,baseline.scenarios.length+1);assert.match(record.scenarios.find(item=>item.id===record.activeId).avatar,/^data:image/);
     assert.deepEqual(errors,[]);await context.close();console.log('PASS browser polling deadline preserves branding from a running job without claiming AI success');
   }
 }catch(error){
