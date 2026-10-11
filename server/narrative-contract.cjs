@@ -152,9 +152,16 @@ function contrary(value, kind) {
   // Target contrary predicates; "haven't signed up"/"don't forget to join"
   // are not refusals. This deliberately is not universal negation inference.
   const negative = "(?:not|never|cannot|can't|won't|don't|doesn't|isn't|aren't|no)";
+  if (kind === 'membership_benefits') {
+    // A specific exclusion (e.g. an optional loyalty program) does not deny
+    // generic membership benefits. Only veto an explicit denial of that topic.
+    const subject = '(?:membership|subscription|plan|it)';
+    const benefits = '(?:(?:any|membership|subscription|plan)\\s+){0,2}(?:benefits?|perks?)\\b';
+    return new RegExp('\\b'+subject+'\\s+(?:(?:does|will|can)\\s+not|doesn\'t|won\'t|cannot|can\'t)\\s+(?:include|cover|offer|provide|have)\\s+'+benefits,'i').test(value)
+      || new RegExp('\\b'+subject+'\\s+(?:has|includes|covers|offers|provides)\\s+no\\s+'+benefits,'i').test(value);
+  }
   const predicate = {
     renewal_reminder:'(?:renew\\w*|due|expir\\w*)',
-    membership_benefits:'(?:include\\w*|cover\\w*|offer\\w*|provide\\w*)',
     loyalty_invitation:'(?:join\\w*|enrol\\w*|sign up)',
     human_handoff:'(?:connect\\w*|transfer\\w*|bring|introduce|speak)',
     renewal_incentive:'(?:(?:offer|give|award|receive|earn|add|credit)\\w*|bonus|extra|additional)',
@@ -176,7 +183,11 @@ function requirementMatch(requirement, turn, hasMembership) {
       matches=timings.some(item=>item.amount===requirement.duration.amount && item.unit===requirement.duration.unit);
       if(timings.some(item=>item.amount!==requirement.duration.amount || item.unit!==requirement.duration.unit)) contradiction=true;
     } else if (requirement.id === 'membership_inquiry') matches=hasMembership && /\b(?:what|which|includes|included|covers|benefits|perks)\b/.test(value) && /\b(?:what|which|can you|could you|tell me|explain|does|included|includes)\b/.test(value);
-    else if (requirement.id === 'membership_benefits') matches=hasMembership && /\b(?:includes?|included|covers?|comes with|you get|you receive|access to|benefits? (?:are|include)|perks? (?:are|include))\b/.test(value);
+    else if (requirement.id === 'membership_benefits') {
+      const cues=[...value.matchAll(/\b(?:includes?|included|covers?|comes with|you get|you receive|access to|benefits? (?:are|include)|perks? (?:are|include))\b/g)];
+      matches=hasMembership && cues.some(cue=>!/(?:\bnot|\bnever|\bcannot|\bcan't|\bwon't|\bdon't|\bdoesn't|\bisn't|\baren't|\bno)(?:\s+(?:be|able|to|any|more|you|we|will|can)){0,3}\s+$/.test(value.slice(0,cue.index)));
+      if (contrary(value,requirement.id)) contradiction=true;
+    }
     else if (requirement.id === 'loyalty_invitation') matches=/\b(?:join|enrol\w*|sign (?:you |me )?up|opt in|become a member)\b/.test(value) && (loyalty.test(visible) || /\b(?:program|club)\b/.test(value));
     else if (requirement.id === 'renewal_hesitation') matches=hesitation.test(value);
     else if (requirement.id === 'human_handoff') matches=human.test(value) && /\b(?:connect\w*|transfer\w*|bring\w*|join\w*|introduc\w*|hand ?off|i'm|i am|speak)\b/.test(value) || Boolean(requirement.representative && value.includes(normalized(requirement.representative)+' here'));

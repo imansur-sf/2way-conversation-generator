@@ -675,6 +675,8 @@ test('supported negative predicates and timing contradictions cannot pass by key
     ['renewal_reminder',0,'Your membership renews in 14 days. Actually, your membership renews in 30 days.'],
     ['renewal_reminder',0,'Your membership renews in 14 days and renews in 30 days.'],
     ['membership_benefits',2,"Your plan doesn't include any membership benefits. Join the rewards program."],
+    ['membership_benefits',2,'Your membership has no benefits. Join the rewards program.'],
+    ['membership_benefits',2,'Your membership includes benefits. Your membership has no benefits. Join the rewards program.'],
     ['loyalty_invitation',2,"Your plan includes membership benefits. Don't join the rewards program."],
     ['renewal_incentive',5,'Renewing will not earn any extra loyalty points. Redeem points for savings, event tickets and gift certificates with participating businesses.'],
     ['loyalty_redemption',5,'Renew and earn extra loyalty points. You cannot redeem points for savings, event tickets and gift certificates with participating businesses.'],
@@ -684,6 +686,22 @@ test('supported negative predicates and timing contradictions cannot pass by key
   }
   const benign=clone(ewc.rawDraft);benign.scenarios.sms.turns[2].text="Your plan includes benefits. You haven't signed up yet; don't forget to join the loyalty program.";
   assert.doesNotThrow(()=>validateAndNormalizeDraft(benign,input,evidence));
+});
+
+test('specific benefits exclusions do not contradict a positive membership explanation',()=>{
+  for(const text of [
+    'Your membership includes the benefits listed in your plan. It does not include the optional loyalty program, which you can join separately.',
+    'Your membership includes the benefits listed in your plan but does not include the optional loyalty program, which you can join separately.',
+    'Your membership includes the benefits listed in your plan. The optional loyalty program does not include benefits yet, but you can join the program separately.',
+  ]){
+    const raw=clone(ewc.rawDraft);
+    for(const channel of CHANNELS) raw.scenarios[channel].turns[2].text=text;
+    const result=validateAndNormalizeDraft(raw,ewc.request,evidence);
+    for(const channel of CHANNELS) assert.equal(result.draft.scenarios[channel].turns[2].text,text);
+  }
+  const negativeOnly=clone(ewc.rawDraft);
+  negativeOnly.scenarios.sms.turns[2].text='It does not include the optional loyalty program, which you can join separately.';
+  assert.throws(()=>validateAndNormalizeDraft(negativeOnly,{...ewc.request,channels:['sms']},evidence),error=>error.issues.some(item=>item.code==='missing_requirement'&&item.requirementId==='membership_benefits'));
 });
 
 test('renewal timing belongs to its renewal cue rather than another duration in the sentence',()=>{
