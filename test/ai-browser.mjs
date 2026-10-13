@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
-import {readFile,mkdtemp,rm} from 'node:fs/promises';
+import {readFile,mkdtemp,mkdir,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -127,6 +127,10 @@ try{
       assert.equal(await page.evaluate(()=>JSON.parse(sessionStorage.getItem('two-way-experience-studio-v2-generation-controls')).sender),value);
     }
     await sender.selectOption('company');
+    await page.setViewportSize({width:420,height:900});
+    const bounds=await sender.boundingBox();assert.ok(bounds && bounds.x>=0 && bounds.x+bounds.width<=420);
+    await mkdir('test-results',{recursive:true});await page.locator('#setupAssistant').screenshot({path:'test-results/first-sender-mobile.png'});
+    await page.setViewportSize({width:1600,height:1100});
     await page.reload({waitUntil:'domcontentloaded'});await page.evaluate(()=>window.__twoWayScenarioInitialization);
     if(await page.locator('#chooseManual').isVisible())await page.locator('#chooseManual').click();
     await page.locator('#switchToAi').click();
