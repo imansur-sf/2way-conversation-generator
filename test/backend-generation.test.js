@@ -506,6 +506,7 @@ test('ordinary possessives and contractions never become scripted dialogue',()=>
   assert.equal(pipeline.calls.length,0);assert.equal(pipeline.network.length,0);
 });
 test('single quoted dialogue preserves apostrophes and named speakers',()=>{
+  for(const verb of ['says','asks','replies','responds']) assert.equal(explicitTurns(`Company ${verb}'Hello.'`)[0].text,'Hello.');
   for(const [open,close] of [["'","'"],['‘','’']]) {
     for(const name of ["O'Neill",'O’Neill']) {
       const message=`I'm ready; it’s ${name}'s pickup and a 5'10 measurement.`;

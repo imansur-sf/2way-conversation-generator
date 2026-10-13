@@ -38,14 +38,14 @@ function explicitTurns(useCase, includeRanges = false) {
   // Bare labels require a colon and identify a transcript speaker only. They
   // never establish persona names: "Customer Support:" remains anonymous.
   const label = `${role}(?:[ \\t]*\\([^\\n)]{1,120}\\)|[ \\t]+(?:named|called)[ \\t]+${name}|[ \\t]+${name}(?=[ \\t]*:))?`;
-  const pattern = new RegExp(`\\b${label}\\s*(?:(?:says?|asks?|repl(?:y|ies)|responds?)\\s*)?(?::|-)??\\s*(["“‘'])`, 'giu');
+  const pattern = new RegExp(`\\b${label}\\s*(?:(says?|asks?|repl(?:y|ies)|responds?)\\s*)?(?::|-)??\\s*(["“‘'])`, 'giu');
   for (const match of useCase.matchAll(pattern)) {
     if (occupied.some(([start, end]) => match.index >= start && match.index < end)) continue;
-    const open = match[2], close = ({'“':'”', '‘':'’'})[open] || open;
+    const open = match[3], close = ({'“':'”', '‘':'’'})[open] || open;
     const start = match.index + match[0].length;
     // A possessive or contraction (company's, customer'd) is prose, not a
     // transcript delimiter. Also avoid partial matches inside named speakers.
-    if (open === "'" && /[\p{L}\p{M}\p{N}]/u.test(useCase[start - 2] || '')) continue;
+    if (open === "'" && !match[2] && /[\p{L}\p{M}\p{N}]/u.test(useCase[start - 2] || '')) continue;
     let end = start;
     for (; end < useCase.length; end++) {
       if (useCase[end] !== close || useCase[end - 1] === '\\') continue;
