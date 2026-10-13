@@ -42,7 +42,7 @@ function environment(extra = {}) {
     ensureJourneyState(){}, bindSaveAllControl(){}, announce(){}, $:()=>null,
     setTimeout, clearTimeout, ...extra,
   });
-  vm.runInContext(fn('scenarioRecordTime')+fn('unsupportedScenarioRecord'),context);return context;
+  vm.runInContext(fn('withErrorSupport')+fn('scenarioRecordTime')+fn('unsupportedScenarioRecord'),context);return context;
 }
 function installPersistence(context) {
   vm.runInContext([fn('readableBytes'),fn('storageFailureDetail'),fn('writeSmallLocalCache'),fn('preserveDurableRecoveryRecord'),fn('markBlockedScenarioEdit'),source('persist=function(){captureJourneyVariant();if(isStandaloneExport){const saveState=$(\'#saveState\');if(saveState)saveState.textContent=\'Standalone HTML\';return Promise.resolve(true)}')].join('\n'),context);
@@ -162,7 +162,7 @@ test('unsupported records remain protected in recovery mode; blocked edits stay 
     context.notices.length=0;context.renderAll();assert.equal(context.notices.at(-1).outcome,'blocked-edit','read-only warning is re-established after builder re-render');
     let prevented=false;const event={preventDefault(){prevented=true}};listeners.beforeunload(event);assert.equal(prevented,true);assert.equal(event.returnValue,'');
     const saveNode={},notice={classList:{add(){},remove(){}}};context.$=selector=>selector==='#saveState'?saveNode:selector==='#storageNotice'?notice:null;context.esc=value=>value;
-    vm.runInContext(fn('showStorageNotice'),context);context.renderAll();assert.equal(saveNode.textContent,'Changes not saved');assert.match(notice.innerHTML,/not saved/);assert.match(notice.innerHTML,/export/i);
+    vm.runInContext(fn('showStorageNotice'),context);context.renderAll();assert.equal(saveNode.textContent,'Changes not saved');assert.match(notice.innerHTML,/not saved/);assert.match(notice.innerHTML,/export/i);assert.match(notice.innerHTML,/Slack Imran Mansur/);
   }
 });
 
