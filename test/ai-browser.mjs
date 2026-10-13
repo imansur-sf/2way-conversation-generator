@@ -128,7 +128,8 @@ try{
     }
     await sender.selectOption('company');
     await page.reload({waitUntil:'domcontentloaded'});await page.evaluate(()=>window.__twoWayScenarioInitialization);
-    if(await page.locator('#switchToAi').isVisible())await page.locator('#switchToAi').click();
+    if(await page.locator('#chooseManual').isVisible())await page.locator('#chooseManual').click();
+    await page.locator('#switchToAi').click();
     await sender.waitFor();assert.equal(await sender.inputValue(),'company');assert.equal(await sender.count(),1);
     assert.deepEqual(errors,[]);await context.close();console.log('PASS first sender is labelled, visible above the brief, and retained after reload');
   }
