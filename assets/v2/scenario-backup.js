@@ -44,6 +44,6 @@
         sessionStorage.setItem(restoreFlag, '1');
         location.reload();
       }
-    } catch { announce('Local scenario backup is unavailable in this browser.'); }
+    } catch { announce('Local scenario backup is unavailable in this browser. Export scenario JSON to keep a backup. If troubleshooting doesn’t resolve the error, feel free to Slack Imran Mansur to look into the issue.'); }
   };
 };

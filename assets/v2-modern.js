@@ -36,7 +36,7 @@
       copy.append(status);
       if (image) {
         image.addEventListener('load', () => setStatus('ready', 'Preview ready'), { once:true });
-        image.addEventListener('error', () => setStatus('unavailable', 'Image unavailable — upload a replacement or use another URL'), { once:true });
+        image.addEventListener('error', () => setStatus('unavailable', 'Image unavailable — upload a replacement or use another URL. If troubleshooting doesn’t resolve the error, feel free to Slack Imran Mansur to look into the issue.'), { once:true });
       }
       const apply = control.querySelector('[data-image-url-apply]');
       if (apply && !apply.dataset.v2ImageStateBound) {
@@ -123,7 +123,7 @@
     const assetStates = [...root.querySelectorAll('.v2-image-state')].map(node=>node.dataset.state);
     const unavailable = assetStates.filter(state=>state==='unavailable').length,checking = assetStates.filter(state=>state==='checking').length;
     const issues = [...review.issues];
-    if (unavailable) issues.push({kind:'warning',text:`${unavailable} image(s) need a replacement.`});
+    if (unavailable) issues.push({kind:'warning',text:`${unavailable} image(s) need a replacement. Upload a replacement or use another URL. If troubleshooting doesn’t resolve the error, feel free to Slack Imran Mansur to look into the issue.`});
     if (checking) issues.push({kind:'warning',text:`${checking} image(s) are still being checked.`});
     const signature = JSON.stringify({review,assetStates}),existing = root.querySelector('.v2-scenario-qa');
     if (existing?.dataset.signature === signature) return;
@@ -408,7 +408,7 @@
     if(detail.status==='starting'){activeAiRequest=detail.requestId;lastRequirements=null;lastSource=null;}
     if(!detail.requestId||detail.requestId!==activeAiRequest)return;
     jobStatus=detail.status || '';
-    if(jobStatus==='failed')announce('Draft generation could not complete. Review the reported reason and try again.');
+    if(jobStatus==='failed')announce('Draft generation could not complete. Review the reported reason and try again. If troubleshooting doesn’t resolve the error, feel free to Slack Imran Mansur to look into the issue.');
     hydrate();
   });
   document.addEventListener('twoway:ai-draft', event => {
