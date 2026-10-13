@@ -374,3 +374,5 @@ dialog.rcs-image-cropper::backdrop { background:transparent; }
   body #stage .gmail :is(.scenario-email-copy,.scenario-email-footer) { padding-inline:18px; }
   body #stage .gmail .scenario-email img { max-width:100%; }
 }
+
+.v2-opening-sender select { width:100%; min-width:0; min-height:40px; padding:8px 10px; border:1px solid #93c5ed; border-radius:8px; color:#193f68; background:#fff; font:inherit; }

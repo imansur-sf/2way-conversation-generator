@@ -33,7 +33,7 @@ function normalizeControls(value) {
 
 function explicitTurns(useCase, includeRanges = false) {
   const found = [], occupied = [];
-  const role = '(company|brand|customer|prospect|recipient|lead)';
+  const role = '(company|brand|customer|prospect|recipient|lead)\\b';
   const name = "[\\p{L}][\\p{L}\\p{M}'’\\-]{0,79}(?:[ \\t]+[\\p{L}][\\p{L}\\p{M}'’\\-]{0,79}){0,5}?";
   // Bare labels require a colon and identify a transcript speaker only. They
   // never establish persona names: "Customer Support:" remains anonymous.
@@ -43,10 +43,13 @@ function explicitTurns(useCase, includeRanges = false) {
     if (occupied.some(([start, end]) => match.index >= start && match.index < end)) continue;
     const open = match[2], close = ({'“':'”', '‘':'’'})[open] || open;
     const start = match.index + match[0].length;
+    // A possessive or contraction (company's, customer'd) is prose, not a
+    // transcript delimiter. Also avoid partial matches inside named speakers.
+    if (open === "'" && /[\p{L}\p{M}\p{N}]/u.test(useCase[start - 2] || '')) continue;
     let end = start;
     for (; end < useCase.length; end++) {
       if (useCase[end] !== close || useCase[end - 1] === '\\') continue;
-      if (close === "'" && /\p{L}/u.test(useCase[end - 1] || '') && /\p{L}/u.test(useCase[end + 1] || '')) continue;
+      if (["'", '’'].includes(close) && /[\p{L}\p{M}\p{N}]/u.test(useCase[end - 1] || '') && /[\p{L}\p{M}\p{N}]/u.test(useCase[end + 1] || '')) continue;
       break;
     }
     if (end === useCase.length) throw failure('invalid_dialogue', [issue('invalid_dialogue', 'A role-labelled quoted message has no closing quote.')]);
@@ -77,13 +80,57 @@ function personFromPrompt(useCase, role) {
   return '';
 }
 
-function requestedInitialSender(useCase, companyName = '') {
-  const explicit = useCase.match(/\b(?:start|begin|open)(?:\s+the\s+(?:conversation|demo|flow))?\s+with\s+(?:the\s+)?(company|customer)\b/i)?.[1];
-  if (explicit) return explicit.toLowerCase();
-  const escaped = companyName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const subjects = [{speaker:'company', pattern:escaped ? `(?:company|brand|${escaped})` : '(?:company|brand)'}, {speaker:'customer', pattern:'(?:customer|prospect|recipient|lead)'}];
-  const matches = subjects.flatMap(({speaker, pattern}) => [...useCase.matchAll(new RegExp(`\\b${pattern}\\b[^.!?\\n]{0,90}?\\b(?:says?|sends?|shares?|announces?|invites?|responds?|asks?|reaches?\\s+out)\\b`, 'gi'))].map(match => ({speaker, index:match.index}))).sort((a, b) => a.index - b.index);
-  return matches[0]?.speaker || null;
+const escape = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+function companyAliases(companyName, prompt) {
+  const aliases = new Set([companyName.trim()].filter(Boolean));
+  const acronym = value => (value.match(/\p{L}[\p{L}\p{M}'’-]*/gu) || []).filter(word => !/^(?:the|and|of|for)$/i.test(word)).map(word => word[0]).join('').toUpperCase();
+  const base = companyName.replace(/\s*\([^)]*\)\s*/g, ' ').trim();
+  if (base) aliases.add(base);
+  const initials = acronym(base);
+  if (initials.length >= 2 && initials.length <= 8) aliases.add(initials);
+  for (const match of companyName.matchAll(/\(([A-Z]{2,8})\)/g)) aliases.add(match[1]);
+  // Expand a supplied acronym only from an exact initials match in this prompt.
+  if (/^[A-Z]{2,8}$/.test(base)) {
+    const tokens = [...prompt.matchAll(/\p{Lu}[\p{L}\p{M}'’-]*/gu)];
+    for (let start = 0; start < tokens.length; start++) {
+      for (let end = start + 1; end < Math.min(tokens.length, start + 8); end++) {
+        if (!/^[ \t]+$/.test(prompt.slice(tokens[end - 1].index + tokens[end - 1][0].length, tokens[end].index))) break;
+        const candidate = prompt.slice(tokens[start].index, tokens[end].index + tokens[end][0].length);
+        if (acronym(candidate) === base) aliases.add(candidate);
+      }
+    }
+  }
+  return [...aliases].sort((a,b) => b.length - a.length);
+}
+
+function openingDirectives(prompt) {
+  return [...prompt.matchAll(/\b(?:start|begin|open)(?:\s+the\s+(?:conversation|demo|flow))?\s+with\s+(?:the\s+)?(company|customer)\b/gi)].map(match=>{
+    const sender=match[1].toLowerCase(), negative=/\b(?:do not|don't|never|must not)\s*$/i.test(prompt.slice(Math.max(0,match.index-25),match.index));
+    return negative ? sender==='company'?'customer':'company' : sender;
+  });
+}
+function requestedInitialSender(prompt, companyName = '') {
+  const explicit=openingDirectives(prompt)[0];
+  if (explicit) return explicit;
+  const aliases = companyAliases(companyName, prompt).map(escape);
+  const actors = '(company|brand' + (aliases.length ? '|' + aliases.join('|') : '') + '|customer|prospect|recipient|lead)';
+  const name = "(?:[ \\t]+(?:named|called)[ \\t]+[\\p{L}'’ -]{1,80}?|[ \\t]*\\([^\\n)]{1,80}\\)|[ \\t]*,[ \\t]*[\\p{L}'’ -]{1,80}?,)?";
+  const modifiers = '(?:[ \\t]+(?:will|would|should|must|can|then|first|also|later|now|still|very|just|[\\p{L}]{2,20}ly)){0,3}';
+  const verbs = '(?:says?|sends?|shares?|announces?|invites?|responds?|repl(?:y|ies)|asks?|contacts?|messages?|reminds?|provides?|offers?|opens?|begins?|starts?|reaches?[ \\t]+out|follows?[ \\t]+up|checks?[ \\t]+in)';
+  const pattern = new RegExp('\\b' + actors + '\\b' + name + modifiers + '[ \\t]+' + verbs + '\\b', 'giu');
+  for (const match of prompt.matchAll(pattern)) {
+    const preceding = prompt.slice(Math.max(0, match.index - 35), match.index);
+    const sentencePrefix = prompt.slice(0, match.index).split(/[.!?\n]/).at(-1);
+    // A response/relative clause is not evidence of an opening action.
+    // A dependent sentence can contain several actors: "When the customer
+    // responds, the agent asks and the customer provides feedback."
+    if (/^\s*(?:when|after|once|until|if|while)\b/i.test(sentencePrefix)) continue;
+    if (/\b(?:which|who|whom|whose|that|when|after|once|until|if)\s+(?:(?:a|the|current)\s+)?$/i.test(preceding)) continue;
+    if (/\b(?:later|then|afterwards|subsequently)\b/i.test(preceding+match[0]) || /\b(?:responds?|repl(?:y|ies))\b/i.test(match[0])) return null;
+    return /^(?:customer|prospect|recipient|lead)$/i.test(match[1]) ? 'customer' : 'company';
+  }
+  return null;
 }
 
 function storyBrief(request) {

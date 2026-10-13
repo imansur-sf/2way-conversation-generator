@@ -116,6 +116,24 @@ async function offlineExport(context,page,channel,emailExpected=emailDefaults){
 try{
   browser=await chromium.launch(browserOptions);
   {
+    const {context,page,errors}=await fresh(request=>responseFor(request));
+    const sender=page.getByLabel('Who sends the first message?',{exact:true});
+    assert.equal(await sender.count(),1);
+    assert.equal(await sender.isVisible(),true);
+    assert.equal(await page.locator('.v2-generation-controls').getAttribute('open'),null);
+    assert.equal(await sender.evaluate(element=>Boolean(element.compareDocumentPosition(document.querySelector('#aiUseCase')) & Node.DOCUMENT_POSITION_FOLLOWING)),true);
+    for(const value of ['company','customer','']) {
+      await sender.selectOption(value);
+      assert.equal(await page.evaluate(()=>JSON.parse(sessionStorage.getItem('two-way-experience-studio-v2-generation-controls')).sender),value);
+    }
+    await sender.selectOption('company');
+    await page.reload({waitUntil:'domcontentloaded'});await page.evaluate(()=>window.__twoWayScenarioInitialization);
+    if(await page.locator('#switchToAi').isVisible())await page.locator('#switchToAi').click();
+    await sender.waitFor();assert.equal(await sender.inputValue(),'company');assert.equal(await sender.count(),1);
+    assert.deepEqual(errors,[]);await context.close();console.log('PASS first sender is labelled, visible above the brief, and retained after reload');
+  }
+
+  {
     const {context,page,requests,errors}=await fresh(request=>responseFor(request));
     const prompt='Deliberate prompt: José O’Neil meets Zoë. Preserve punctuation, commas, and channel-specific presentations.';
     await requestDraft(page,channels,{prompt});

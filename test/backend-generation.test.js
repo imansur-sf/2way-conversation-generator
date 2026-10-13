@@ -4,7 +4,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const {createRequire} = require('node:module');
 const test = require('node:test');
-const {CHANNELS, normalizeControls, storyBrief, explicitTurns, generationPolicy, validateAndNormalizeDraft, promptFallback, draftPrompt, draftResponseSchema} = require('../server/draft-contract.cjs');
+const {CHANNELS, normalizeControls, storyBrief, explicitTurns, requestedInitialSender, generationPolicy, validateAndNormalizeDraft, promptFallback, draftPrompt, draftResponseSchema} = require('../server/draft-contract.cjs');
 const {aiConfig, providerHealth, MAX_PROVIDER_ATTEMPTS, MAX_PROVIDER_OUTPUT_TOKENS} = require('../server/ai-config.cjs');
 
 const root = path.resolve(__dirname, '..');
@@ -485,4 +485,49 @@ test('failed jobs expose actionable validation issues and release their admissio
   const publicResult=JSON.parse(JSON.stringify(pipeline.publicJob(job)));
   assert.equal(publicResult.error,'draft_invalid');assert.ok(publicResult.issues.some(item=>item.code==='invalid_schema'));assert.equal(publicResult.draft,undefined);
   const replay=pipeline.startGenerationJob(request(),'retry','failed-key','synthetic-client');assert.equal(replay.reused,true);assert.equal(replay.job,job);assert.equal(pipeline.calls.length,2);
+});
+
+test('ordinary possessives and contractions never become scripted dialogue',()=>{
+  const pipeline=loadPipeline([]);
+  const original='The company follows up a closed case regarding a new dumpster pickup with a satisfaction survey, where the customer can tap 1-5 within the RCS. When the customer responds with , the company’s AI agent asks for feedback and the customer (Lauren) provides it.';
+  for(const useCase of [original, original.replace('company’s', "company's"),
+    "The company's AI asks about the customer's pickup.",
+    "The customer's feedback goes to the brand's agent.",
+    "The prospect's reply tells us the lead's preference.",
+    "The recipient's reply is useful.",
+    "The customer'd like help and the company'll follow up.",
+    "Customers' feedback informs the company's response.",
+  ]) {
+    const input=request({companyName:'Priority Waste',channels:['rcs'],useCase});
+    assert.equal(pipeline.validateDraftRequest(input).useCase,useCase);
+    assert.deepEqual(explicitTurns(useCase),[],'prose must not silently become exact dialogue');
+    assert.equal(storyBrief(input).persona.customerName,useCase.includes('(Lauren)')?'Lauren':'');
+  }
+  assert.equal(pipeline.calls.length,0);assert.equal(pipeline.network.length,0);
+});
+test('single quoted dialogue preserves apostrophes and named speakers',()=>{
+  for(const [open,close] of [["'","'"],['‘','’']]) {
+    for(const name of ["O'Neill",'O’Neill']) {
+      const message=`I'm ready; it’s ${name}'s pickup and a 5'10 measurement.`;
+      const turns=explicitTurns(`Customer named ${name} says ${open}${message}${close} Company: ${open}Thanks.${close}`);
+      assert.deepEqual(turns.map(({speaker,text})=>({speaker,text})),[{speaker:'customer',text:message},{speaker:'company',text:'Thanks.'}]);
+    }
+    assert.throws(()=>explicitTurns(`Customer says ${open}I'm ready, but this message is unfinished.`),{code:'invalid_dialogue'});
+  }
+  assert.deepEqual(explicitTurns('The company saysomething" is descriptive text.'),[]);
+});
+test('survey follow-ups infer the company opener without treating later feedback as an opening',async()=>{
+  const useCase='The company follows up a closed case regarding a new dumpster pickup with a satisfaction survey, where the customer can tap 1-5 within the RCS. When the customer responds with , the company’s AI agent asks for feedback and the customer (Lauren) provides it.';
+  const input=request({companyName:'Priority Waste',channels:['rcs'],useCase});
+  assert.equal(storyBrief(input).initialSender,'company');
+  assert.equal(storyBrief({...input,controls:{initialSender:'customer'}}).initialSender,'customer');
+  for(const prompt of ['Company checks in about a pickup. Customer asks a question.', 'Priority Waste follows up about a pickup.']) assert.equal(requestedInitialSender(prompt,'Priority Waste'),'company');
+  for(const prefix of ['When','After','Once','Until','If','While']) {
+    assert.equal(requestedInitialSender(`${prefix} the customer responds, the customer (Lauren) provides feedback.`),null);
+  }
+  const generated=draft(['rcs']);generated.companyName='Priority Waste';
+  generated.scenarios.rcs.turns=[{speaker:'company',text:'Lauren, please rate your dumpster pickup from 1 to 5.'},{speaker:'customer',text:'4',mode:'choices',options:['1','2','3','4','5']},{speaker:'company',text:'Lauren, can you share feedback?'},{speaker:'customer',text:'The pickup went well.'}];
+  const pipeline=loadPipeline([generated]);
+  const result=await pipeline.generateScenarioDraft(input,'priority-waste-follow-up');
+  assert.equal(result.draft.initialSender,'company');assert.equal(result.source.mode,'provider');assert.equal(pipeline.calls.length,1,'correct company-first output needs no repair request');
 });

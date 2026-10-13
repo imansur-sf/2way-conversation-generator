@@ -75,16 +75,23 @@
     if (!form || form.querySelector('.v2-generation-controls')) return;
     const controls = document.createElement('details');
     controls.className = 'v2-generation-controls';
-    controls.innerHTML = '<summary>Generation controls <span>Optional precision</span></summary><div class="v2-generation-controls__body"><label>Opening sender<select data-v2-opening-sender><option value="">Follow the prompt</option><option value="company">Company opens</option><option value="customer">Customer opens</option></select></label><label>Exact message total<input type="number" min="2" max="12" step="1" inputmode="numeric" placeholder="Follow the prompt" data-v2-message-total></label><label>Customer name<input data-v2-customer-name placeholder="Not specified"></label><label>Representative name<input data-v2-representative-name placeholder="Not specified"></label><label>Representative role<input data-v2-representative-role placeholder="Not specified"></label><p>Optional structured requirements. Your prompt is kept unchanged; conflicting dialogue must be resolved before generation.</p></div>';
+    const sender = document.createElement('div');
+    sender.className = 'v2-opening-sender';
+    sender.innerHTML = '<label class="label" for="aiOpeningSender">Who sends the first message?</label><select id="aiOpeningSender" data-v2-opening-sender aria-describedby="aiOpeningSenderHelp"><option value="">Follow the prompt</option><option value="company">Company opens</option><option value="customer">Customer opens</option></select><p id="aiOpeningSenderHelp" class="ai-note">Choose the first sender to make the opening explicit. This applies to all selected channels.</p>';
+    const brief = form.querySelector('#aiUseCase');
+    const briefLabel = brief?.previousElementSibling;
+    (briefLabel?.tagName === 'LABEL' ? briefLabel : brief)?.before(sender);
+    controls.innerHTML = '<summary>Generation controls <span>Optional precision</span></summary><div class="v2-generation-controls__body"><label>Exact message total<input type="number" min="2" max="12" step="1" inputmode="numeric" placeholder="Follow the prompt" data-v2-message-total></label><label>Customer name<input data-v2-customer-name placeholder="Not specified"></label><label>Representative name<input data-v2-representative-name placeholder="Not specified"></label><label>Representative role<input data-v2-representative-role placeholder="Not specified"></label><p>Optional structured requirements. Your prompt is kept unchanged; conflicting dialogue must be resolved before generation.</p></div>';
     form.querySelector('#generateAiDraft')?.before(controls);
     const storageKey = 'two-way-experience-studio-v2-generation-controls';
     let saved = {};
     try { saved = JSON.parse(sessionStorage.getItem(storageKey) || '{}'); } catch {}
     const fields = {sender:'[data-v2-opening-sender]',total:'[data-v2-message-total]',customerName:'[data-v2-customer-name]',representativeName:'[data-v2-representative-name]',representativeRole:'[data-v2-representative-role]'};
-    for (const [key,selector] of Object.entries(fields)) controls.querySelector(selector).value = saved[key] || '';
-    const save = () => { try { sessionStorage.setItem(storageKey, JSON.stringify(Object.fromEntries(Object.entries(fields).map(([key,selector]) => [key,controls.querySelector(selector).value])))); } catch {} };
+    for (const [key,selector] of Object.entries(fields)) form.querySelector(selector).value = saved[key] || '';
+    const save = () => { try { sessionStorage.setItem(storageKey, JSON.stringify(Object.fromEntries(Object.entries(fields).map(([key,selector]) => [key,form.querySelector(selector).value])))); } catch {} };
     controls.addEventListener('input', save);
     controls.addEventListener('change', save);
+    sender.addEventListener('change', save);
   };
   const hydrateFlowMap = root => {
     const steps = root.querySelector('#steps');
