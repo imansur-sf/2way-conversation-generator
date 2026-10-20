@@ -1,3 +1,4 @@
+import { editor, revealEditor, selectView } from './workspace-helpers.mjs';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -35,7 +36,7 @@ async function seed(page,scenarios,{savedAt=200,durable=null}={}){
   },{key,scenarios,savedAt,durable});
 }
 async function boot(page,url=base){await page.goto(url,{waitUntil:'domcontentloaded'});await page.evaluate(()=>window.__twoWayScenarioInitialization);assert.equal(await page.locator('.builder').evaluate(node=>node.inert),false)}
-async function manual(page){if(await page.locator('#chooseManual').isVisible())await page.locator('#chooseManual').click()}
+async function manual(page){if(await page.locator('#chooseManual').isVisible())await (await editor(page, '#chooseManual')).click()}
 async function record(page){return page.evaluate(key=>JSON.parse(localStorage.getItem(key)),key)}
 async function failureDiagnostics(){
   if(!latestPage||latestPage.isClosed())return {pageClosed:true,pageErrors:latestErrors};
@@ -51,7 +52,7 @@ try{
     const {context,page,errors}=await fresh();
     await seed(page,[scenario('newer-cache')],{durable:{version:2,savedAt:100,activeId:'old-database',scenarios:[scenario('old-database')]}});
     await boot(page);assert.equal(await page.locator('#scenarioSelect').inputValue(),'newer-cache');
-    await page.locator('#scenarioName').fill('Saved cache edit');
+    await (await editor(page, '#scenarioName')).fill('Saved cache edit');
     await page.waitForFunction(()=>document.querySelector('#saveState')?.textContent==='Saved on this device');
     await boot(page);assert.equal(await page.locator('#scenarioName').inputValue(),'Saved cache edit');
     assert.equal(await page.evaluate(()=>localStorage.getItem('two-way-studio-v4')),'preserve this legacy record');
@@ -76,27 +77,27 @@ try{
     const {context,page,errors}=await fresh();await seed(page,[scenario('A'),scenario('B')]);await boot(page);await manual(page);
     let finishImage;const requested=new Promise(resolve=>{finishImage=resolve});let release;
     await context.route('**/api/asset?**',async route=>{finishImage();await new Promise(resolve=>release=resolve);await route.fulfill({json:{dataUrl:'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxIiBoZWlnaHQ9IjEiLz4='}})});
-    const control=page.locator('[data-image-asset][data-image-key="avatar"]');
+    const control=await editor(page, '[data-image-asset][data-image-key="avatar"]');
     await control.locator('[data-image-url-open]').click();await control.locator('[data-image-url]').fill(`${base}/delayed-image.png`);await control.locator('[data-image-url-apply]').click();await requested;
-    await page.locator('#scenarioSelect').selectOption('B');release();
+    await (await editor(page, '#scenarioSelect')).selectOption('B');release();
     await page.waitForFunction(key=>JSON.parse(localStorage.getItem(key)).scenarios.find(item=>item.id==='A')?.avatar?.startsWith('data:image/'),key);
     const saved=await record(page);assert.equal(saved.scenarios.find(item=>item.id==='B').avatar,'');
     assert.deepEqual(errors,[]);results.push('delayed image remains assigned to initiating scenario');await context.close();
   }
   if(selected('runtime')){
     const {context,page,errors}=await fresh();await seed(page,[scenario('A','A SECRET REPLY'),scenario('B')]);await boot(page);await manual(page);
-    await page.locator('#stage [data-start-main]').click();await page.locator('#phoneInput').fill('Hi');await page.locator('#phoneSend').click();await page.locator('#scenarioSelect').selectOption('B');
+    await (await editor(page, '#stage [data-start-main]')).click();await (await editor(page, '#phoneInput')).fill('Hi');await (await editor(page, '#phoneSend')).click();await (await editor(page, '#scenarioSelect')).selectOption('B');
     await page.waitForTimeout(1200);assert.doesNotMatch(await page.locator('#stage').innerText(),/A SECRET REPLY/);
     const count=await page.locator('#scenarioSelect option').count();const before=await record(page);
     const dialog=page.waitForEvent('dialog').then(async event=>{assert.match(event.message(),/valid scenario JSON/);await event.accept()});
-    await page.locator('#importScenarioFile').setInputFiles({name:'invalid.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify({scenarios:[scenario('partial'),null]}))});await dialog;
+    await (await editor(page, '#importScenarioFile')).setInputFiles({name:'invalid.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify({scenarios:[scenario('partial'),null]}))});await dialog;
     assert.equal(await page.locator('#scenarioSelect option').count(),count);assert.deepEqual(await record(page),before);
     assert.deepEqual(errors,[]);results.push('reply cancellation and atomic invalid import');await context.close();
   }
   if(selected('timeout')){
     const {context,page,errors}=await fresh();await seed(page,[scenario('Fallback')]);
     await context.addInitScript(()=>{Object.defineProperty(window,'indexedDB',{configurable:true,value:{open(){return {}}}});const nativeTimeout=window.setTimeout;window.setTimeout=(callback,delay,...args)=>nativeTimeout(callback,delay===5000?50:delay,...args)});
-    await boot(page);await page.locator('#scenarioName').fill('Fallback saved');
+    await boot(page);await (await editor(page, '#scenarioName')).fill('Fallback saved');
     await page.waitForFunction(()=>document.querySelector('#saveState')?.textContent==='Saved in browser backup',null,{timeout:12000});
     assert.equal((await record(page)).scenarios.find(item=>item.id==='Fallback').name,'Fallback saved');
     assert.deepEqual(errors,[]);results.push('hung database releases editing and supports truthful cache fallback');await context.close();
@@ -104,7 +105,7 @@ try{
   if(selected('large')){
     const {context,page,errors}=await fresh();const large=scenario('Large');large.notes='x'.repeat(420001);await seed(page,[large]);const original=await record(page);
     await context.addInitScript(()=>Object.defineProperty(window,'indexedDB',{configurable:true,value:{open(){throw new DOMException('Storage unavailable','SecurityError')}}}));
-    await boot(page);await page.locator('#scenarioName').fill('Unsaved large change');
+    await boot(page);await (await editor(page, '#scenarioName')).fill('Unsaved large change');
     await page.waitForFunction(()=>document.querySelector('#saveState')?.textContent==='Save needs attention');
     assert.deepEqual(await record(page),original);assert.match(await page.locator('#storageNotice').innerText(),/were not saved/);
     assert.deepEqual(errors,[]);results.push('large failed save preserves original and reports unsaved');await context.close();
@@ -114,7 +115,7 @@ try{
     malicious.steps[0].id='opening"><img src=/missing onerror=window.__reviewMarker=true><i data-x="';
     await seed(page,[malicious]);await boot(page);await manual(page);
     assert.equal(await page.evaluate(()=>Boolean(window.__reviewMarker)),false);
-    await page.locator('#scenarioName').fill('Normalized saved scenario');
+    await (await editor(page, '#scenarioName')).fill('Normalized saved scenario');
     await page.waitForFunction(()=>document.querySelector('#saveState')?.textContent==='Saved on this device');
     for(const item of (await record(page)).scenarios)for(const step of item.steps||[])assert.match(step.id,/^[a-zA-Z0-9_-]+$/);
     const payload=encodeURIComponent(Buffer.from(JSON.stringify(malicious)).toString('base64'));

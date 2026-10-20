@@ -43,17 +43,17 @@ try {
       await frame.getByText('Unsafe',{exact:true}).click();
       assert.equal(await frame.locator('body').evaluate(()=>window.__auditProbe===true),false,'Custom HTML scripts, handlers and javascript links must remain blocked inside the frame');
       assert.equal(await page.evaluate(()=>window.__auditProbe===true),false,'Custom HTML must not execute in the parent');
-      await page.locator('[data-v2-preview-present]').click();
+      await page.locator('#presentation').click();
       await frame.getByText('Keep this formatting',{exact:true}).click();
       await page.keyboard.press('Escape');
       await page.waitForFunction(()=>!document.body.classList.contains('presentation'));
       assert.deepEqual(forbiddenRequests,[],'External scripts, nested frames/objects and meta refresh must remain blocked');
       assert.equal(await frame.locator('iframe,frame,object,embed').count(),0,'Blocked nested browsing contexts must not leave focusable blank surfaces');
-      await page.locator('[data-v2-preview-present]').click();
+      await page.locator('#presentation').click();
       await frame.getByText('Open destination',{exact:true}).click();
       await frame.getByText('Destination',{exact:true}).waitFor();
       await page.waitForFunction(()=>!document.body.classList.contains('presentation'));
-      assert.equal(await page.locator('[data-v2-preview-present]').isVisible(),true,'Following an outgoing email link restores presentation controls');
+      assert.equal(await page.locator('#presentation').isVisible(),true,'Following an outgoing email link restores presentation controls');
       assert.equal(await frame.locator('body').evaluate(()=>window.__auditProbe===true),false,'Script blocking survives navigation to another origin');
       assert.equal(await page.evaluate(()=>window.__auditProbe===true),false);
     }

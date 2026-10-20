@@ -1,3 +1,4 @@
+import { editor, revealEditor, selectView } from './workspace-helpers.mjs';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -42,7 +43,7 @@ async function runCase(name,work) {
 
 async function enableManual(page) {
   await page.evaluate(async () => { await window.__twoWayScenarioInitialization; });
-  if (await page.locator('#chooseManual').isVisible()) await page.locator('#chooseManual').click();
+  if (await page.locator('#chooseManual').isVisible()) await (await editor(page, '#chooseManual')).click();
 }
 
 async function waitForAcknowledgedSave(page) {
@@ -173,7 +174,7 @@ try {
   assert.match(await corruptJourneyPage.locator('#stage').textContent(), /Recovered opening message/, 'The active channel must retain its valid root flow when its saved variant is incomplete');
   const repairedJourney = await corruptJourneyPage.evaluate(() => JSON.parse(localStorage.getItem('two-way-experience-studio-v2-scenarios')).scenarios.find(scenario => scenario.id === 'customer-initiated-initial-message'));
   assert.ok(Array.isArray(repairedJourney.variants.rcs.steps), 'The repaired channel variant must persist a steps array for future page loads');
-  await corruptJourneyPage.locator('[data-channel="email"]').click();
+  await (await editor(corruptJourneyPage, '[data-channel="email"]')).click();
   await corruptJourneyPage.waitForSelector('#scenarioSelect option', {state:'attached'});
   assert.ok(await corruptJourneyPage.locator('#scenarioSelect option').count() >= 2, 'A malformed inactive channel variant must not blank the app when opened');
   const normalizedEmailSteps = await corruptJourneyPage.evaluate(() => JSON.parse(localStorage.getItem('two-way-experience-studio-v2-scenarios')).scenarios.find(scenario => scenario.id === 'customer-initiated-initial-message').variants.email.steps);
@@ -200,14 +201,14 @@ try {
   });
   await emailPage.goto(baseUrl, { waitUntil:'networkidle' });
   await emailPage.evaluate(async () => { await window.__twoWayScenarioInitialization; });
-  if (await emailPage.locator('#chooseManual').isVisible()) await emailPage.locator('#chooseManual').click();
+  if (await emailPage.locator('#chooseManual').isVisible()) await (await editor(emailPage, '#chooseManual')).click();
   const emailInboxOpening = await emailPage.locator('[data-email="0"]').textContent();
   assert.match(emailInboxOpening, /Opening email copy/, 'The Gmail inbox preview must use the first company email response');
   assert.doesNotMatch(emailInboxOpening, /This legacy body must not create a second email/, 'The Gmail inbox preview must not show a stale scenario-level email body');
   const emailFlowStartCount = await emailPage.locator('#steps article.block').count();
-  await emailPage.locator('#emailAddReply').click();
+  await (await editor(emailPage, '#addCustomer')).click();
   await emailPage.waitForFunction(count => document.querySelectorAll('#steps article.block').length === count + 1, emailFlowStartCount);
-  await emailPage.locator('#emailAddResponse').click();
+  await (await editor(emailPage, '#addBrand')).click();
   await emailPage.waitForFunction(count => document.querySelectorAll('#steps article.block').length === count + 2, emailFlowStartCount);
   await emailPage.evaluate(()=>{
     const trace=window.__emailSequenceTrace=[];
@@ -221,20 +222,20 @@ try {
     new MutationObserver(()=>record('preview-mutation','stage')).observe(document.querySelector('#stage'),{childList:true,subtree:true});
   });
   try{
-  await emailPage.locator('[data-email="0"]').click();
+  await (await editor(emailPage, '[data-email="0"]')).click();
   assert.equal(await emailPage.locator('.scenario-email').count(), 1, 'A company-first opening email must render once, even when the active scenario projection recreates its step object');
-  await emailPage.locator('#openEmailReply').click();
-  await emailPage.locator('#emailInput').fill('First customer reply');
-  await emailPage.locator('#emailSend').click();
+  await (await editor(emailPage, '#openEmailReply')).click();
+  await (await editor(emailPage, '#emailInput')).fill('First customer reply');
+  await (await editor(emailPage, '#emailSend')).click();
   await emailPage.waitForFunction(() => document.querySelector('#stage')?.textContent?.includes('First company reply'));
-  await emailPage.locator('#openEmailReply').click();
-  await emailPage.locator('#emailInput').fill('Second customer reply');
+  await (await editor(emailPage, '#openEmailReply')).click();
+  await (await editor(emailPage, '#emailInput')).fill('Second customer reply');
   assert.equal(await emailPage.locator('#emailInput').inputValue(),'Second customer reply','The second draft must exist before sending');
-  await emailPage.locator('#emailSend').click();
+  await (await editor(emailPage, '#emailSend')).click();
   await emailPage.waitForFunction(() => document.querySelector('#stage')?.textContent?.includes('Later company reply'),null,{timeout:5000});
   assert.match(await emailPage.locator('#stage').innerText(),/Second customer reply/,'The second submitted customer message must remain in the thread');
-  await emailPage.locator('#openEmailReply').click();
-  await emailPage.locator('#emailInput').fill('Keep this draft and selection');
+  await (await editor(emailPage, '#openEmailReply')).click();
+  await (await editor(emailPage, '#emailInput')).fill('Keep this draft and selection');
   await emailPage.locator('#stage .v2-preview-canvas').waitFor({state:'attached'});
   const retainedDraft=await emailPage.evaluate(async()=>{
     const input=document.querySelector('#emailInput'),handler=input.oninput,canvas=document.querySelector('#stage .v2-preview-canvas'),device=canvas.querySelector('.gmail');
@@ -263,7 +264,7 @@ try {
   await enableManual(emailExportPage);
   const customizedInbox = await emailExportPage.locator('[data-email="0"]').textContent();
   assert.match(customizedInbox, /The customized opening email copy appears everywhere\./, 'The live Gmail inbox must mirror the customized opening company email');
-  const emailDownload = await Promise.all([emailExportPage.waitForEvent('download'), emailExportPage.locator('#export').click()]).then(([value]) => value);
+  const emailDownload = await Promise.all([emailExportPage.waitForEvent('download'), (await editor(emailExportPage, '#export')).click()]).then(([value]) => value);
   const emailExportPath = `${exportDirectory}/email-opening-${await emailDownload.suggestedFilename()}`;
   await emailDownload.saveAs(emailExportPath);
   const exportedEmailPage = await emailExportContext.newPage();
@@ -294,16 +295,16 @@ try {
   });
   await livePreviewPage.goto(baseUrl, { waitUntil:'networkidle' });
   await livePreviewPage.evaluate(async () => { await window.__twoWayScenarioInitialization; });
-  if (await livePreviewPage.locator('#chooseManual').isVisible()) await livePreviewPage.locator('#chooseManual').click();
-  const liveCardTitle = livePreviewPage.locator('[data-step="live-rich-card"][data-field="cardTitle"]');
-  if (!(await liveCardTitle.isVisible())) await livePreviewPage.locator('[data-collapse-step="live-rich-card"]').click();
+  if (await livePreviewPage.locator('#chooseManual').isVisible()) await (await editor(livePreviewPage, '#chooseManual')).click();
+  const liveCardTitle = (await editor(livePreviewPage, '[data-step="live-rich-card"][data-field="cardTitle"]'));
+  if (!(await liveCardTitle.isVisible())) await (await editor(livePreviewPage, '[data-collapse-step="live-rich-card"]')).click();
   await liveCardTitle.focus();
   await liveCardTitle.fill('Updated card title');
   await livePreviewPage.waitForFunction(() => document.querySelector('#stage')?.textContent?.includes('Updated card title'));
   assert.ok(await livePreviewPage.locator('.rich-card, .card').count(), 'Focusing an RCS card editor must reveal its in-phone preview');
   assert.equal(await livePreviewPage.locator('.live-preview-note').count(), 0, 'The live editor must not add a builder-only label to the simulated conversation');
   const carouselTitle=livePreviewPage.locator('[data-carousel-step="live-carousel"][data-carousel-field="title"]').first();
-  if (!(await carouselTitle.isVisible())) await livePreviewPage.locator('[data-collapse-step="live-carousel"]').click();
+  if (!(await carouselTitle.isVisible())) await (await editor(livePreviewPage, '[data-collapse-step="live-carousel"]')).click();
   await carouselTitle.focus();
   await livePreviewPage.waitForSelector('#stage [data-rcs-carousel="live-carousel"]');
   assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.prev').count(), 0, 'The unavailable previous-card control must be hidden');
@@ -317,7 +318,7 @@ try {
     const transform=getComputedStyle(track).transform,offset=transform==='none'?0:new DOMMatrixReadOnly(transform).m41;
     return Math.abs(offset+expectedIndex*track.offsetWidth)<=0.5;
   },index);
-  await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.next').click();
+  await (await editor(livePreviewPage, '#stage [data-rcs-carousel="live-carousel"] .carousel-nav.next')).click();
   await waitForCarouselIndex(1);
   assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.next').count(), 0, 'The unavailable next-card control must be hidden');
   assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.prev').count(), 1, 'The previous-card control must return after advancing');
@@ -373,11 +374,11 @@ try {
   await swipeCarousel(.7,.25,1,'leftward');
   assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.prev').count(),1,'A leftward swipe must advance back to the second card');
   assert.equal(await livePreviewPage.locator('#stage [data-rcs-carousel="live-carousel"] .carousel-nav.next').count(),0,'The next-card control must disappear on the last card after swiping');
-  const ctaPresentation = livePreviewPage.locator('[data-rcs-cta-presentation-step="live-rich-card"]');
+  const ctaPresentation = (await editor(livePreviewPage, '[data-rcs-cta-presentation-step="live-rich-card"]'));
   await ctaPresentation.selectOption('reply');
   await livePreviewPage.waitForFunction(() => document.querySelector('#stage .rcs-card-cta-action'));
   assert.equal(await livePreviewPage.locator('#stage .rcs-card-cta-action').count(), 1, 'A rich-card CTA can match the centered reply-action treatment');
-  const adjustCardImage = livePreviewPage.locator('[data-image-asset][data-image-step="live-rich-card"][data-image-key="cardImage"] [data-image-adjust]');
+  const adjustCardImage = (await editor(livePreviewPage, '[data-image-asset][data-image-step="live-rich-card"][data-image-key="cardImage"] [data-image-adjust]'));
   await adjustCardImage.click();
   const cropper = livePreviewPage.locator('.rcs-image-cropper');
   await cropper.waitFor();
@@ -406,7 +407,7 @@ try {
   assert.equal(savedCrop.imageFit, 'contain', 'The selected RCS image-fit mode must persist with the card');
   assert.equal(savedCrop.imageScale, 1.4, 'The RCS image zoom must persist with the card');
   assert.ok(savedCrop.imagePositionX > 70 && savedCrop.imagePositionY < 40, 'Dragging inside the 5:2 crop frame must persist the selected focal point');
-  const cropExport = await Promise.all([livePreviewPage.waitForEvent('download'), livePreviewPage.locator('#export').click()]).then(([value]) => value);
+  const cropExport = await Promise.all([livePreviewPage.waitForEvent('download'), (await editor(livePreviewPage, '#export')).click()]).then(([value]) => value);
   const cropExported = `${exportDirectory}/crop-${await cropExport.suggestedFilename()}`;
   await cropExport.saveAs(cropExported);
   const cropExportedHtml = await readFile(cropExported, 'utf8');
@@ -419,10 +420,10 @@ try {
   const channelGuardPage = await channelGuardContext.newPage();
   await channelGuardPage.goto(baseUrl, { waitUntil:'networkidle' });
   await enableManual(channelGuardPage);
-  await channelGuardPage.locator('[data-channel="rcs"]').click();
+  await (await editor(channelGuardPage, '[data-channel="rcs"]')).click();
   await waitForAcknowledgedSave(channelGuardPage);
   await pauseScenarioSaveAcknowledgements(channelGuardPage);
-  const channelGuardName = channelGuardPage.locator('#identityFields [data-skey="brandName"]');
+  const channelGuardName = (await editor(channelGuardPage, '#identityFields [data-skey="brandName"]'));
   await channelGuardName.fill('Guarded RCS Co');
   await waitForHeldScenarioSave(channelGuardPage);
   const saveBeforeSwitch = channelGuardPage.waitForEvent('dialog').then(async dialog=>{
@@ -430,7 +431,7 @@ try {
     await dialog.accept();
   });
   saveBeforeSwitch.catch(()=>{}); // Context cleanup must not leave an unhandled wait if a preceding action fails.
-  await channelGuardPage.locator('[data-channel="sms"]').click();
+  await (await editor(channelGuardPage, '[data-channel="sms"]')).click();
   await saveBeforeSwitch;
   await releaseScenarioSaveAcknowledgements(channelGuardPage);
   await channelGuardPage.waitForFunction(() => document.querySelector('[data-channel="sms"]')?.classList.contains('active'));
@@ -438,7 +439,7 @@ try {
   let unnecessarySwitchPrompt = false;
   const unexpectedDialog=async dialog => { unnecessarySwitchPrompt = true; await dialog.dismiss(); };
   channelGuardPage.on('dialog', unexpectedDialog);
-  await channelGuardPage.locator('[data-channel="rcs"]').click();
+  await (await editor(channelGuardPage, '[data-channel="rcs"]')).click();
   await channelGuardPage.waitForFunction(() => document.querySelector('[data-channel="rcs"]')?.classList.contains('active'));
   await channelGuardPage.waitForTimeout(250);
   assert.equal(unnecessarySwitchPrompt, false, 'Switching a channel with no unsaved changes must not ask for confirmation');
@@ -451,7 +452,7 @@ try {
   await waitForHeldScenarioSave(channelGuardPage);
   const stayOnChannel = channelGuardPage.waitForEvent('dialog').then(dialog=>dialog.dismiss());
   stayOnChannel.catch(()=>{});
-  await channelGuardPage.locator('[data-channel="sms"]').click();
+  await (await editor(channelGuardPage, '[data-channel="sms"]')).click();
   await stayOnChannel;
   assert.equal(await channelGuardPage.locator('[data-channel="rcs"]').evaluate(button => button.classList.contains('active')), true, 'Cancelling the save prompt must keep the user on the current channel');
   await releaseScenarioSaveAcknowledgements(channelGuardPage);
@@ -464,10 +465,10 @@ try {
   const durableSavePage = await durableSaveContext.newPage();
   await durableSavePage.goto(baseUrl, { waitUntil:'networkidle' });
   await enableManual(durableSavePage);
-  await durableSavePage.locator('[data-channel="rcs"]').click();
-  const durableBrand = durableSavePage.locator('#identityFields [data-skey="brandName"]');
+  await (await editor(durableSavePage, '[data-channel="rcs"]')).click();
+  const durableBrand = (await editor(durableSavePage, '#identityFields [data-skey="brandName"]'));
   await durableBrand.fill('Durable Save RCS');
-  await durableSavePage.locator('#save').click();
+  await (await editor(durableSavePage, '#save')).click();
   await waitForAcknowledgedSave(durableSavePage);
   const durableRecord = await durableSavePage.evaluate(async () => new Promise((resolve, reject) => {
     const request = indexedDB.open('two-way-experience-studio-scenarios-v1', 1);
@@ -497,18 +498,18 @@ try {
   await enableManual(channelIsolationPage);
   const isolationDialogs=[];
   channelIsolationPage.on('dialog',async dialog => { isolationDialogs.push(dialog.message()); await dialog.dismiss(); });
-  await channelIsolationPage.locator('[data-channel="rcs"]').click();
-  await channelIsolationPage.locator('#identityFields [data-skey="brandName"]').fill('RCS only brand');
+  await (await editor(channelIsolationPage, '[data-channel="rcs"]')).click();
+  await (await editor(channelIsolationPage, '#identityFields [data-skey="brandName"]')).fill('RCS only brand');
   await waitForAcknowledgedSave(channelIsolationPage);
-  await channelIsolationPage.locator('[data-channel="sms"]').click();
+  await (await editor(channelIsolationPage, '[data-channel="sms"]')).click();
   await channelIsolationPage.waitForFunction(() => document.querySelector('[data-channel="sms"]')?.classList.contains('active'));
   assert.deepEqual(isolationDialogs,[],'An acknowledged RCS edit must switch to SMS without a save prompt');
-  await channelIsolationPage.locator('#identityFields [data-skey="smsAddress"]').fill('SMS only sender');
+  await (await editor(channelIsolationPage, '#identityFields [data-skey="smsAddress"]')).fill('SMS only sender');
   await waitForAcknowledgedSave(channelIsolationPage);
-  await channelIsolationPage.locator('[data-channel="whatsapp"]').click();
+  await (await editor(channelIsolationPage, '[data-channel="whatsapp"]')).click();
   await channelIsolationPage.waitForFunction(() => document.querySelector('[data-channel="whatsapp"]')?.classList.contains('active'));
   assert.deepEqual(isolationDialogs,[],'An acknowledged SMS edit must switch to WhatsApp without a save prompt');
-  const whatsappAvatar = channelIsolationPage.locator('[data-image-asset][data-image-key="avatar"]');
+  const whatsappAvatar = (await editor(channelIsolationPage, '[data-image-asset][data-image-key="avatar"]'));
   await whatsappAvatar.locator('[data-image-url-open]').click();
   await whatsappAvatar.locator('.image-url-entry:not([hidden])').waitFor();
   const whatsappAvatarDataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9qM0wAAAAASUVORK5CYII=';
@@ -517,8 +518,8 @@ try {
   await whatsappAvatar.locator('[data-image-url-apply]').click();
   await channelIsolationPage.locator('[data-image-asset][data-image-key="avatar"] [data-image-thumbnail]').waitFor();
   await channelIsolationPage.unroute('**/api/asset?url=**');
-  await channelIsolationPage.locator('#identityFields [data-skey="brandName"]').fill('WhatsApp only brand');
-  await channelIsolationPage.locator('#save').click();
+  await (await editor(channelIsolationPage, '#identityFields [data-skey="brandName"]')).fill('WhatsApp only brand');
+  await (await editor(channelIsolationPage, '#save')).click();
   await waitForAcknowledgedSave(channelIsolationPage);
   const isolatedRecord = await channelIsolationPage.evaluate(async () => new Promise((resolve, reject) => {
     const request = indexedDB.open('two-way-experience-studio-scenarios-v1', 1);
@@ -546,43 +547,44 @@ try {
   assert.equal(builderResponse.headers()['cache-control'], 'no-cache', 'The release-critical builder document must not be served from a stale browser cache');
   const modernCss = await page.request.get(`${baseUrl}/assets/v2-modern.css`);
   assert.equal(modernCss.headers()['cache-control'], 'no-cache', 'The release-critical modern UI stylesheet must not be served from a stale browser cache');
-  await page.waitForSelector('.v2-workspace-nav');
+  await page.waitForSelector('[data-studio-view="conversation"]');
   await page.waitForSelector('[data-v2-preview-focus]');
-  assert.equal(await page.locator('.v2-workspace-nav button').count(), 4, 'Modern workspace navigation must render');
+  assert.equal(await page.locator('button[data-studio-view]').count(), 5, 'Modern workspace navigation must render');
   assert.equal(await page.locator('.v2-status-line').count(), 0, 'Internal staging status must not be shown to production users');
   assert.equal(await page.locator('.v2-scenario-snapshot').count(), 0, 'Redundant scenario summary must not render');
-  await page.locator('[data-v2-preview-focus]').click();
+  await (await editor(page, '[data-v2-preview-focus]')).click();
   assert.equal(await page.locator('body').evaluate(body => body.classList.contains('v2-focus-mode')), true, 'Focus mode must expand the preview workspace');
-  await page.locator('.v2-focus-rail').click();
+  await (await editor(page, '.v2-focus-rail')).click();
   assert.equal(await page.locator('body').evaluate(body => body.classList.contains('v2-focus-mode')), false, 'Focus rail must restore the builder');
-  await page.locator('[data-v2-preview-present]').click();
+  await (await editor(page, '[data-v2-preview-present]')).click();
   await page.waitForFunction(() => document.body.classList.contains('presentation'));
   for (const id of ['presentationExit', 'presentationReset', 'presentationNotes']) assert.equal(await page.locator(`#${id}`).isVisible(), false, `Presenter mode must hide redundant ${id} control`);
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => !document.body.classList.contains('presentation'));
-  await page.locator('.v2-workspace-nav button').nth(2).click();
+  await selectView(page, 'conversation');
   await page.locator('#manualConversationSection:not([hidden])').waitFor();
   await page.keyboard.press('Alt+Digit1');
-  await page.waitForFunction(() => document.querySelector('.v2-workspace-nav button[aria-current="step"]')?.dataset.v2Section === '0');
-  await page.locator('.v2-workspace-nav button').nth(2).click();
+  await page.waitForFunction(() => document.querySelector('button[data-studio-view="scenario"]')?.getAttribute('aria-current') === 'page');
+  await selectView(page, 'conversation');
   await page.locator('#manualConversationSection:not([hidden])').waitFor();
-  await page.locator('#addCustomer').click();
+  await (await editor(page, '#addCustomer')).click();
   assert.ok(await page.locator('#steps article.block').count(), 'Flow remains editable through the modern workspace');
   await page.waitForSelector('.v2-flow-map');
   assert.ok(await page.locator('.v2-flow-map__node').count(), 'Conversation path map must render for editable flow steps');
+  await revealEditor(page, '.v2-scenario-qa');
   await page.waitForSelector('.v2-scenario-qa');
   assert.match(await page.locator('.v2-scenario-qa').textContent(), /messages.*company.*customer/i, 'Scenario QA must show actual flow counts');
-  await page.locator('#switchToAi').click();
+  await selectView(page, 'ai');
   await page.locator('[data-ai-channel="whatsapp"]').waitFor();
   await page.locator('.v2-generation-controls').waitFor();
-  await page.locator('.v2-generation-controls summary').click();
-  await page.locator('[data-v2-opening-sender]').selectOption('company');
-  await page.locator('[data-v2-message-total]').fill('7');
+  await (await editor(page, '.v2-generation-controls summary')).click();
+  await (await editor(page, '[data-v2-opening-sender]')).selectOption('company');
+  await (await editor(page, '[data-v2-message-total]')).fill('7');
   assert.equal(await page.locator('[data-v2-opening-sender]').inputValue(), 'company', 'Generation controls must allow an explicit opening sender');
   assert.equal(await page.locator('[data-v2-message-total]').inputValue(), '7', 'Generation controls must allow an exact message count');
-  await page.locator('[data-ai-channel="whatsapp"]').check();
+  await (await editor(page, '[data-ai-channel="whatsapp"]')).check();
   assert.equal(await page.locator('[data-ai-channel="whatsapp"]').isChecked(), true, 'AI setup must allow a WhatsApp scenario');
-  await page.locator('.v2-workspace-nav button').nth(2).click();
+  await selectView(page, 'conversation');
   await page.locator('#manualConversationSection:not([hidden])').waitFor();
 
   await page.addScriptTag({ content:axe.source });
@@ -595,11 +597,11 @@ try {
     const exportPage = await exportContext.newPage();
     await exportPage.goto(baseUrl, { waitUntil:'networkidle' });
     await enableManual(exportPage);
-    await exportPage.locator(`[data-channel="${channel}"]`).click();
+    await (await editor(exportPage, `[data-channel="${channel}"]`)).click();
     await exportPage.waitForFunction(expected => document.querySelector('[data-channel].active')?.dataset.channel === expected, channel);
     const download = await Promise.all([
       exportPage.waitForEvent('download'),
-      exportPage.locator('#export').click()
+      (await editor(exportPage, '#export')).click()
     ]).then(([value]) => value);
     const exportedPath = `${exportDirectory}/${channel}-standalone-${await download.suggestedFilename()}`;
     await download.saveAs(exportedPath);
@@ -624,7 +626,7 @@ try {
 
   for (const channel of ['sms', 'rcs', 'whatsapp', 'email']) await verifyStandaloneChannelExport(channel);
 
-  const download = await Promise.all([page.waitForEvent('download'), page.locator('#export').click()]).then(([value]) => value);
+  const download = await Promise.all([page.waitForEvent('download'), (await editor(page, '#export')).click()]).then(([value]) => value);
   const exported = `${exportDirectory}/${await download.suggestedFilename()}`;
   await download.saveAs(exported);
   const exportedHtml = await readFile(exported, 'utf8');
@@ -636,18 +638,18 @@ try {
   assert.equal(await exportedPage.locator('.builder').isVisible(), false, 'Standalone export must hide the builder');
   await exportedPage.locator('[data-thread], [data-email], [data-wa-thread]').first().click();
   await exportedPage.locator('#stage .conversation, #stage .g-detail-scroll, #stage .wa-chat').waitFor();
-  await exportedPage.locator('[data-v2-preview-reset]').click();
+  await (await editor(exportedPage, '[data-v2-preview-reset]')).click();
   await exportedPage.locator('#stage .message-list, #stage .g-list-scroll, #stage .wa-list').waitFor();
-  await exportedPage.locator('[data-v2-preview-focus]').click();
+  await (await editor(exportedPage, '[data-v2-preview-focus]')).click();
   await exportedPage.waitForFunction(() => document.body.classList.contains('v2-focus-mode'));
-  await exportedPage.locator('[data-v2-preview-present]').click();
+  await (await editor(exportedPage, '[data-v2-preview-present]')).click();
   await exportedPage.waitForFunction(() => document.body.classList.contains('presentation'));
   await exportedPage.keyboard.press('Escape');
   await exportedPage.waitForFunction(() => !document.body.classList.contains('presentation'));
   let fallbackPrompt = '';
   await page.route('**/assets/avatars/company-avatar-sheet.png', route => route.abort());
   page.once('dialog', async dialog => { fallbackPrompt = dialog.message(); await dialog.accept(); });
-  const fallbackDownload = await Promise.all([page.waitForEvent('download'), page.locator('#export').click()]).then(([value]) => value);
+  const fallbackDownload = await Promise.all([page.waitForEvent('download'), (await editor(page, '#export')).click()]).then(([value]) => value);
   await page.unroute('**/assets/avatars/company-avatar-sheet.png');
   assert.match(fallbackPrompt, /(?:company profile image|Preview image company-avatar-sheet\.png)/i, 'A failed visual asset must name the unavailable image');
   assert.match(fallbackPrompt, /Choose OK to download anyway/i, 'A failed visual asset must offer an explicit download-anyway choice');
@@ -657,7 +659,7 @@ try {
   assert.match(fallbackHtml, /assets\/avatars\/company-avatar-sheet\.png/, 'A user-confirmed fallback export may retain only the unavailable image path');
   const localPage = await context.newPage();
   await localPage.goto(`file://${process.cwd()}/interactive-simulator-builder.html`, { waitUntil:'load' });
-  await localPage.waitForSelector('.v2-workspace-nav');
+  await localPage.waitForSelector('[data-studio-view="conversation"]');
   assert.ok(await localPage.locator('[data-v2-preview-focus]').count(), 'Local file mode must retain the 2.0 workspace enhancements');
   });
   if(caseFailures.length)throw new AggregateError(caseFailures,`${caseFailures.length} integrated case(s) failed; see named results above`);

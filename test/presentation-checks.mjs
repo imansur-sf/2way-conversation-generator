@@ -11,9 +11,11 @@ export async function checkPresentationToolbar(page, { enterFromHeader = false, 
   const popups = [];
   const onDialog = async dialog => { popups.push(dialog.message()); await dialog.dismiss(); };
   page.on('dialog', onDialog);
+  const builder = await page.locator('body').evaluate(body => body.classList.contains('studio-shell') && !body.classList.contains('export'));
+  const entry = page.locator(builder ? '#presentation' : '[data-v2-preview-present]');
   const enter = async (header = false) => {
     await expect(present).toHaveText('Present');
-    await page.locator(header ? '#presentation' : '[data-v2-preview-present]').click();
+    await page.locator(header || builder ? '#presentation' : '[data-v2-preview-present]').click();
     await expect(page.locator('body')).toHaveClass(/\bpresentation\b/);
     await expect(present).toHaveText('Hide bar');
     await expect(present).toBeVisible();
@@ -25,9 +27,9 @@ export async function checkPresentationToolbar(page, { enterFromHeader = false, 
     await expect(page.locator('body')).not.toHaveClass(/\bv2-presentation-bar-hidden\b/);
     await expect(toolbar).toBeVisible();
     await expect(present).toHaveText('Present');
-    await expect(present).toBeVisible();
+    await expect(entry).toBeVisible();
     await expect(hint).toBeHidden();
-    await expect(present).toBeFocused();
+    await expect(entry).toBeFocused();
     assert.equal(await info.isVisible(), infoInitiallyVisible, 'Escape must restore the original info visibility');
   };
   try {
