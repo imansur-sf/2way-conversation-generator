@@ -50,6 +50,9 @@ jobs:
       - name: Responsive editing and accessible controls
         if: ${{ !cancelled() && steps.browser.outcome == 'success' }}
         run: node test/ui-browser.mjs
+      - name: Workspace navigation and draft continuity
+        if: ${{ !cancelled() && steps.browser.outcome == 'success' }}
+        run: node test/workspace-browser.mjs
       - name: Browser verification artifacts
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4

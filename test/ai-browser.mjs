@@ -1,3 +1,4 @@
+import { editor, revealEditor, selectView } from './workspace-helpers.mjs';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {readFile,mkdtemp,mkdir,rm} from 'node:fs/promises';
@@ -62,19 +63,19 @@ async function fresh(makeResponse){
   await page.goto(`${base}/seed`);
   await page.evaluate(key=>localStorage.setItem(key,JSON.stringify({version:2,savedAt:1,activeId:'ai-target',scenarios:[{id:'ai-target',name:'Original destination',channel:'sms',brandName:'Original Co',smsAddress:'Original Co',steps:[{id:'original-company',author:'brand',kind:'text',text:'ORIGINAL_CONTENT',reusableSet:true},{id:'original-customer',author:'customer',kind:'free',text:'',reusableSet:false}]}]})),key);
   await page.goto(base,{waitUntil:'domcontentloaded'});await page.evaluate(()=>window.__twoWayScenarioInitialization);
-  if(await page.locator('#chooseManual').isVisible())await page.locator('#chooseManual').click();
+  if(await page.locator('#chooseManual').isVisible())await (await editor(page, '#chooseManual')).click();
   // The seed starts in the legacy browser backup. Establish an acknowledged
   // durable baseline through the real save control before testing AI mutations.
-  await page.locator('#save').click();const baseline=await saved(page);
-  await page.locator('#switchToAi').click();await page.locator('.v2-generation-controls').waitFor();
+  await (await editor(page, '#save')).click();const baseline=await saved(page);
+  await selectView(page, 'ai');await page.locator('.v2-generation-controls').waitFor();
   return {context,page,requests,errors,baseline};
 }
 async function requestDraft(page,selected,{named=true,prompt='Build three messages for each selected channel.',initialSender='company',companyName='Synthetic Co',website='https://example.test',messageTotal='3'}={}){
-  await page.locator('#aiCompanyName').fill(companyName);await page.locator('#aiWebsite').fill(website);await page.locator('#aiUseCase').fill(prompt);
-  for(const channel of channels)await page.locator(`[data-ai-channel="${channel}"]`).setChecked(selected.includes(channel));
-  await page.locator('.v2-generation-controls summary').click();await page.locator('[data-v2-opening-sender]').selectOption(initialSender);await page.locator('[data-v2-message-total]').fill(messageTotal);
-  if(named){await page.locator('[data-v2-customer-name]').fill(persona.customerName);await page.locator('[data-v2-representative-name]').fill(persona.representativeName);await page.locator('[data-v2-representative-role]').fill(persona.representativeRole);}
-  await page.locator('#generateAiDraft').click();
+  await (await editor(page, '#aiCompanyName')).fill(companyName);await (await editor(page, '#aiWebsite')).fill(website);await (await editor(page, '#aiUseCase')).fill(prompt);
+  for(const channel of channels)await (await editor(page, `[data-ai-channel="${channel}"]`)).setChecked(selected.includes(channel));
+  await (await editor(page, '.v2-generation-controls summary')).click();await (await editor(page, '[data-v2-opening-sender]')).selectOption(initialSender);await (await editor(page, '[data-v2-message-total]')).fill(messageTotal);
+  if(named){await (await editor(page, '[data-v2-customer-name]')).fill(persona.customerName);await (await editor(page, '[data-v2-representative-name]')).fill(persona.representativeName);await (await editor(page, '[data-v2-representative-role]')).fill(persona.representativeRole);}
+  await (await editor(page, '#generateAiDraft')).click();
 }
 async function saved(page){await page.waitForFunction(()=>document.querySelector('#saveState')?.textContent==='Saved on this device');return page.evaluate(key=>JSON.parse(localStorage.getItem(key)),key);}
 async function recovered(page){
@@ -84,7 +85,7 @@ async function recovered(page){
   return saved(page);
 }
 async function playback(page,channel,emailExpected=emailDefaults){
-  await page.locator('[data-v2-preview-reset]').click();
+  await (await editor(page, '[data-v2-preview-reset]')).click();
   const thread=channel==='email'?'[data-email="0"]':channel==='whatsapp'?'[data-wa-thread="wa-main"]':'[data-thread="sms-main"]';
   await page.locator(thread).click();
   if(channel==='whatsapp')assert.equal(await page.locator('#stage .wa-card a').count(),0,'Cards without CTA labels must not invent actions');
@@ -116,7 +117,7 @@ async function playback(page,channel,emailExpected=emailDefaults){
   }
 }
 async function offlineExport(context,page,channel,emailExpected=emailDefaults){
-  const artifact=await Promise.all([page.waitForEvent('download'),page.locator('#export').click()]).then(([download])=>download),file=path.join(directory,`${channel}.html`);await artifact.saveAs(file);
+  const artifact=await Promise.all([page.waitForEvent('download'),(await editor(page, '#export')).click()]).then(([download])=>download),file=path.join(directory,`${channel}.html`);await artifact.saveAs(file);
   const exported=await context.newPage(),errors=[],requests=[];exported.setDefaultTimeout(15000);exported.on('pageerror',error=>errors.push(error.message));exported.on('request',request=>{if(/^(https?:|file:)/.test(request.url())&&request.url()!==`file://${file}`)requests.push(request.url());});
   await context.setOffline(true);await exported.goto(`file://${file}`,{waitUntil:'load'});await exported.waitForFunction(()=>!document.body.classList.contains('export-booting'));
   const data=JSON.parse(await exported.locator('#scenario-data').textContent()).scenarios[0];
@@ -134,10 +135,10 @@ async function offlineExport(context,page,channel,emailExpected=emailDefaults){
 }
 async function ewcPlayback(page,channel){
   const turns=ewc.rawDraft.scenarios[channel].turns;
-  await page.locator('[data-v2-preview-reset]').click();
+  await (await editor(page, '[data-v2-preview-reset]')).click();
   await page.locator(channel==='email'?'[data-email="0"]':channel==='whatsapp'?'[data-wa-thread="wa-main"]':'[data-thread="sms-main"]').click();
   for(const index of [1,3]){
-    if(channel==='email')await page.locator('#openEmailReply').click();
+    if(channel==='email')await (await editor(page, '#openEmailReply')).click();
     const input=page.locator(channel==='email'?'#emailInput':'#phoneInput');
     await input.fill(turns[index].text);await page.locator(channel==='email'?'#emailSend':'#phoneSend').click();
     await page.waitForFunction(text=>document.querySelector('#stage')?.textContent.includes(text),turns[index+1].text);
@@ -154,13 +155,13 @@ try{
       return {status:'completed',...validated,source:{mode:'provider',fallbackReason:null,requestedChannels:request.channels,url:request.website,title:'Synthetic EWC fixture',imageCandidates:[],brief}};
     });
     await requestDraft(page,channels,{named:false,prompt:ewc.useCase,initialSender:'',messageTotal:'',companyName:'EWC',website:ewc.request.website});
-    await page.locator('.ai-review').waitFor();assert.equal(requests.length,1);await page.locator('#applyAiDraft').click();
+    await page.locator('.ai-review').waitFor();assert.equal(requests.length,1);await (await editor(page, '#applyAiDraft')).click();
     const record=await saved(page),scenario=record.scenarios.find(item=>item.id==='ai-target');
     for(const channel of channels){
       assert.deepEqual(scenario.variants[channel].steps.map(step=>step.text),ewc.rawDraft.scenarios[channel].turns.map(turn=>turn.text));
-      if(channel!=='sms'){await page.locator(`[data-channel="${channel}"]`).click();await saved(page);}
+      if(channel!=='sms'){await (await editor(page, `[data-channel="${channel}"]`)).click();await saved(page);}
       await ewcPlayback(page,channel);
-      const download=await Promise.all([page.waitForEvent('download'),page.locator('#export').click()]).then(([item])=>item),file=path.join(directory,`ewc-${channel}.html`);await download.saveAs(file);
+      const download=await Promise.all([page.waitForEvent('download'),(await editor(page, '#export')).click()]).then(([item])=>item),file=path.join(directory,`ewc-${channel}.html`);await download.saveAs(file);
       const exported=await context.newPage(),offlineRequests=[],exportErrors=[];exported.on('pageerror',error=>exportErrors.push(error.message));exported.on('request',request=>{if(/^(https?:|file:)/.test(request.url())&&request.url()!==`file://${file}`)offlineRequests.push(request.url())});
       await context.setOffline(true);await exported.goto(`file://${file}`,{waitUntil:'load'});await exported.waitForFunction(()=>!document.body.classList.contains('export-booting'));
       await ewcPlayback(exported,channel);assert.deepEqual(offlineRequests,[]);assert.deepEqual(exportErrors,[]);await exported.close();await context.setOffline(false);
@@ -171,14 +172,14 @@ try{
     const {context,page,requests,errors}=await fresh(request=>responseFor(request));
     const prompt='Deliberate prompt: José O’Neil meets Zoë. Preserve punctuation, commas, and channel-specific presentations.';
     await requestDraft(page,channels,{prompt});
-    await page.locator('[data-ai-channel="whatsapp"]').uncheck(); // Editing the form cannot mutate the in-flight request/result channel set.
+    await (await editor(page, '[data-ai-channel="whatsapp"]')).uncheck(); // Editing the form cannot mutate the in-flight request/result channel set.
     await page.locator('.ai-review').waitFor();assert.equal(requests.length,1);assert.deepEqual(requests[0].channels,channels);assert.equal(requests[0].useCase,prompt);assert.deepEqual(requests[0].persona,persona);assert.deepEqual(requests[0].controls,{initialSender:'company',expectedMessageCount:3});
     assert.match(await page.locator('.v2-requirements').innerText(),/Factual accuracy: Not verified/);assert.doesNotMatch(await page.locator('.ai-review').innerText(),/Prompt contract verified/);
     await page.evaluate(()=>document.dispatchEvent(new CustomEvent('twoway:ai-draft',{detail:{requestId:'stale',requirements:{channels:{sms:{checks:[{label:'STALE_EVENT',status:'passed'}]}}}}})));
     assert.doesNotMatch(await page.locator('.v2-requirements').innerText(),/STALE_EVENT/);
-    await page.locator('#applyAiDraft').click();const record=await saved(page),scenario=record.scenarios.find(item=>item.id==='ai-target');assert.deepEqual(Object.keys(scenario.variants),channels);assert.equal(scenario.name,'Original destination');
+    await (await editor(page, '#applyAiDraft')).click();const record=await saved(page),scenario=record.scenarios.find(item=>item.id==='ai-target');assert.deepEqual(Object.keys(scenario.variants),channels);assert.equal(scenario.name,'Original destination');
     assert.deepEqual(scenario.variants.sms.steps[1].options,['Yes, please','No, thanks']);assert.equal(scenario.variants.rcs.steps[0].text,'');assert.equal(scenario.variants.email.steps[0].emailMode,'plain');assert.equal(scenario.variants.email.steps[2].emailMode,'branded');
-    for(const channel of channels){if(channel!=='sms'){await page.locator(`[data-channel="${channel}"]`).click();await saved(page);}await playback(page,channel);await offlineExport(context,page,channel);console.log(`PASS AI ${channel}: applied content, comma choices, offline download and playback`);}
+    for(const channel of channels){if(channel!=='sms'){await (await editor(page, `[data-channel="${channel}"]`)).click();await saved(page);}await playback(page,channel);await offlineExport(context,page,channel);console.log(`PASS AI ${channel}: applied content, comma choices, offline download and playback`);}
     assert.deepEqual(errors,[]);await context.close();
   }
   for(const laterMode of ['branded','plain']){
@@ -189,7 +190,7 @@ try{
       turns[2].presentation=laterMode==='plain'?{...laterEmailPresentation,mode:'plain'}:{kind:'email',mode:'branded',preheader:'',heroImageUrl:'',ctaLabel:'',ctaUrl:''};
       return response;
     });
-    await requestDraft(page,['email']);await page.locator('.ai-review').waitFor();await page.locator('#applyAiDraft').click();await saved(page);
+    await requestDraft(page,['email']);await page.locator('.ai-review').waitFor();await (await editor(page, '#applyAiDraft')).click();await saved(page);
     await playback(page,'email',expected);await offlineExport(context,page,'email',expected);
     assert.deepEqual(errors,[]);await context.close();console.log(`PASS AI email: branded opening, ${laterMode} later message, explicit assets/clears, offline parity`);
   }
@@ -201,7 +202,7 @@ try{
     const {context,page,requests,errors}=await fresh(request=>responseFor(request,{fallback:true,unknown:true}));
     const prompt='Show an invitation and response. Do not invent a customer name.';await requestDraft(page,['sms'],{named:false,prompt});await page.locator('.ai-review').waitFor();
     assert.match(await page.locator('.ai-fallback-note').innerText(),/rate limit/);assert.doesNotMatch(await page.locator('.ai-fallback-note').innerText(),/slow|named people/);assert.match(await page.locator('.v2-requirements').innerText(),/Customer: Not specified/);
-    await page.locator('#regenerateAiDraft').click();assert.equal(await page.locator('#aiUseCase').inputValue(),prompt);assert.equal(requests.length,1);assert.equal(await page.locator('.v2-requirements').count(),0);
+    await (await editor(page, '#regenerateAiDraft')).click();assert.equal(await page.locator('#aiUseCase').inputValue(),prompt);assert.equal(requests.length,1);assert.equal(await page.locator('.v2-requirements').count(),0);
     assert.deepEqual(errors,[]);await context.close();console.log('PASS fallback provenance, unknown identity, regenerate preserves prompt');
   }
   {
@@ -210,17 +211,19 @@ try{
     await requestDraft(page,channels);await page.locator('#useAiBranding').waitFor();
     assert.match(await page.locator('.ai-error').innerText(),/opening sender/);assert.equal(await page.locator('#applyAiDraft').count(),0);
     await mkdir('test-results',{recursive:true});await page.locator('.ai-brand-recovery').screenshot({path:'test-results/branding-recovery.png'});
-    await page.locator('#recovery-initialSender').selectOption('customer');await page.locator('#useAiBranding').click();
+    await (await editor(page, '#recovery-initialSender')).selectOption('customer');await (await editor(page, '#useAiBranding')).click();
     const record=await recovered(page),scenario=record.scenarios.find(item=>item.id===record.activeId);
     assert.notEqual(scenario.id,'ai-target');assert.equal(record.scenarios.length,baseline.scenarios.length+1);assert.deepEqual(record.scenarios.filter(item=>item.id!==scenario.id),baseline.scenarios);assert.deepEqual(record.scenarios.find(item=>item.id==='ai-target'),before);assert.deepEqual(Object.keys(scenario.variants),channels);
     for(const variant of Object.values(scenario.variants)){assert.equal(variant.generatedByAi,false);assert.ok(variant.steps.every(step=>step.text===''));assert.equal(variant.steps[0].author,'customer');assert.match(variant.avatar,/^data:image\/png/);assert.match(variant.brandingRecovery.failureReason,/opening sender/);}
     assert.match(scenario.variants.rcs.steps[1].cardImage,/^data:image/);assert.match(scenario.variants.whatsapp.steps[1].cardImage,/^data:image/);assert.match(scenario.variants.email.steps[1].emailHeroImage,/^data:image/);
-    assert.match(await page.locator('#setupAssistant').innerText(),/No dialogue was generated/);
-    await page.reload();await page.evaluate(()=>window.__twoWayScenarioInitialization);if(await page.locator('#chooseManual').isVisible())await page.locator('#chooseManual').click();
+    await revealEditor(page, '.studio-recovery-slot .ai-brand-recovery');
+    await page.locator('.studio-recovery-slot .ai-brand-recovery').waitFor({state:'visible'});
+    assert.match(await page.locator('.studio-recovery-slot .ai-brand-recovery').innerText(),/No dialogue was generated/);
+    await page.reload();await page.evaluate(()=>window.__twoWayScenarioInitialization);if(await page.locator('#chooseManual').isVisible())await (await editor(page, '#chooseManual')).click();
     const acceptDialog=dialog=>dialog.accept();page.on('dialog',acceptDialog);
     for(const channel of channels){
-      await page.locator(`[data-channel="${channel}"]`).click();
-      const download=await Promise.all([page.waitForEvent('download'),page.locator('#export').click()]).then(([item])=>item),file=path.join(directory,`branding-${channel}.html`);await download.saveAs(file);
+      await (await editor(page, `[data-channel="${channel}"]`)).click();
+      const download=await Promise.all([page.waitForEvent('download'),(await editor(page, '#export')).click()]).then(([item])=>item),file=path.join(directory,`branding-${channel}.html`);await download.saveAs(file);
       const exported=await context.newPage(),offlineRequests=[];exported.on('request',request=>{if(/^https?:/.test(request.url()))offlineRequests.push(request.url())});
       await context.setOffline(true);await exported.goto(`file://${file}`,{waitUntil:'load'});await exported.waitForFunction(()=>!document.body.classList.contains('export-booting'));
       const data=JSON.parse(await exported.locator('#scenario-data').textContent()).scenarios[0];assert.equal(data.channel,channel);assert.match(data.avatar,/^data:image/);assert.equal(data.steps[0].author,'customer');assert.ok(data.steps.every(step=>step.text===''));assert.deepEqual(offlineRequests,[]);
@@ -231,36 +234,36 @@ try{
   }
   {
     const {context,page,errors}=await fresh(request=>({status:'failed',error:'gemini_timeout',branding:brandingFor(request)}));await mockBrandingAssets(context,{failHero:true});
-    await requestDraft(page,['email']);await page.locator('#useAiBranding').waitFor();await page.locator('#useAiBranding').click();
+    await requestDraft(page,['email']);await page.locator('#useAiBranding').waitFor();await (await editor(page, '#useAiBranding')).click();
     const record=await recovered(page),scenario=record.scenarios.find(item=>item.id===record.activeId);assert.match(scenario.avatar,/^data:image/);assert.equal(scenario.emailHeroImage,'');assert.equal(scenario.steps[0].author,'brand');
     assert.match(scenario.brandingRecovery.assetWarnings.join(' '),/Header \/ card image.*omitted/);
-    await page.locator('.ai-brand-recovery summary').click();
+    await (await editor(page, '.ai-brand-recovery summary')).click();
     const visibleStatus=await page.locator('.ai-brand-recovery').innerText();assert.match(visibleStatus,/did not finish a complete scenario before the deadline/);assert.match(visibleStatus,/gemini_timeout/);assert.match(visibleStatus,/Header \/ card image.*omitted/);
     assert.deepEqual(errors,[]);await context.close();console.log('PASS branding-only asset failure: useful logo retained, failed hero omitted with specific warning');
   }
   {
     const {context,page,requests,errors,baseline}=await fresh(request=>requests.length===1?{status:'failed',error:'draft_invalid',branding:brandingFor(request)}:{status:'failed',error:'website_fetch_failed'});await mockBrandingAssets(context);
-    await requestDraft(page,['rcs']);await page.locator('#useAiBranding').waitFor();await page.locator('#aiWebsite').fill('https://other.test');assert.equal(await page.locator('#useAiBranding').count(),0);
-    await page.locator('#generateAiDraft').click();await page.locator('.ai-error').waitFor();await page.waitForFunction(()=>!document.querySelector('#generateAiDraft').disabled);
+    await requestDraft(page,['rcs']);await page.locator('#useAiBranding').waitFor();await (await editor(page, '#aiWebsite')).fill('https://other.test');assert.equal(await page.locator('#useAiBranding').count(),0);
+    await (await editor(page, '#generateAiDraft')).click();await page.locator('.ai-error').waitFor();await page.waitForFunction(()=>!document.querySelector('#generateAiDraft').disabled);
     assert.equal(await page.locator('#useAiBranding').count(),0);assert.match(await page.locator('#setupAssistant').innerText(),/No website branding is available/);assert.deepEqual((await saved(page)).scenarios,baseline.scenarios);
     assert.deepEqual(errors,[]);await context.close();console.log('PASS failed retry cannot retain another website’s branding');
   }
   {
     const {context,page,errors,baseline}=await fresh(request=>({status:'failed',error:'gemini_timeout',branding:brandingFor(request)}));let release;const gate=new Promise(resolve=>release=resolve);await mockBrandingAssets(context,{gate});
-    await requestDraft(page,['sms']);await page.locator('#useAiBranding').waitFor();await page.locator('#useAiBranding').click();await page.locator('#aiWebsite').fill('https://changed.test');release();
+    await requestDraft(page,['sms']);await page.locator('#useAiBranding').waitFor();await (await editor(page, '#useAiBranding')).click();await (await editor(page, '#aiWebsite')).fill('https://changed.test');release();
     await page.waitForFunction(()=>document.querySelector('#appStatus')?.textContent.includes('branding selection, or destination changed'));assert.deepEqual((await saved(page)).scenarios,baseline.scenarios);assert.deepEqual(errors,[]);await context.close();console.log('PASS late branding asset completion cannot apply after its request changes');
   }
   {
     let releaseFailure;const gate=new Promise(resolve=>releaseFailure=resolve);
     const {context,page,errors,baseline}=await fresh(async request=>{await gate;return {status:'failed',error:'draft_invalid',branding:brandingFor(request)}});
-    await requestDraft(page,['sms']);await page.locator('#aiCompanyName').fill('Changed company');await page.locator('#aiWebsite').fill('https://changed.test');await page.locator('[data-ai-channel="sms"]').uncheck();await page.locator('[data-ai-channel="email"]').check();releaseFailure();
+    await requestDraft(page,['sms']);await (await editor(page, '#aiCompanyName')).fill('Changed company');await (await editor(page, '#aiWebsite')).fill('https://changed.test');await (await editor(page, '[data-ai-channel="sms"]')).uncheck();await (await editor(page, '[data-ai-channel="email"]')).check();releaseFailure();
     await page.locator('.ai-error').waitFor();assert.equal(await page.locator('#useAiBranding').count(),0);assert.deepEqual((await saved(page)).scenarios,baseline.scenarios);
     assert.deepEqual(errors,[]);await context.close();console.log('PASS edits made during generation reject old website branding when failure arrives');
   }
   {
     const {context,page,errors}=await fresh(request=>({status:'failed',error:'gemini_incomplete',branding:brandingFor(request,{empty:true})}));
     await requestDraft(page,['email']);await page.locator('#useAiBranding').waitFor();assert.match(await page.locator('.ai-brand-recovery').innerText(),/No image candidates were found/);
-    await page.locator('#useAiBranding').click();const record=await recovered(page),scenario=record.scenarios.find(item=>item.id===record.activeId);assert.equal(scenario.avatar,'');assert.equal(scenario.emailHeroImage,'');assert.ok(scenario.steps.every(step=>step.text===''));
+    await (await editor(page, '#useAiBranding')).click();const record=await recovered(page),scenario=record.scenarios.find(item=>item.id===record.activeId);assert.equal(scenario.avatar,'');assert.equal(scenario.emailHeroImage,'');assert.ok(scenario.steps.every(step=>step.text===''));
     assert.deepEqual(errors,[]);await context.close();console.log('PASS branding without discovered images is labeled honestly and creates only blank manual fields');
   }
   {
@@ -274,35 +277,35 @@ try{
     assert.match(await page.locator('.ai-failure-guidance').innerText(),/choose Company opens/);
     assert.equal(await page.locator('.ai-failure-guidance img').count(),0,'Untrusted technical errors must remain text');
     const details=JSON.parse(await page.locator('.ai-failure-guidance pre').textContent());assert.deepEqual(details.issues,originalIssues);assert.ok(details.requestId);
-    await page.locator('[data-ai-guidance-target="opening-sender"]').click();
+    await (await editor(page, '[data-ai-guidance-target="opening-sender"]')).click();
     assert.equal(await page.locator('.v2-generation-controls').getAttribute('open'),'');assert.equal(await page.locator('[data-v2-opening-sender]').inputValue(),'');
     assert.equal(await page.evaluate(()=>document.activeElement?.hasAttribute('data-v2-opening-sender')),true);
     assert.equal(await page.locator('#aiUseCase').inputValue(),prompt);assert.deepEqual((await saved(page)).scenarios,baseline.scenarios);
-    await page.locator('.ai-failure-guidance details summary').click();
+    await (await editor(page, '.ai-failure-guidance details summary')).click();
     await mkdir('test-results',{recursive:true});await page.locator('#setupAssistant').screenshot({path:'test-results/generation-guidance.png'});
-    await page.locator('#generateAiDraft').click();await page.waitForFunction(()=>!document.querySelector('.ai-failure-guidance'));await page.locator('.ai-failure-guidance').waitFor();
+    await (await editor(page, '#generateAiDraft')).click();await page.waitForFunction(()=>!document.querySelector('.ai-failure-guidance'));await page.locator('.ai-failure-guidance').waitFor();
     assert.equal(await page.locator('.ai-failure-guidance').count(),1);assert.equal(await page.locator('#useAiBranding').count(),1);assert.deepEqual(errors,[]);await context.close();
     console.log('PASS EWC error recovery: deduplicated advice, controls focus without changes, escaped details, request ID, branding and retry');
   }
   for(const [issue,target,selector] of [[{code:'sender_mismatch',expectedSender:'company'},'opening-sender','[data-v2-opening-sender]'],[{code:'count_mismatch',expectedMessageCount:3},'message-total','[data-v2-message-total]'],[{code:'missing_required_fact',field:'representativeName'},'representative-name','[data-v2-representative-name]']]){
     const {context,page,errors}=await fresh(()=>({status:'failed',error:'draft_invalid',issues:[issue]}));await requestDraft(page,['email']);await page.locator('.ai-failure-guidance').waitFor();
     assert.match(await page.locator('.ai-failure-guidance').innerText(),/For this attempt/);const before=await page.locator(selector).inputValue();
-    await page.locator(`[data-ai-guidance-target="${target}"]`).click();assert.equal(await page.locator(selector).inputValue(),before);assert.equal(await page.evaluate(selector=>document.activeElement?.matches(selector),selector),true);
+    await (await editor(page, `[data-ai-guidance-target="${target}"]`)).click();assert.equal(await page.locator(selector).inputValue(),before);assert.equal(await page.evaluate(selector=>document.activeElement?.matches(selector),selector),true);
     assert.deepEqual(errors,[]);await context.close();
   }
   {
     let finish;const gate=new Promise(resolve=>{finish=resolve});
     const {context,page,errors}=await fresh(async()=>{await gate;return {status:'failed',error:'draft_invalid',issues:[{code:'sender_mismatch',expectedSender:'company'},{code:'count_mismatch',expectedMessageCount:3}]}});
-    await requestDraft(page,['sms']);await page.locator('.v2-generation-controls summary').click();
-    await page.locator('[data-v2-opening-sender]').selectOption('customer');await page.locator('[data-v2-message-total]').fill('6');finish();
+    await requestDraft(page,['sms']);await (await editor(page, '.v2-generation-controls summary')).click();
+    await (await editor(page, '[data-v2-opening-sender]')).selectOption('customer');await (await editor(page, '[data-v2-message-total]')).fill('6');finish();
     await page.locator('.ai-failure-guidance').waitFor();const advice=await page.locator('.ai-failure-guidance').innerText();assert.match(advice,/For this attempt.*was set to Company opens/);assert.match(advice,/For this attempt.*was set to 3/);
-    await page.locator('[data-ai-guidance-target="opening-sender"]').click();assert.equal(await page.locator('[data-v2-opening-sender]').inputValue(),'customer');assert.equal(await page.locator('[data-v2-message-total]').inputValue(),'6');
+    await (await editor(page, '[data-ai-guidance-target="opening-sender"]')).click();assert.equal(await page.locator('[data-v2-opening-sender]').inputValue(),'customer');assert.equal(await page.locator('[data-v2-message-total]').inputValue(),'6');
     assert.deepEqual(errors,[]);await context.close();console.log('PASS failure advice distinguishes failed-request controls from newer unsent edits');
   }
   {
     const {context,page,errors,baseline}=await fresh(request=>({status:'running',branding:brandingFor(request)}));await mockBrandingAssets(context);
     await requestDraft(page,['sms']);await page.locator('#useAiBranding').waitFor({timeout:70000});assert.match(await page.locator('.ai-error').innerText(),/did not finish a complete scenario before the deadline/);assert.match(await page.locator('.ai-failure-guidance pre').textContent(),/generation_timeout/);
-    await page.locator('#useAiBranding').click();const record=await recovered(page);assert.equal(record.scenarios.length,baseline.scenarios.length+1);assert.match(record.scenarios.find(item=>item.id===record.activeId).avatar,/^data:image/);
+    await (await editor(page, '#useAiBranding')).click();const record=await recovered(page);assert.equal(record.scenarios.length,baseline.scenarios.length+1);assert.match(record.scenarios.find(item=>item.id===record.activeId).avatar,/^data:image/);
     assert.deepEqual(errors,[]);await context.close();console.log('PASS browser polling deadline preserves branding from a running job without claiming AI success');
   }
 }catch(error){

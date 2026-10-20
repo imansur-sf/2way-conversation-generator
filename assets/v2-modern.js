@@ -13,6 +13,14 @@
     ? createScenarioBackup({ scenarioKey, announce })
     : () => {};
   const htmlEscape = value => String(value || '').replace(/[&<>"]/g, character => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' })[character]);
+  const navigationBehavior = () => matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+  const revealFlowBlock = block => {
+    const toggle = block?.querySelector('[data-collapse-step]');
+    if (toggle?.getAttribute('aria-expanded') === 'false') toggle.click();
+    block?.classList.remove('is-collapsed');
+    const body = block?.querySelector('.block-body');
+    if (body) body.hidden = false;
+  };
 
   const hydrateLabels = root => {
     const scenarioSelect = root.querySelector('#scenarioSelect');
@@ -103,7 +111,7 @@
     if (!field) return;
     const controls = field.closest('.v2-generation-controls');
     if (controls) controls.open = true;
-    field.scrollIntoView({behavior:'smooth', block:'center'});
+    field.scrollIntoView({behavior:navigationBehavior(), block:'center'});
     field.focus({preventScroll:true});
     announce(controls ? 'Generation controls opened. Review the focused field; its value has not changed.' : 'Review the focused generation field; your entry has not changed.');
   };
@@ -137,8 +145,8 @@
       if (!button) return;
       const block = steps.querySelector(`[data-step-block="${CSS.escape(button.dataset.v2FlowTarget)}"]`);
       map.querySelectorAll('[data-v2-flow-target]').forEach(item => item.toggleAttribute('data-selected', item === button));
-      block?.scrollIntoView({ behavior:'smooth', block:'center' });
-      block?.classList.remove('is-collapsed');
+      block?.scrollIntoView({ behavior:navigationBehavior(), block:'center' });
+      revealFlowBlock(block);
       block?.querySelector('textarea,input,select')?.focus({ preventScroll:true });
     });
     steps.before(map);
@@ -163,9 +171,8 @@
       const button = event.target.closest('[data-v2-qa-target]');
       if (!button) return;
       const block = steps.querySelector(`[data-step-block="${CSS.escape(button.dataset.v2QaTarget)}"]`);
-      block?.classList.remove('is-collapsed');
-      const body=block?.querySelector('.block-body');if(body)body.hidden=false;
-      block?.scrollIntoView({behavior:'smooth',block:'center'});
+      revealFlowBlock(block);
+      block?.scrollIntoView({behavior:navigationBehavior(),block:'center'});
       block?.querySelector('textarea,input,[contenteditable="true"]')?.focus({preventScroll:true});
     });
   };
@@ -183,7 +190,7 @@
     if (narrow && presenting) workspacePanel = 'preview';
     const focus = document.body.classList.contains('v2-focus-mode');
     const menu = document.querySelector('.v2-header-menu');
-    if (menu && menu.__v2Desktop !== !narrow) { menu.__v2Desktop = !narrow; menu.open = !narrow; }
+    if (menu && menu.__v2Desktop !== !narrow) { menu.__v2Desktop = !narrow; menu.open = !narrow && !document.body.classList.contains('studio-shell'); }
     for (const [name, panel] of [['editor', builder], ['preview', preview]]) {
       const hidden = narrow && name !== (presenting ? 'preview' : workspacePanel);
       if (hidden && panel.contains(document.activeElement)) tabs.querySelector(`[data-workspace-panel="${workspacePanel}"]`)?.focus();
@@ -218,7 +225,7 @@
       document.addEventListener('keydown', event => {
         if (event.key !== 'Escape') return;
         const menu = document.querySelector('.v2-header-menu[open]');
-        if (menu && narrowWorkspace.matches) { menu.open = false; menu.querySelector('summary').focus(); }
+        if (menu && (narrowWorkspace.matches || document.body.classList.contains('studio-shell'))) { menu.open = false; menu.querySelector('summary').focus(); }
         if (!document.querySelector('.rcs-image-cropper')) document.body.classList.remove('presentation');
       });
       document.querySelector('.v2-header-menu')?.addEventListener('click', event => { if (narrowWorkspace.matches && event.target.closest('button')) event.currentTarget.open = false; });
@@ -293,7 +300,7 @@
         hint.hidden = true;
         button.hidden = false;
         if (document.body.classList.contains('v2-presentation-bar-hidden')) document.body.classList.remove('v2-presentation-bar-hidden');
-        if (wasPresenting) button.focus({ preventScroll:true });
+        if (wasPresenting) (document.body.classList.contains('studio-shell') ? document.querySelector('#presentation') : button)?.focus({ preventScroll:true });
       }
       wasPresenting = presenting;
     };
@@ -369,7 +376,7 @@
         control.querySelector('[data-v2-preview-focus]')?.replaceChildren(document.createTextNode('Focus mode'));
         control.querySelector('[data-v2-preview-focus]')?.setAttribute('aria-pressed', 'false');
         syncWorkspaceLayout();
-        document.querySelector('.v2-workspace-nav button')?.focus();
+        document.querySelector('.studio-rail [aria-current="page"],.v2-workspace-nav button')?.focus();
       });
       builder.prepend(exit);
     }
@@ -391,8 +398,8 @@
       const section = sections[index];
       if (index > 0 && section?.hidden) {
         document.querySelector('#chooseManual, #v2-switch-to-manual, #switchToAi')?.click();
-        requestAnimationFrame(() => document.querySelector(`#v2-section-${index}`)?.scrollIntoView({ behavior:'smooth', block:'start' }));
-      } else section?.scrollIntoView({ behavior:'smooth', block:'start' });
+        requestAnimationFrame(() => document.querySelector(`#v2-section-${index}`)?.scrollIntoView({ behavior:navigationBehavior(), block:'start' }));
+      } else section?.scrollIntoView({ behavior:navigationBehavior(), block:'start' });
       nav.querySelectorAll('button').forEach(item => item.removeAttribute('aria-current'));
       button.setAttribute('aria-current', 'step');
     });

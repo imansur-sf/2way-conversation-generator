@@ -1,3 +1,4 @@
+import { editor, revealEditor, selectView } from './workspace-helpers.mjs';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { readFile, mkdir, writeFile, mkdtemp } from 'node:fs/promises';
@@ -35,8 +36,8 @@ async function fresh(viewport={width:1440,height:1000},scenario=fixture){
   await context.route('**/*',route=>!/^https?:/.test(route.request().url())||new URL(route.request().url()).origin===base?route.continue():route.abort());
   await page.goto(`${base}/seed`);await page.evaluate(({key,fixture})=>localStorage.setItem(key,JSON.stringify({version:2,savedAt:200,activeId:fixture.id,scenarios:[fixture]})),{key,fixture:scenario});
   await page.goto(base);await page.evaluate(()=>window.__twoWayScenarioInitialization);
-  if(await page.locator('#chooseManual').isVisible())await page.locator('#chooseManual').click();
-  await page.locator('#scenarioSelect').selectOption(scenario.id);
+  if(await page.locator('#chooseManual').isVisible())await (await editor(page, '#chooseManual')).click();
+  await (await editor(page, '#scenarioSelect')).selectOption(scenario.id);
   return {context,page,errors};
 }
 async function settle(page){
@@ -83,20 +84,20 @@ try{
   for(const [name,viewport] of Object.entries({desktop:{width:1440,height:1000},laptop:{width:1280,height:720},tablet:{width:820,height:1180},narrow:{width:390,height:844},landscape:{width:844,height:390}}))await run(`fit-${name}`,async()=>{
     const {context,page,errors}=await fresh(viewport);
     try{for(const channel of ['sms','rcs','whatsapp','email'])await run(`fit-${name}-${channel}`,async()=>{
-      await panel(page,'editor');await page.locator(`[data-channel="${channel}"]`).click();await page.locator('#previewScale').selectOption('auto');await panel(page,'preview');await page.locator('[data-v2-preview-reset]').click();await settle(page);
+      await panel(page,'editor');await (await editor(page, `[data-channel="${channel}"]`)).click();await (await editor(page, '#previewScale')).selectOption('auto');await panel(page,'preview');await (await editor(page, '[data-v2-preview-reset]')).click();await settle(page);
       const value=await metrics(page),row={name,viewport,channel,...value,errors:[...errors],screenshot:`${name}-${channel}.png`};manifest.push(row);
       if(['sms','rcs'].includes(channel))row.messageList=await checkThreadRow(page,companyNames.example);
       await page.screenshot({path:path.join(output,row.screenshot)});assertFit(value);assert.deepEqual(errors,[]);
       if(channel==='sms'){row.axe=await scopedAxe(page,['.appbar','.v2-workspace-tabs','.v2-preview-mode']);assert.deepEqual(row.axe.violations,[],'Changed workspace controls must pass the scoped automated rules')}
       if(name==='desktop'&&['rcs','email'].includes(channel)){
-        if(channel==='rcs'){const disclosure=page.locator('[data-collapse-step="rcs-opening"]');if(await disclosure.getAttribute('aria-expanded')==='false'){await disclosure.click();await saved(page)}}
+        if(channel==='rcs'){const disclosure=await editor(page, '[data-collapse-step="rcs-opening"]');if(await disclosure.getAttribute('aria-expanded')==='false'){await disclosure.click();await saved(page)}}
         const outer='.builder [data-image-scope="scenario"][data-image-key="avatar"] > .image-asset-guidance',inner=channel==='rcs'?'.builder [data-image-step="rcs-opening"] > .image-asset-guidance':'.builder [data-email-asset-card="emailLogo"] .image-asset-guidance';
         row.imageGuidance=[];
-        for(const [selector,color,surface] of [[outer,'rgb(201, 229, 255)','navy builder'],[inner,'rgb(67, 93, 119)','light card']]){
-          const guidance=page.locator(selector);assert.equal(await guidance.count(),1,`Expected one ${surface} guidance element`);await guidance.waitFor({state:'visible'});
-          const appearance=await guidance.evaluate(node=>({text:node.textContent,color:getComputedStyle(node).color}));assert.match(appearance.text,/Best fit:/);assert.equal(appearance.color,color,`Guidance color must match the ${surface} surface`);row.imageGuidance.push({surface,...appearance});
+        for(const [selector,color,surface] of [[outer,'rgb(67, 93, 119)','pale editor panel'],[inner,'rgb(67, 93, 119)','light card']]){
+          await revealEditor(page, selector);const guidance=page.locator(selector);assert.equal(await guidance.count(),1,`Expected one ${surface} guidance element`);await guidance.waitFor({state:'visible'});
+          const appearance=await guidance.evaluate(node=>({text:node.textContent,color:getComputedStyle(node).color}));assert.match(appearance.text,/Best fit:/);assert.equal(appearance.color,color,`Guidance color must match the ${surface} surface`);row.imageGuidance.push({surface,...appearance});const guidanceAxe=await scopedAxe(page,[selector]);assert.deepEqual(guidanceAxe.violations,[],'Visible image guidance must pass scoped accessibility rules');
         }
-        row.imageGuidanceAxe=await scopedAxe(page,[outer,inner]);assert.deepEqual(row.imageGuidanceAxe.violations,[],'Visible image guidance on navy and light-card surfaces must pass the scoped automated rules');
+        await selectView(page, 'conversation');
       }
       if(['desktop','narrow','landscape'].includes(name)){
         await page.locator(channel==='email'?'[data-email="0"]':channel==='whatsapp'?'[data-wa-thread="wa-main"]':'[data-thread="sms-main"]').click();await settle(page);
@@ -105,14 +106,14 @@ try{
         if(channel==='email')assert.equal(conversation.emailReadingBounds.count,0,`Email body descendants and text must fit the visible reading pane: ${JSON.stringify(conversation.emailReadingBounds)}`);
         if(channel==='rcs')await page.locator('#stage .card-img__asset').waitFor();
       }
-      for(const [mode,scale] of [['.85',.85],['.7',.7],['1',1]]){await page.locator('#previewScale').selectOption(mode);await settle(page);assert.equal((await metrics(page)).scale,scale,'Manual zoom must remain exact')}
+      for(const [mode,scale] of [['.85',.85],['.7',.7],['1',1]]){await (await editor(page, '#previewScale')).selectOption(mode);await settle(page);assert.equal((await metrics(page)).scale,scale,'Manual zoom must remain exact')}
     })}finally{await context.close()}
   });
   for(const [name,viewport] of Object.entries({desktop:{width:1440,height:1000},narrow:{width:390,height:844}}))await run(`presentation-hide-bar-${name}`,async()=>{
     const {context,page,errors}=await fresh(viewport);
     try{
       for(const channel of ['sms','rcs','whatsapp','email']){
-        await panel(page,'editor');await page.locator(`[data-channel="${channel}"]`).click();await panel(page,'preview');await settle(page);
+        await panel(page,'editor');await (await editor(page, `[data-channel="${channel}"]`)).click();await panel(page,'preview');await settle(page);
         await checkPresentationToolbar(page,{
           enterFromHeader:name==='desktop',cancelEarly:name==='desktop'&&channel==='sms',
           onCountdown:async()=>{
@@ -133,7 +134,7 @@ try{
     const {context,page,errors}=await fresh(undefined,scenario);
     try{
       for(const channel of ['sms','rcs']){
-        await page.locator(`[data-channel="${channel}"]`).click();await page.locator('[data-v2-preview-reset]').click();await settle(page);
+        await (await editor(page, `[data-channel="${channel}"]`)).click();await (await editor(page, '[data-v2-preview-reset]')).click();await settle(page);
         const value=await checkThreadRow(page,companyNames.stress,{requireTruncation:true});
         const screenshot=`long-sender-${channel}.png`;manifest.push({name:'long-sender-timestamp',channel,...value,screenshot});await page.screenshot({path:path.join(output,screenshot)});
       }
@@ -143,27 +144,27 @@ try{
   await run('tabs-keyboard-and-phone-keys',async()=>{
     const {context,page,errors}=await fresh({width:390,height:844});
     try{
-      await page.locator('#scenarioName').fill('Retained editor draft');await saved(page);
+      await (await editor(page, '#scenarioName')).fill('Retained editor draft');await saved(page);
       await page.evaluate(()=>{window.__retainedBuilder=document.querySelector('.builder');window.__retainedStage=document.querySelector('#stage')});
-      await page.locator('#workspace-tab-editor').focus();await page.keyboard.press('ArrowRight');
+      await (await editor(page, '#workspace-tab-editor')).focus();await page.keyboard.press('ArrowRight');
       assert.equal(await page.locator('#workspace-tab-preview').getAttribute('aria-selected'),'true');assert.equal(await page.locator('.builder').evaluate(node=>node.hidden&&node.inert),true);
       await page.keyboard.press('ArrowLeft');assert.equal(await page.locator('#scenarioName').inputValue(),'Retained editor draft');
       assert.equal(await page.evaluate(()=>window.__retainedBuilder===document.querySelector('.builder')&&window.__retainedStage===document.querySelector('#stage')),true);
-      await panel(page,'preview');await page.locator('[data-thread="sms-main"]').click();await page.locator('#phoneInput').focus();await page.locator('[data-keyboard-shift]').click();await page.locator('[data-key="a"]').click();assert.equal(await page.locator('#phoneInput').inputValue(),'A');
-      await page.locator('[data-keyboard-backspace]').click();assert.equal(await page.locator('#phoneInput').inputValue(),'');
+      await panel(page,'preview');await (await editor(page, '[data-thread="sms-main"]')).click();await (await editor(page, '#phoneInput')).focus();await (await editor(page, '[data-keyboard-shift]')).click();await (await editor(page, '[data-key="a"]')).click();assert.equal(await page.locator('#phoneInput').inputValue(),'A');
+      await (await editor(page, '[data-keyboard-backspace]')).click();assert.equal(await page.locator('#phoneInput').inputValue(),'');
       const keyboardAxe=await scopedAxe(page,['.phone-keyboard']);manifest.push({name:'keyboard',axe:keyboardAxe,errors});assert.deepEqual(keyboardAxe.violations,[]);
       await settle(page);assertFit(await metrics(page));await page.screenshot({path:path.join(output,'narrow-keyboard.png')});
       await panel(page,'editor');const stamp=await page.locator('#localSaveDetails').getAttribute('data-saved-at');assert.ok(Number(stamp)>0);assert.match(await page.locator('#localSaveDetails').textContent(),/Device-local only/);
-      const download=await Promise.all([page.waitForEvent('download'),page.locator('#localSaveDetails button').click()]).then(([value])=>value);assert.match(download.suggestedFilename(),/\.json$/);
+      const download=await Promise.all([page.waitForEvent('download'),(await editor(page, '#localSaveDetails button')).click()]).then(([value])=>value);assert.match(download.suggestedFilename(),/\.json$/);
       assert.deepEqual(errors,[]);
     }finally{await context.close()}
   });
   await run('crop-draft-cancel-undo-commit',async()=>{
     const {context,page,errors}=await fresh();
     try{
-      await page.locator('[data-channel="rcs"]').click();await saved(page);
-      const disclosure=page.locator('[data-collapse-step="rcs-opening"]');if(await disclosure.getAttribute('aria-expanded')==='false'){await disclosure.click();await saved(page)}
-      const trigger=page.locator('[data-image-step="rcs-opening"] [data-image-adjust]');await trigger.click();
+      await (await editor(page, '[data-channel="rcs"]')).click();await saved(page);
+      const disclosure=await editor(page, '[data-collapse-step="rcs-opening"]');if(await disclosure.getAttribute('aria-expanded')==='false'){await disclosure.click();await saved(page)}
+      const trigger=await editor(page, '[data-image-step="rcs-opening"] [data-image-adjust]');await trigger.click();
       const dialog=page.locator('dialog.rcs-image-cropper'),initial=await page.evaluate(key=>localStorage.getItem(key),key);
       await dialog.locator('[data-rcs-crop-x]').fill('80');await dialog.locator('[data-rcs-crop-x]').press('Tab');
       await dialog.locator('[data-rcs-crop-scale]').fill('140');await dialog.locator('[data-rcs-crop-scale]').press('Tab');
@@ -186,8 +187,8 @@ try{
   for(const channel of ['sms','rcs','whatsapp','email'])await run(`standalone-autofit-${channel}`,async()=>{
     const {context,page,errors}=await fresh({width:1280,height:720});
     try{
-      await page.locator(`[data-channel="${channel}"]`).click();await saved(page);
-      const download=await Promise.all([page.waitForEvent('download'),page.locator('#topExport').click()]).then(([value])=>value);
+      await (await editor(page, `[data-channel="${channel}"]`)).click();await saved(page);
+      const download=await Promise.all([page.waitForEvent('download'),(await editor(page, '#topExport')).click()]).then(([value])=>value);
       const file=path.join(exportDirectory,`standalone-${channel}.html`);await download.saveAs(file);
       const exported=await context.newPage(),exportErrors=[],dependencies=[];exported.on('pageerror',error=>exportErrors.push(error.message));exported.on('request',request=>{if(/^(https?:|file:)/.test(request.url())&&request.url()!==`file://${file}`)dependencies.push(request.url())});
       await exported.goto(`file://${file}`);await exported.evaluate(()=>window.__twoWayScenarioInitialization);await exported.setViewportSize({width:390,height:600});await settle(exported);

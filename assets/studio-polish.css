@@ -1,0 +1,449 @@
+/* Builder styling and focused workspace layout. Brand assets, scenario data,
+   simulator artwork, presentation and standalone exports keep their owners. */
+body:not(.export):not(.presentation) :is(.builder, .appbar, .v2-workspace-tabs, .v2-preview-mode) {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-optical-sizing: auto;
+}
+
+body:not(.export):not(.presentation) .builder {
+  font-size: .875rem;
+  line-height: 1.5;
+}
+
+body:not(.export):not(.presentation) .builder .section {
+  margin-bottom: 1rem;
+  padding: 1.25rem;
+  border: 1px solid #c9dcef;
+  border-radius: 1rem;
+  color: #14213d;
+  background: #f4f8fd;
+  box-shadow: 0 4px 16px #00184614;
+}
+
+body:not(.export):not(.presentation) .builder .section:first-of-type { padding-top: 1.25rem; }
+
+body:not(.export):not(.presentation) .builder .section :is(.section-title, .setup-title) { color: #14213d; }
+body:not(.export):not(.presentation) .builder .section :is(.label, .eyebrow) { color: #315476; }
+body:not(.export):not(.presentation) .builder .section :is(.helper, .setup-copy, .identity-preview, .section-title small, .v2-local-save) { color: #435d77; }
+body:not(.export):not(.presentation) .builder .section .image-asset-control > .image-asset-guidance,
+body:not(.export):not(.presentation) .builder .section .scenario-enhancements .restore-point-help { color: #435d77; }
+body:not(.export):not(.presentation) .builder .section .scenario-actions .quiet { background: #073677; }
+body:not(.export):not(.presentation) .builder .section .setup-assistant { border-color: #c9dcef; }
+body:not(.export):not(.presentation) .builder .section .ai-setup-form .label { color: #d6ecff; }
+body:not(.export):not(.presentation) .builder #saveState { color: #435d77; font-size: .75rem; font-weight: 500; }
+body:not(.export):not(.presentation) .builder .journey-channel-note { color: #435d77; font-size: .75rem; line-height: 1.5; }
+
+@media (min-width: 951px) {
+  body:not(.export):not(.presentation) .studio { grid-template-columns: minmax(430px, min(38vw, 540px)) minmax(0, 1fr); }
+}
+
+body:not(.export):not(.presentation) .builder :is(.section-title, .setup-title) {
+  font-family: inherit;
+  font-size: 1.5rem;
+  font-weight: 650;
+  line-height: 1.3;
+  letter-spacing: -.02em;
+}
+
+body:not(.export):not(.presentation) .builder .section-title {
+  flex-wrap: wrap;
+  gap: .5rem;
+  margin-bottom: 1rem;
+}
+
+body:not(.export):not(.presentation) .builder .conversation-headline { flex-wrap: wrap; gap: .75rem; margin-bottom: 1rem; }
+
+body:not(.export):not(.presentation) .builder .eyebrow {
+  margin-bottom: .5rem;
+  font-size: .75rem;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: .06em;
+}
+
+body:not(.export):not(.presentation) .builder .label {
+  margin: 1rem 0 .375rem;
+  font-size: .8125rem;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+body:not(.export):not(.presentation) .builder :is(input, textarea, select) {
+  font-size: 1rem;
+  line-height: 1.45;
+  border-radius: .625rem;
+}
+
+body:not(.export):not(.presentation) .builder textarea { min-height: 6rem; }
+
+body:not(.export):not(.presentation) .builder .channel-toggle { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+body:not(.export):not(.presentation) .builder :is(.channel-toggle, .mode-toggle, .v2-workspace-nav) button {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+body:not(.export):not(.presentation) .builder :is(.helper, .setup-copy, .tip, .ai-note, .image-asset-guidance) {
+  font-size: .8125rem;
+  line-height: 1.55;
+}
+
+body:not(.export):not(.presentation) .builder :is(.quiet, .primary, .channel-toggle button, .mode-toggle button, .add-menu button) {
+  min-height: 2.5rem;
+  font-size: .8125rem;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: normal;
+  border-radius: .625rem;
+}
+
+body:not(.export):not(.presentation) .builder :is(.row-actions, .scenario-actions, .add-menu) {
+  flex-wrap: wrap;
+  gap: .5rem;
+}
+
+body:not(.export):not(.presentation) .builder .setup-options button { padding: 1rem; }
+body:not(.export):not(.presentation) .builder .setup-options button strong { font-size: .875rem; font-weight: 600; }
+body:not(.export):not(.presentation) .builder .setup-options button span { font-size: .8125rem; line-height: 1.5; }
+
+body:not(.export):not(.presentation) .builder .v2-workspace-nav {
+  gap: .25rem;
+  padding: .25rem;
+  margin-bottom: 1.5rem;
+  background: #062655;
+  border-color: #7ba2ce;
+  box-shadow: 0 2px 8px #00184614;
+}
+
+body:not(.export):not(.presentation) .builder .v2-workspace-nav button {
+  min-height: 2.75rem;
+  font-size: .8125rem;
+  font-weight: 600;
+  line-height: 1.25;
+  animation: none;
+  transform: none;
+}
+
+body:not(.export):not(.presentation) .builder .v2-workspace-nav button span { font-size: .6875rem; }
+
+body:not(.export):not(.presentation) .builder .block {
+  margin: .75rem 0;
+  border-radius: .75rem;
+}
+
+/* Preserve drag/drop feedback and its transforms. */
+body:not(.export):not(.presentation) .builder .block:not(.is-dragging):not(.drop-before):not(.drop-after) {
+  box-shadow: 0 2px 8px #00184614;
+}
+
+body:not(.export):not(.presentation) .builder .block-bar { gap: .5rem; padding: .75rem; }
+body:not(.export):not(.presentation) .builder .block-bar strong {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: .875rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+body:not(.export):not(.presentation) .builder .block-body { padding: 1rem; }
+body:not(.export):not(.presentation) .builder .badge { font-size: .75rem; font-weight: 600; }
+body:not(.export):not(.presentation) .builder .block-tools { flex: 0 0 auto; gap: .25rem; }
+body:not(.export):not(.presentation) .builder .block-tools .icon-btn { min-width: 2rem; min-height: 2rem; }
+
+body:not(.export):not(.presentation) .builder :is(.v2-flow-map, .v2-scenario-qa) {
+  padding: 1rem;
+  border-radius: .75rem;
+  box-shadow: 0 2px 8px #00184614;
+}
+
+body:not(.export):not(.presentation) .builder :is(.v2-flow-map__head, .v2-scenario-qa__head) { flex-wrap: wrap; gap: .5rem; }
+body:not(.export):not(.presentation) .builder :is(.v2-flow-map__head strong, .v2-scenario-qa__head strong) { font-size: .875rem; font-weight: 600; }
+body:not(.export):not(.presentation) .builder :is(.v2-flow-map__head span, .v2-scenario-qa__head span, .v2-scenario-qa__note, .v2-scenario-qa li) {
+  font-size: .75rem;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+body:not(.export):not(.presentation) .builder .v2-flow-map__node {
+  min-height: 2.25rem;
+  font-size: .75rem;
+  font-weight: 600;
+  box-shadow: none;
+  transform: none;
+}
+
+body:not(.export):not(.presentation) .builder .v2-flow-map__node small { font-size: .75rem; font-weight: 400; }
+body:not(.export):not(.presentation) .builder .v2-local-save { gap: .5rem; font-size: .75rem; line-height: 1.5; }
+body:not(.export):not(.presentation) .builder .v2-local-save button { min-height: 2rem; font-size: .75rem; }
+
+/* Do not alter the logo, header dimensions or branded blue backgrounds. */
+body:not(.export):not(.presentation) .appbar-brand strong { font-family: inherit; font-weight: 650; letter-spacing: -.02em; }
+body:not(.export):not(.presentation) .appbar :is(.top-quiet, .top-primary, .top-scale) { font-weight: 600; }
+body:not(.export):not(.presentation) .v2-preview-mode button { min-height: 2rem; font-size: .75rem; font-weight: 600; }
+
+/* Color-only feedback avoids moving controls or changing hit testing. */
+body:not(.export):not(.presentation) :is(.builder, .appbar, .v2-preview-mode) button:not(:disabled) {
+  transition: background-color 120ms ease-out, border-color 120ms ease-out, box-shadow 120ms ease-out;
+}
+
+body:not(.export):not(.presentation) :is(.builder, .appbar, .v2-preview-mode) button:not(:disabled):active {
+  transition-duration: 0s;
+  box-shadow: inset 0 0 0 100vmax #001e5b18;
+}
+
+@media (max-width: 600px) {
+  body:not(.export):not(.presentation) .builder .section { padding: 1rem; }
+  body:not(.export):not(.presentation) .builder .v2-workspace-nav button { font-size: .75rem; }
+  body:not(.export):not(.presentation) .builder .block-bar { flex-wrap: wrap; }
+  body:not(.export):not(.presentation) .builder .block-tools .icon-btn { min-width: 2.5rem; min-height: 2.5rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body:not(.export):not(.presentation) :is(.builder, .appbar, .v2-preview-mode) button:not(:disabled) { transition: none; }
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  body:not(.export):not(.presentation) .builder .v2-workspace-nav { backdrop-filter: none; }
+}
+
+/* Full workspace: the original controls now live in focused, persistent views. */
+body.studio-shell:not(.export):not(.presentation) .studio {
+  grid-template-columns: 13rem minmax(25rem, .95fr) minmax(23rem, 1.2fr);
+  gap: .75rem;
+  padding: 1rem 1rem 1rem 0;
+  background: #034391;
+}
+body.studio-shell:not(.export):not(.presentation) .builder {
+  min-width: 0;
+  padding: 0 0 1.5rem;
+  border: 1px solid #b9d5ed;
+  border-radius: 1rem;
+  background: #f4f8fd;
+  color: #14213d;
+  box-shadow: 0 8px 24px #001e5b1a;
+}
+body.studio-shell:not(.export):not(.presentation) .builder > .v2-workspace-nav { display: none; }
+body.studio-shell:not(.export):not(.presentation) .builder > [data-studio-panel][data-studio-active="false"] { display: none !important; }
+body.studio-shell:not(.export):not(.presentation) .builder > .section {
+  margin: 0;
+  padding: 1.5rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+body.studio-shell:not(.export):not(.presentation) .builder > .section > .eyebrow { display: none; }
+body.studio-shell:not(.export):not(.presentation) .builder :is(.section-title, .setup-title, h2) {
+  font-family: inherit;
+  font-size: 1.75rem;
+  line-height: 1.2;
+  font-weight: 650;
+  letter-spacing: -.025em;
+  color: #14213d;
+  overflow-wrap: anywhere;
+}
+body.studio-shell:not(.export):not(.presentation) .builder h2 { margin: 0 0 .75rem; }
+body.studio-shell:not(.export):not(.presentation) .builder h3 { margin: 1.5rem 0 .5rem; font-size: 1rem; font-weight: 600; }
+body.studio-shell:not(.export):not(.presentation) .builder :is(.quiet, .scenario-actions .quiet) {
+  color: #284968;
+  border-color: #b6cbe2;
+  background: #fff;
+  box-shadow: none;
+}
+body.studio-shell:not(.export):not(.presentation) .builder .quiet:hover { background: #e9f2ff; border-color: #1769e0; }
+body.studio-shell:not(.export):not(.presentation) .builder :is(.section-title small, .helper, .label, .identity-preview) { color: #435d77; }
+body.studio-shell:not(.export):not(.presentation) .builder .label { font-size: .875rem; }
+body.studio-shell:not(.export):not(.presentation) .builder .helper { margin-block: .5rem 1rem; }
+body.studio-shell:not(.export):not(.presentation) .studio-description { color: #435d77; font-size: .875rem; line-height: 1.55; }
+
+body.studio-shell:not(.export):not(.presentation) .studio-context {
+  position: sticky;
+  z-index: 15;
+  top: 0;
+  padding: 1.5rem 1.5rem 1rem;
+  border-bottom: 1px solid #d9e4f0;
+  background: #f4f8fdf5;
+  backdrop-filter: blur(12px);
+}
+body.studio-shell:not(.export):not(.presentation) .studio-scenario-title {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  color: #14213d;
+  background: transparent;
+  font-size: 1.5rem;
+  font-weight: 650;
+  letter-spacing: -.025em;
+  line-height: 1.25;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+body.studio-shell:not(.export):not(.presentation) .studio-context-detail { margin: .5rem 0 1.25rem; color: #435d77; font-size: .875rem; }
+body.studio-shell:not(.export):not(.presentation) .builder .channel-toggle { gap: 0; padding: 3px; border-color: #c8d7ea; background: #e9eff7; }
+body.studio-shell:not(.export):not(.presentation) .builder .channel-toggle button { padding-inline: .25rem; color: #435d77; font-size: .875rem; }
+body.studio-shell:not(.export):not(.presentation) .builder .channel-toggle button.active { color: #fff; background: #066afe; box-shadow: 0 1px 4px #003b991f; }
+body.studio-shell:not(.export):not(.presentation) .builder .mode-toggle { border-color: #c8d7ea; background: #e9eff7; }
+body.studio-shell:not(.export):not(.presentation) .builder .mode-toggle button { color: #435d77; }
+body.studio-shell:not(.export):not(.presentation) .builder .mode-toggle button.active { color: #075eab; background: #fff; }
+
+.studio-rail { display: none; }
+body.studio-shell:not(.export):not(.presentation) .studio-rail {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 0;
+  padding: 1.5rem .75rem 0;
+  color: #fff;
+  background: #08295c;
+  border-radius: 0 .75rem .75rem 0;
+  font: 500 .9375rem/1.4 system-ui, sans-serif;
+}
+body.studio-shell:not(.export):not(.presentation) .studio-rail-main { display: grid; gap: .5rem; }
+body.studio-shell:not(.export):not(.presentation) .studio-rail button {
+  display: flex;
+  align-items: center;
+  gap: .875rem;
+  width: 100%;
+  min-height: 3.25rem;
+  padding: .75rem;
+  border: 1px solid transparent;
+  border-radius: .625rem;
+  background: transparent;
+  color: #fff;
+  font: inherit;
+  text-align: left;
+  transition: background-color 120ms ease-out;
+}
+body.studio-shell:not(.export):not(.presentation) .studio-rail svg { width: 1.5rem; height: 1.5rem; flex: 0 0 1.5rem; }
+body.studio-shell:not(.export):not(.presentation) .studio-rail button:hover { background: #ffffff14; }
+body.studio-shell:not(.export):not(.presentation) .studio-rail button[aria-current="page"] { background: #096bc4; border-color: #46c4ff; box-shadow: inset 3px 0 #46c4ff; }
+body.studio-shell:not(.export):not(.presentation) .studio-rail button:active { background: #00519e; transition: none; }
+body.studio-shell:not(.export):not(.presentation) .studio-rail button:focus-visible { outline: 3px solid #ffcf50; outline-offset: 2px; }
+body.studio-shell:not(.export):not(.presentation) .studio-rail-bottom { margin-top: 2rem; border-top: 1px solid #ffffff33; padding-top: 1rem; }
+body.studio-shell:not(.export):not(.presentation) .studio-rail-bottom p { padding: .75rem; margin: 1rem 0 0; color: #d2e9ff; font-size: .75rem; }
+body.studio-shell:not(.export):not(.presentation) .studio-rail-bottom [data-studio-backup] { font-size: .75rem; }
+
+body.studio-shell:not(.export):not(.presentation) .builder .conversation-headline { display: block; margin-bottom: .75rem; }
+body.studio-shell:not(.export):not(.presentation) .builder .conversation-headline .section-title { margin: 0; }
+body.studio-shell:not(.export):not(.presentation) .builder .add-menu { margin: 1rem 0; }
+body.studio-shell:not(.export):not(.presentation) .builder .add-menu button { padding-inline: 1rem; background: #fff; border-color: #b6cbe2; color: #075eab; }
+body.studio-shell:not(.export):not(.presentation) .builder .block { border-color: #c8d7e8; border-radius: .75rem; background: #fff; }
+body.studio-shell:not(.export):not(.presentation) .builder .block-bar { padding: 1rem .875rem; background: #fff; }
+body.studio-shell:not(.export):not(.presentation) .builder .block:focus-within { border-color: #066afe; box-shadow: 0 0 0 1px #066afe; }
+body.studio-shell:not(.export):not(.presentation) .builder .block-bar strong { font-size: .9375rem; }
+body.studio-shell:not(.export):not(.presentation) .builder .block .label { margin-top: .75rem; }
+body.studio-shell:not(.export):not(.presentation) .builder .block textarea { min-height: 7rem; font-size: .9375rem; line-height: 1.5; }
+body.studio-shell:not(.export):not(.presentation) .builder .flow-summary { display: none; }
+body.studio-shell:not(.export):not(.presentation) .builder .v2-flow-map { padding: .5rem 0; margin-block: .75rem 1rem; border: 0; background: transparent; box-shadow: none; }
+body.studio-shell:not(.export):not(.presentation) .builder .v2-flow-map__head { display: none; }
+body.studio-shell:not(.export):not(.presentation) .builder .v2-flow-map__node { min-height: 2rem; padding: .375rem .5rem; border-color: transparent; background: #e8eff7; color: #315476; }
+body.studio-shell:not(.export):not(.presentation) .builder .v2-flow-map__node small { display: none; }
+body.studio-shell:not(.export):not(.presentation) .builder .v2-flow-map__node[data-selected] { border-color: #066afe; background: #e0edff; }
+body.studio-shell:not(.export):not(.presentation) .builder .studio-checks { margin: 1rem 0; border-bottom: 1px solid #d9e4f0; }
+body.studio-shell:not(.export):not(.presentation) .builder .studio-checks > summary { display: flex; justify-content: space-between; gap: .75rem; padding: .75rem 0; cursor: pointer; color: #087451; font-size: .8125rem; font-weight: 600; }
+body.studio-shell:not(.export):not(.presentation) .builder .studio-checks > summary span:last-child { color: #435d77; font-weight: 400; }
+body.studio-shell:not(.export):not(.presentation) .builder .v2-scenario-qa { margin: .5rem 0 1rem; box-shadow: none; }
+body.studio-shell:not(.export):not(.presentation) .builder .studio-ai-panel .setup-assistant { margin: 0; padding: 0; border: 0; }
+body.studio-shell:not(.export):not(.presentation) .builder .ai-setup-form { border-color: #c8d7e8; background: #fff; }
+body.studio-shell:not(.export):not(.presentation) .builder .ai-setup-form :is(.label, .ai-note) { color: #435d77; }
+body.studio-shell:not(.export):not(.presentation) .builder .ai-channel-checks label { color: #315476; background: #f4f8fd; border-color: #b6cbe2; }
+body.studio-shell:not(.export):not(.presentation) .builder .ai-error { color: #a21515; }
+body.studio-shell:not(.export):not(.presentation) .builder .studio-backup-actions { margin-top: 2rem; padding-top: .5rem; border-top: 1px solid #d9e4f0; }
+body.studio-shell:not(.export):not(.presentation) .builder .studio-export-panel #versionTools { margin-top: 2rem; }
+body.studio-shell:not(.export):not(.presentation) .builder .studio-export-panel .restore-point-help { color: #435d77; font-size: .8125rem; }
+
+/* One global toolbar and one toolbar belonging to the preview. */
+body.studio-shell:not(.export):not(.presentation) .appbar .live-dot { font-size: .8125rem; color: #fff; }
+body.studio-shell:not(.export):not(.presentation) .appbar .live-dot[data-saved="false"]::before { background: #ffcf50; }
+body.studio-shell:not(.export):not(.presentation) .v2-header-menu summary { display: flex; }
+body.studio-shell:not(.export):not(.presentation) .v2-header-menu > div { position: absolute; z-index: 150; top: calc(100% + 8px); right: 0; display: grid; min-width: 180px; padding: .75rem; border: 1px solid #9fbbda; border-radius: .75rem; background: #08295c; box-shadow: 0 10px 24px #001b4a55; }
+body.studio-shell:not(.export):not(.presentation) .v2-header-menu:not([open]) > div { display: none; }
+body.studio-shell:not(.export):not(.presentation) .preview { min-width: 0; padding: .75rem; border: 1px solid #77a7d8; border-radius: 1rem; }
+body.studio-shell:not(.export):not(.presentation) .v2-preview-mode { display: flex; align-items: center; width: 100%; max-width: none; gap: .5rem; margin: 0; padding: 0; border: 0; background: transparent; backdrop-filter: none; }
+body.studio-shell:not(.export):not(.presentation) .studio-preview-heading { flex: 1 1 auto; margin-right: auto; color: #fff; font: 600 1.25rem/1.3 system-ui,sans-serif; letter-spacing: -.02em; }
+body.studio-shell:not(.export):not(.presentation) .v2-preview-mode button { padding-inline: .625rem; border: 1px solid #8bbce4; border-radius: .5rem; font-size: .75rem; }
+body.studio-shell:not(.export):not(.presentation) .v2-preview-mode [data-v2-preview-present] { display: none; }
+body.studio-shell:not(.export):not(.presentation) .v2-preview-mode .top-scale { width: auto; min-width: 80px; min-height: 2rem; padding: .375rem; border: 1px solid #8bbce4; border-radius: .5rem; font-size: .75rem; }
+body.studio-shell:not(.export):not(.presentation) .preview .preview-info { top: 3.75rem; right: 1.25rem; z-index: 5; }
+body.studio-shell:not(.export):not(.presentation) .preview .preview-info button { color: #315476; background: #eef5ff; border-color: #9abada; }
+body.studio-shell:not(.export):not(.presentation) .preview .stage { border: 1px solid #d5e5f4; border-radius: .875rem; box-shadow: none; }
+
+body.export :is(.studio-rail,.studio-context,.studio-preview-heading),
+body.presentation :is(.studio-rail,.studio-context,.studio-preview-heading) { display: none !important; }
+body.studio-shell.v2-focus-mode:not(.export):not(.presentation) .studio { grid-template-columns: 74px minmax(0,1fr) !important; }
+body.studio-shell.v2-focus-mode:not(.export):not(.presentation) .studio-rail { display: none; }
+body.studio-shell.v2-focus-mode:not(.export):not(.presentation) .builder { padding: .75rem .5rem; overflow: hidden !important; }
+
+@media (min-width: 951px) and (max-width: 1200px) {
+  body.studio-shell:not(.export):not(.presentation) .studio { grid-template-columns: 4.5rem minmax(22rem, .95fr) minmax(18rem,1fr); }
+  body.studio-shell:not(.export):not(.presentation) .studio-rail { padding-inline: .5rem; }
+  body.studio-shell:not(.export):not(.presentation) .studio-rail button { justify-content: center; padding-inline: .5rem; }
+  body.studio-shell:not(.export):not(.presentation) .studio-rail :is(button span,p) { display: none; }
+  body.studio-shell:not(.export):not(.presentation) .appbar .live-dot { display: none; }
+}
+@media (max-width: 950px) {
+  body.studio-shell:not(.export):not(.presentation) .studio { display: flex; flex-direction: column; gap: .5rem; padding: .5rem; }
+  body.studio-shell:not(.export):not(.presentation) .studio-rail { flex: 0 0 auto; flex-direction: row; padding: 0; }
+  body.studio-shell:not(.export):not(.presentation) .studio-rail-main { display: flex; flex: 1 1 auto; gap: .25rem; }
+  body.studio-shell:not(.export):not(.presentation) .studio-rail-bottom { margin: 0; padding: 0; border: 0; }
+  body.studio-shell:not(.export):not(.presentation) .studio-rail button { justify-content: center; min-height: 2.75rem; padding: .5rem; font-size: .8125rem; }
+  body.studio-shell:not(.export):not(.presentation) .studio-rail-main button { flex: 1 1 0; }
+  body.studio-shell:not(.export):not(.presentation) .studio-rail-bottom :is(p,[data-studio-backup]) { display: none; }
+  body.studio-shell:not(.export):not(.presentation) :is(.builder,.preview) { flex: 1 1 0; height: auto; min-height: 0; }
+  body.studio-shell:not(.export):not(.presentation) .builder { padding: 0 0 1rem; }
+  body.studio-shell:not(.export):not(.presentation) .builder > .section { padding: 1.25rem; }
+  body.studio-shell:not(.export):not(.presentation) .studio-context { padding: 1.25rem 1.25rem 1rem; }
+  body.studio-shell:not(.export):not(.presentation) .studio-scenario-title { font-size: 1.25rem; }
+  body.studio-shell:not(.export):not(.presentation) .studio-rail svg { width: 1.25rem; height: 1.25rem; flex-basis: 1.25rem; }
+}
+@media (max-width: 600px) {
+  body.studio-shell:not(.export):not(.presentation) .studio-rail button span { display: none; }
+  body.studio-shell:not(.export):not(.presentation) .studio-rail button { min-width: 0; padding: .375rem; }
+  body.studio-shell:not(.export):not(.presentation) .v2-preview-mode { flex-wrap: wrap; }
+  body.studio-shell:not(.export):not(.presentation) .studio-preview-heading { font-size: 1rem; }
+  body.studio-shell:not(.export):not(.presentation) .builder > .section { padding: 1rem; }
+  body.studio-shell:not(.export):not(.presentation) .studio-context { padding: 1rem; }
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  body.studio-shell:not(.export):not(.presentation) .studio-context { background: #f4f8fd; backdrop-filter: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  body.studio-shell:not(.export):not(.presentation) .studio-rail button { transition: none; }
+}
+body.studio-shell:not(.export):not(.presentation) .builder .block.is-collapsed .block-bar strong { max-width: none; }
+body.studio-shell:not(.export):not(.presentation) .builder .block .badge { padding: .25rem; color: #435d77; background: transparent; font-size: .875rem; font-weight: 500; }
+body.studio-shell:not(.export):not(.presentation) .studio-routing-help { margin-top: 1rem; font-size: .8125rem; color: #435d77; }
+body.studio-shell:not(.export):not(.presentation) .studio-routing-help summary { padding: .5rem 0; cursor: pointer; }
+body.studio-shell[data-studio-active-view="ai"]:not(.export):not(.presentation) .studio-context .channel-toggle { display: none; }
+body.studio-shell:not(.export):not(.presentation) .builder .health .good { color: #fff; }
+body.studio-shell:not(.export):not(.presentation) .builder .v2-generation-controls summary span { color: #435d77; }
+body.studio-shell:not(.export):not(.presentation) .builder #steps :is(.flow-actions,.flow-arrow) { display: none; }
+/* The Gmail preview responds to its available pane, not the browser width. */
+body.studio-shell:not(.export):not(.presentation) .preview .stage { container-type: inline-size; }
+@container (max-width: 850px) {
+  body.studio-shell:not(.export):not(.presentation) #stage .gmail.g-source-gmail { grid-template-columns: 64px minmax(0,1fr); }
+  body.studio-shell:not(.export):not(.presentation) #stage .g-source-gmail .g-app-rail { display: none; }
+  body.studio-shell:not(.export):not(.presentation) #stage .g-source-gmail .g-side { grid-column: 1; padding: 8px 5px; }
+  body.studio-shell:not(.export):not(.presentation) #stage .g-source-gmail .g-main { grid-column: 2; }
+  body.studio-shell:not(.export):not(.presentation) #stage .g-source-gmail .g-side :is(.compose-btn,.nav button) { width: 52px; padding: 0; justify-content: center; }
+  body.studio-shell:not(.export):not(.presentation) #stage .g-source-gmail .g-side button span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  body.studio-shell:not(.export):not(.presentation) #stage .g-source-gmail .g-side :is(.nav button b,.g-storage,.g-side-label,.g-label-nav) { display: none; }
+  body.studio-shell:not(.export):not(.presentation) #stage .g-source-gmail .compose-btn::after { display: none; }
+  body.studio-shell:not(.export):not(.presentation) #stage .g-source-gmail .g-brand-zone { width: auto; }
+  body.studio-shell:not(.export):not(.presentation) #stage .gmail :is(.g-main,.mail-pane,.g-detail-scroll,.mailview) { min-width: 0; max-width: 100%; }
+  body.studio-shell:not(.export):not(.presentation) #stage .gmail .mailview { width: 100%; padding: 24px 20px; }
+  body.studio-shell:not(.export):not(.presentation) #stage .gmail .reply-actions { flex-wrap: wrap; }
+  body.studio-shell:not(.export):not(.presentation) #stage .gmail .sender { flex-wrap: wrap; gap: 8px; }
+  body.studio-shell:not(.export):not(.presentation) #stage .gmail .sender-meta { flex: 1 1 160px; min-width: 0; overflow-wrap: anywhere; }
+  body.studio-shell:not(.export):not(.presentation) #stage .gmail .date { flex: 0 0 100%; margin-left: 0; }
+}
+@container (max-width: 700px) {
+  body.studio-shell:not(.export):not(.presentation) #stage .g-source-gmail .g-search { display: none; }
+  body.studio-shell:not(.export):not(.presentation) #stage .gmail-top { gap: 8px; padding-inline: 12px; }
+}
+@container (max-width: 450px) {
+  body.studio-shell:not(.export):not(.presentation) #stage .g-source-gmail .g-side { display: none; }
+  body.studio-shell:not(.export):not(.presentation) #stage .gmail.g-source-gmail { grid-template-columns: minmax(0,1fr); }
+  body.studio-shell:not(.export):not(.presentation) #stage .g-source-gmail .g-main { grid-column: 1; }
+}

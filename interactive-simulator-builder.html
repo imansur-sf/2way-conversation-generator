@@ -4,6 +4,7 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Two-way Experience Studio</title>
   <link rel="stylesheet" href="assets/v2-modern.css">
+  <link rel="stylesheet" href="assets/studio-polish.css">
   <!-- Google tag (gtag.js) -->
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-LFP3R40QZF"></script>
   <script>
@@ -160,6 +161,7 @@
 <script defer src="assets/v2/scenario-backup.js"></script>
 <script defer src="assets/v2/preview-fit.js"></script>
 <script defer src="assets/v2-modern.js"></script>
+<script defer src="assets/v2/workspace-shell.js"></script>
 <script src="assets/export-runtime.js"></script>
 <script>
 (()=>{
@@ -1213,6 +1215,19 @@ function saveStandaloneHtml(html,selected,channel){const blob=new Blob([html],{t
         else{const node=$('#saveState');if(node)node.textContent='Ready to save'}
       }catch(error){showStorageNotice(storageFailureDetail(error,0))}
     }
+    // A small UI boundary: changing workspace views never replaces scenario
+    // data or discards an AI draft. Existing renderers keep owning all edits.
+    window.TwoWayWorkspace = {
+      setBuildMode(mode) {
+        if (!['manual', 'ai'].includes(mode) || state.setupMode === mode) return;
+        state.setupMode = mode;
+        renderAll();
+      },
+      snapshot() {
+        const scenario = active();
+        return { id:scenario.id, name:scenario.name, channel:scenario.channel, mode:state.setupMode, channels:Object.keys(scenario.variants || { [scenario.channel]:scenario }).length };
+      }
+    };
     bindSaveAllControl();rememberChannelSaveSignatures();
     const builderDuringStartup=document.querySelector('.builder');if(builderDuringStartup){builderDuringStartup.inert=true;builderDuringStartup.setAttribute('aria-busy','true')}
     window.__twoWayScenarioInitialization=(async()=>{
