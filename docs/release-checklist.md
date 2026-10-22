@@ -31,4 +31,4 @@ Use the recorded Heroku release or a recovery build from the immutable Git check
 
 ## Explicit limits
 
-The automated browser gate uses Chromium and synthetic fixtures. Safari/Firefox, real mobile hardware, screen-reader behavior and live-provider relevance require separate evidence. The app does not provide cloud scenario storage or concurrent multi-tab editing. Generation jobs and idempotency are process-local; do not scale to multiple processes without shared job storage.
+The automated browser gate uses Chromium and synthetic fixtures. Safari/Firefox, real mobile hardware, screen-reader behavior and live-provider relevance require separate evidence. Cloud projects use explicit saves with revision conflicts; simultaneous edits are not automatically merged. Generation jobs and idempotency are process-local; do not scale to multiple processes without shared job storage.
