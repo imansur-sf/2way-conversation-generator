@@ -50,7 +50,7 @@ for (const channel of ['sms', 'rcs', 'whatsapp', 'email']) {
         ...['normalizeScenarioIdentifiers', 'journeyVariant', 'isJourneyVariant',
           'normalizeJourneyStep', 'normalizeJourneyVariant', 'normalizeJourney',
           'captureJourneyVariant', 'projectJourneyVariant', 'ensureJourneyState',
-          'writeSmallLocalCache', 'add'].map(fn),
+          'writeSmallLocalCache', 'localWorkspaceSettings', 'add'].map(fn),
         source("persist=function(){captureJourneyVariant();if(isStandaloneExport){const saveState=$('#saveState');if(saveState)saveState.textContent='Standalone HTML';return Promise.resolve(true)}"),
       ].join('\n'), context);
       context.ensureJourneyState();

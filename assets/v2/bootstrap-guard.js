@@ -28,7 +28,7 @@
     if (!node) return;
     node.hidden = false;
     const location = [sourcePath(details.source), details.line ? `line ${details.line}` : '', details.column ? `column ${details.column}` : ''].filter(Boolean).join(' · ');
-    node.innerHTML = `<strong>The builder could not start in this browser profile.</strong><span>${escapeHtml(details.message || 'Browser scripts were blocked or stopped before the app could load.')}</span>${location ? `<small>${escapeHtml(location)}</small>` : ''}`;
+    node.innerHTML = `<strong>The builder could not start in this browser profile.</strong><span>${escapeHtml(details.message || 'Browser scripts were blocked or stopped before the app could load.')}</span>${location ? `<small>${escapeHtml(location)}</small>` : ''}<span>Reload the page or try another browser profile. If troubleshooting doesn’t resolve the error, feel free to Slack Imran Mansur to look into the issue.</span>`;
     node.style.cssText = 'display:grid;gap:8px;max-width:480px;padding:20px;border:1px solid #f1b8b8;border-radius:14px;background:#fff7f7;color:#7b1e1e;font:600 14px/1.45 Inter,Arial,sans-serif;box-shadow:0 12px 28px #50141418';
   };
   const resetSavedState = () => {

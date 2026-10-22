@@ -17,10 +17,13 @@ The browser gate runs these suites in order:
 
 1. `test/security-browser.mjs`: imports, shared/saved markup, clipboard/drop sanitization, unsafe IDs/CTA schemes, custom HTML isolation.
 2. `test/state-browser.mjs`: save/reload, hydration ordering, recovery, image ownership, delayed replies, invalid imports and storage failure.
+
 3. `test/export-browser.mjs`: actual downloads in all channels/email modes, offline dependencies, future-message images, CSS/SVG/media, failure warnings and mandatory runtime assets.
 4. `test/e2e-local.mjs`: migrations, email sequencing, editing, carousel/crop controls, channel switching/isolation, save and exported controls.
 5. `test/ai-browser.mjs`: mocked asynchronous generation, immutable input/identity, per-channel draft application, comma-containing reply choices, rejected drafts and actual offline playback.
 6. `test/ui-browser.mjs`: viewport/channel matrix, Auto/manual fit, keyboard controls, retained editor state, transactional image adjustment, scoped automated accessibility and standalone fit.
+
+The gate also runs `npm run test:cloud`: optional accounts, explicit workspace saves, idempotent retries, revisions, session renewal, account changes, and recoverable cloud loads through a synthetic accounts backend. No real account or database is used.
 
 The workflow uploads `test-results/` as the seven-day **browser-verification** artifact. The UI manifest records viewport/channel geometry, screenshot names, errors and scoped accessibility findings. Review the images as well as assertions. Large synthetic HTML downloads live in temporary test directories, not source control.
 

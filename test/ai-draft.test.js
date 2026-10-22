@@ -195,7 +195,7 @@ test('manual recovery notice tolerates malformed imported metadata and escapes v
   const render=recovery=>{
     const notes=[],panel={querySelector:selector=>selector==='.setup-assistant'?{append:note=>notes.push(note)}:null};
     const context={state:{setupMode:'manual',aiSetup:{}},active:()=>({brandingRecovery:recovery}),document:{createElement:()=>({})},esc:value=>String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')};
-    vm.runInNewContext(source,context);context.renderAiBrandingRecovery(panel);return notes[0]?.innerHTML||'';
+    vm.runInNewContext(html.split('\n').find(line=>line.trim().startsWith('function withErrorSupport('))+'\n'+source,context);context.renderAiBrandingRecovery(panel);return notes[0]?.innerHTML||'';
   };
   for(const assetWarnings of ['unexpected',42,{},null,[null,42,{},'IMAGE WARNING']])assert.match(render({failureReason:{bad:'value'},assetWarnings}),/The scenario could not be generated/);
   for(const invalid of ['unexpected metadata',42,[],null])assert.equal(render(invalid),'');

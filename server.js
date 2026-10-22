@@ -2,6 +2,8 @@ const http = require('node:http');
 const { createReadStream, stat, realpath } = require('node:fs');
 const { randomUUID, createHash } = require('node:crypto');
 const path = require('node:path');
+const { createAccountsProxy } = require('./server/accounts-proxy.cjs');
+const accountsProxy = createAccountsProxy();
 const { clientIp:trustedClientIp, createRemoteFetcher, publicFilePath, supportedImageTypes, svgContentSecurityPolicy } = require('./server/security.cjs');
 const { aiConfig, providerHealth } = require('./server/ai-config.cjs');
 const { websiteBranding } = require('./server/branding-recovery.cjs');
@@ -416,6 +418,7 @@ async function handleApi(request,response,url) {
   return false;
 }
 http.createServer(async (request,response) => {
+  if (await accountsProxy(request,response)) return;
   let url;
   try { url = new URL(request.url,`http://${request.headers.host || 'localhost'}`); } catch { sendJson(response,400,{ error:'invalid_request' }); return; }
   try { if (url.pathname.startsWith('/api/') && await handleApi(request,response,url)) return; } catch { sendJson(response,500,{ error:'server_error' }); return; }

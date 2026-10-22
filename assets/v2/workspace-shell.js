@@ -67,7 +67,7 @@
     const present = document.querySelector('#presentation');
     if (headerActions && present) headerActions.insertBefore(present, document.querySelector('#topExport'));
     const menu = document.querySelector('.v2-header-menu');
-    if (menu) { menu.open = false; menu.querySelector('summary').setAttribute('aria-label', 'More workspace actions'); }
+    if (menu) { menu.open = false; menu.querySelector('summary').setAttribute('aria-label', 'Troubleshoot'); }
     const previewActions = document.querySelector('.v2-preview-mode');
     if (previewActions) {
       const title = document.createElement('strong'); title.className = 'studio-preview-heading'; title.textContent = 'Live preview';
@@ -204,11 +204,16 @@
     document.addEventListener('change', event => {
       if (event.target.id === 'scenarioSelect') { builder.scrollTop = 0; scrollPositions.clear(); }
     });
+    document.addEventListener('twoway:project-loaded', event => {
+      activeView = ['ai','review'].includes(event.detail.mode) ? 'ai' : 'conversation';
+      mode = event.detail.mode; builder.scrollTop = 0; scrollPositions.clear(); refresh();
+    });
     const observer = new MutationObserver(() => {
       if (!frame) frame = requestAnimationFrame(() => { frame = 0; refresh(); });
     });
     document.body.classList.add('studio-shell');
-    select('conversation');
+    if (['ai','review'].includes(window.TwoWayWorkspace.snapshot().mode)) { activeView='ai'; refresh(); }
+    else select('conversation');
     observer.observe(document.body, {childList:true,subtree:true});
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, {once:true});

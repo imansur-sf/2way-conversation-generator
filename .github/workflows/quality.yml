@@ -38,6 +38,12 @@ jobs:
       - name: Browser state reliability
         if: ${{ !cancelled() && steps.browser.outcome == 'success' }}
         run: node test/state-browser.mjs
+      - name: Optional accounts and cloud projects
+        if: ${{ !cancelled() && steps.browser.outcome == 'success' }}
+        run: npm run test:cloud
+      - name: Feedback and verified admin inbox
+        if: ${{ !cancelled() && steps.browser.outcome == 'success' }}
+        run: npm run test:feedback
       - name: Downloaded export integrity
         if: ${{ !cancelled() && steps.browser.outcome == 'success' }}
         run: node test/export-browser.mjs

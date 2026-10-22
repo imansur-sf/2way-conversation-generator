@@ -34,20 +34,23 @@ function normalizeControls(value) {
 
 function explicitTurns(useCase, includeRanges = false) {
   const found = [], occupied = [];
-  const role = '(company|brand|customer|prospect|recipient|lead)';
+  const role = '(company|brand|customer|prospect|recipient|lead)\\b';
   const name = "[\\p{L}][\\p{L}\\p{M}'’\\-]{0,79}(?:[ \\t]+[\\p{L}][\\p{L}\\p{M}'’\\-]{0,79}){0,5}?";
   // Bare labels require a colon and identify a transcript speaker only. They
   // never establish persona names: "Customer Support:" remains anonymous.
   const label = `${role}(?:[ \\t]*\\([^\\n)]{1,120}\\)|[ \\t]+(?:named|called)[ \\t]+${name}|[ \\t]+${name}(?=[ \\t]*:))?`;
-  const pattern = new RegExp(`\\b${label}\\s*(?:(?:says?|asks?|repl(?:y|ies)|responds?)\\s*)?(?::|-)??\\s*(["“‘'])`, 'giu');
+  const pattern = new RegExp(`\\b${label}\\s*(?:(says?|asks?|repl(?:y|ies)|responds?)\\s*)?(?::|-)??\\s*(["“‘'])`, 'giu');
   for (const match of useCase.matchAll(pattern)) {
     if (occupied.some(([start, end]) => match.index >= start && match.index < end)) continue;
-    const open = match[2], close = ({'“':'”', '‘':'’'})[open] || open;
+    const open = match[3], close = ({'“':'”', '‘':'’'})[open] || open;
     const start = match.index + match[0].length;
+    // A possessive or contraction (company's, customer'd) is prose, not a
+    // transcript delimiter. Also avoid partial matches inside named speakers.
+    if (open === "'" && !match[2] && /[\p{L}\p{M}\p{N}]/u.test(useCase[start - 2] || '')) continue;
     let end = start;
     for (; end < useCase.length; end++) {
       if (useCase[end] !== close || useCase[end - 1] === '\\') continue;
-      if (close === "'" && /\p{L}/u.test(useCase[end - 1] || '') && /\p{L}/u.test(useCase[end + 1] || '')) continue;
+      if (["'", '’'].includes(close) && /[\p{L}\p{M}\p{N}]/u.test(useCase[end - 1] || '') && /[\p{L}\p{M}\p{N}]/u.test(useCase[end + 1] || '')) continue;
       break;
     }
     if (end === useCase.length) throw failure('invalid_dialogue', [issue('invalid_dialogue', 'A role-labelled quoted message has no closing quote.')]);

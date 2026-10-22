@@ -47,11 +47,15 @@ function requestedInitialSender(prompt, companyName = '') {
   const actors = '(company|brand' + (aliases.length ? '|' + aliases.join('|') : '') + '|customer|prospect|recipient|lead)';
   const name = "(?:[ \\t]+(?:named|called)[ \\t]+[\\p{L}'’ -]{1,80}?|[ \\t]*\\([^\\n)]{1,80}\\)|[ \\t]*,[ \\t]*[\\p{L}'’ -]{1,80}?,)?";
   const modifiers = '(?:[ \\t]+(?:will|would|should|must|can|then|first|also|later|now|still|very|just|[\\p{L}]{2,20}ly)){0,3}';
-  const verbs = '(?:says?|sends?|shares?|announces?|invites?|responds?|repl(?:y|ies)|asks?|contacts?|messages?|reminds?|provides?|offers?|opens?|begins?|starts?|reaches?[ \\t]+out)';
+  const verbs = '(?:says?|sends?|shares?|announces?|invites?|responds?|repl(?:y|ies)|asks?|contacts?|messages?|reminds?|provides?|offers?|opens?|begins?|starts?|reaches?[ \\t]+out|follows?[ \\t]+up|checks?[ \\t]+in)';
   const pattern = new RegExp('\\b' + actors + '\\b' + name + modifiers + '[ \\t]+' + verbs + '\\b', 'giu');
   for (const match of prompt.matchAll(pattern)) {
     const preceding = prompt.slice(Math.max(0, match.index - 35), match.index);
+    const sentencePrefix = prompt.slice(0, match.index).split(/[.!?\n]/).at(-1);
     // A response/relative clause is not evidence of an opening action.
+    // A dependent sentence can contain several actors: "When the customer
+    // responds, the agent asks and the customer provides feedback."
+    if (/^\s*(?:when|after|once|until|if|while)\b/i.test(sentencePrefix)) continue;
     if (/\b(?:which|who|whom|whose|that|when|after|once|until|if)\s+(?:(?:a|the|current)\s+)?$/i.test(preceding)) continue;
     if (/\b(?:later|then|afterwards|subsequently)\b/i.test(preceding+match[0]) || /\b(?:responds?|repl(?:y|ies))\b/i.test(match[0])) return null;
     return /^(?:customer|prospect|recipient|lead)$/i.test(match[1]) ? 'customer' : 'company';

@@ -189,6 +189,7 @@ body:not(.export) .builder {
 .v2-requirements li[data-missing="true"]::before { content: '!'; color: #b54708; }
 
 .v2-generation-controls { margin-top:12px; border:1px solid #c8dfef; border-radius:11px; color:#315776; background:#f7fbff; }
+.v2-opening-sender select { width:100%; min-width:0; min-height:40px; padding:8px 10px; border:1px solid #93c5ed; border-radius:8px; color:#193f68; background:#fff; font:inherit; }
 .v2-generation-controls summary { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:10px 11px; color:#174b80; cursor:pointer; font-size:11px; font-weight:850; }
 .v2-generation-controls summary span { color:#66819a; font-size:10px; font-weight:700; }
 .v2-generation-controls__body { display:grid; grid-template-columns:1fr 1fr; gap:8px; padding:0 11px 11px; }

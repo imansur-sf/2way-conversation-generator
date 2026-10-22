@@ -1,0 +1,64 @@
+/* Optional account controls share the studio toolbar without changing local saving. */
+.cloud-account{position:relative;flex:0 0 auto}
+.cloud-sign-in,.cloud-menu>summary{display:flex;align-items:center;gap:9px;min-height:40px;padding:8px 15px;border:1px solid #ffffff55;border-radius:24px;background:#ffffff14;color:#fff;font:600 13px/1.2 system-ui,sans-serif;cursor:pointer;white-space:nowrap}
+.cloud-menu>summary{list-style:none;padding:7px 13px}
+.cloud-menu>summary::-webkit-details-marker{display:none}
+.cloud-avatar{display:grid;place-items:center;width:25px;height:25px;border-radius:50%;background:#ffffff29;font-size:12px}
+.cloud-account-name{max-width:130px;overflow:hidden;text-overflow:ellipsis}
+.cloud-chevron{font-size:9px;opacity:.8}
+.cloud-controls{position:absolute;z-index:160;right:0;top:calc(100% + 10px);box-sizing:border-box;width:min(320px,calc(100vw - 24px));overflow:hidden;border:1px solid #e1e6ee;border-radius:16px;background:#fff;color:#334155;box-shadow:0 12px 26px #10234229;text-align:left}
+.cloud-menu:not([open])>.cloud-controls{display:none}
+.cloud-account-heading{padding:17px 20px;border-bottom:1px solid #edf0f5}
+.cloud-account-heading>span{display:block;margin-bottom:7px;color:#64748b;font:600 11px/1.2 system-ui,sans-serif;text-transform:uppercase;letter-spacing:.04em}
+.cloud-email{display:block;color:#334155;font:600 16px/1.4 system-ui,sans-serif;overflow-wrap:anywhere}
+.cloud-controls>button{display:block;box-sizing:border-box;width:100%;min-height:49px;padding:13px 20px;border:0;border-bottom:1px solid #edf0f5;border-radius:0;background:#fff;color:#334155;font:400 15px/1.4 system-ui,sans-serif;text-align:left;cursor:pointer}
+.cloud-controls>button:hover{background:#f4f7fb}
+.cloud-controls>[data-cloud="auth"]{color:#c91d29}
+.cloud-controls>[data-cloud="auth"]:hover{background:#fff3f3}
+.cloud-status{display:block;padding:12px 20px;color:#52657d;font:400 11px/1.5 system-ui,sans-serif;overflow-wrap:anywhere;background:#f8fafc}
+.cloud-sign-in:focus-visible,.cloud-menu>summary:focus-visible{outline:3px solid #ffcf50;outline-offset:3px}
+.cloud-controls button:focus-visible,.cloud-dialog button:focus-visible{outline:3px solid #0176d3;outline-offset:-3px}
+.cloud-dialog{box-sizing:border-box;width:min(600px,calc(100vw - 32px));max-width:600px;max-height:85dvh;padding:24px;border:1px solid #dbe3ee;border-radius:16px;background:#fff;color:#334155;box-shadow:0 16px 64px #001c4055}
+.cloud-dialog::backdrop{background:#001c4077}
+.cloud-dialog h2{margin:0 0 12px;font-size:20px}
+.cloud-dialog p{color:#385c7b;font-size:13px;line-height:1.5}
+.cloud-dialog label{display:block;font-size:13px;font-weight:700;margin:12px 0 6px}
+.cloud-dialog input{box-sizing:border-box;width:100%;padding:10px;border:1px solid #627f99;border-radius:6px;font:inherit}
+.cloud-dialog form{padding:0}
+.cloud-dialog button{font:inherit;font-size:13px;min-height:36px;padding:7px 12px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;color:#475569;cursor:pointer}
+.cloud-dialog button.primary{background:#0176d3;color:#fff;border-color:#0176d3}
+.cloud-dialog button:disabled{opacity:.6;cursor:wait}
+.cloud-dialog-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+.cloud-dialog .cloud-dialog-error{color:#8f1717;min-height:1.5em}
+.cloud-project-panel{position:fixed;z-index:170;inset:calc(var(--appbar-height) - 6px) 18px auto auto;width:min(400px,calc(100vw - 24px));max-height:calc(100dvh - var(--appbar-height) - 18px);margin:0;padding:0;overflow:auto;border-color:#e1e6ee;box-shadow:0 12px 26px #10234229}
+.cloud-panel-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:56px;padding:10px 18px;border-bottom:1px solid #edf0f5}
+.cloud-panel-heading h2{margin:0;color:#64748b;font:600 13px/1.3 system-ui,sans-serif;text-transform:uppercase;letter-spacing:.02em}
+.cloud-panel-heading button{min-height:32px;padding:3px 8px;border:0;background:transparent;font-size:22px;color:#64748b}
+.cloud-project-panel .cloud-dialog-error{padding:12px 18px;margin:0}
+.cloud-project-panel .cloud-dialog-error:empty{display:none}
+.cloud-project-panel .cloud-dialog-actions{margin:0;padding:10px 18px;border-top:1px solid #edf0f5}
+.cloud-project-list,.cloud-backup-list{list-style:none;margin:0;padding:0}
+.cloud-project-list li,.cloud-backup-list li{display:flex;gap:6px;align-items:center;padding:15px 18px;border-bottom:1px solid #edf0f5}
+.cloud-project-list li:last-child{border-bottom:0}
+.cloud-project-list strong{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#334155;font:600 16px/1.35 system-ui,sans-serif}
+.cloud-project-list small{display:block;margin-top:4px;color:#64748b;font:400 13px/1.3 system-ui,sans-serif}
+.cloud-project-list button{flex:0 0 auto;min-height:34px;padding:5px 9px;font-size:12px}
+.cloud-backup-list{margin-top:16px}
+.cloud-backup-list li{padding-inline:0;flex-wrap:wrap}
+.cloud-backup-list span{flex:1;min-width:140px;overflow-wrap:anywhere;font-size:13px}
+.cloud-notice{position:fixed;z-index:190;bottom:20px;right:20px;display:flex;gap:12px;align-items:start;box-sizing:border-box;width:min(430px,calc(100vw - 32px));padding:14px 16px;border:1px solid #cbd5e1;border-radius:12px;background:#fff;color:#334155;box-shadow:0 8px 28px #001b4a29;font:400 13px/1.5 system-ui,sans-serif;overflow-wrap:anywhere}
+.cloud-notice>span{flex:1;min-width:0}
+.cloud-notice>button{border:0;background:transparent;color:#475569;font-size:22px;cursor:pointer;line-height:1}
+.cloud-account [hidden],.cloud-notice[hidden],.appbar #feedback-inbox-open[hidden]{display:none!important}
+body.has-account-toolbar .appbar{height:auto;min-height:88px;padding-block:3px}
+body.has-account-toolbar .appbar-actions{flex:0 1 auto;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;min-width:0}
+body.has-account-toolbar .appbar-actions>.top-quiet,body.has-account-toolbar .appbar-actions>.top-primary{border-radius:24px;min-height:40px;padding:8px 15px}
+body.has-account-toolbar .appbar .live-dot{max-width:185px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+body.has-account-toolbar .appbar-brand{flex:1 1 auto}
+body.has-account-toolbar .v2-header-menu>summary{min-height:40px;padding:8px 13px;border-radius:24px;align-items:center;cursor:pointer}
+body.has-account-toolbar .v2-header-menu{position:relative}
+@media(max-width:1200px){body.has-account-toolbar .appbar-brand>div{display:none}body.has-account-toolbar .appbar .live-dot{display:none}body.has-account-toolbar .appbar-brand{flex:0 0 44px}}
+@media(max-width:650px){body.has-account-toolbar .appbar{align-items:flex-start;padding:10px 8px;gap:8px;min-height:64px}body.has-account-toolbar .appbar-brand{flex-basis:36px;padding-top:2px}body.has-account-toolbar .appbar-brand img{width:36px;height:36px}body.has-account-toolbar .appbar-actions{flex:1;gap:6px}body.has-account-toolbar .appbar-actions>.top-quiet,body.has-account-toolbar .appbar-actions>.top-primary,body.has-account-toolbar .v2-header-menu>summary{padding:8px 10px;font-size:11px;min-height:36px}.cloud-sign-in,.cloud-menu>summary{min-height:36px;padding:6px 11px;font-size:12px}.cloud-avatar{width:22px;height:22px}.cloud-controls{position:fixed;top:calc(var(--appbar-height) - 4px);right:12px}.cloud-project-panel{right:12px}.cloud-notice{right:16px;bottom:16px}}
+.export :is(.cloud-account,.cloud-dialog,.cloud-notice),.presentation :is(.cloud-account,.cloud-dialog,.cloud-notice){display:none!important}
+/* Account disclosure stays as compact as the reference; operation results use the toast. */
+.cloud-controls>.cloud-status{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}

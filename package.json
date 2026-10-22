@@ -9,6 +9,8 @@
     "test:e2e": "node test/e2e-local.mjs",
     "test:browser": "node test/security-browser.mjs && node test/state-browser.mjs && node test/export-browser.mjs && node test/e2e-local.mjs && node test/ai-browser.mjs && node test/ui-browser.mjs && node test/workspace-browser.mjs",
     "test:workspace": "node test/workspace-browser.mjs",
+    "test:cloud": "node test/cloud-projects-browser.mjs",
+    "test:feedback": "node test/feedback-browser.mjs",
     "test:hosted": "node scripts/smoke-hosted.mjs",
     "test:ai:live": "node scripts/ai-app-smoke.mjs"
   },

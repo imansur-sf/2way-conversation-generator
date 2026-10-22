@@ -43,23 +43,23 @@
       if (used.has(key)) return;
       used.add(key);
       summaries.push(summary);
-      actions.push({text:next, ...(target ? {target, label:controlTargets.includes(target) ? 'Review generation controls' : target === 'website' ? 'Review company website' : 'Review scenario brief'} : {})});
+      actions.push({text:next, ...(target ? {target, label:target === 'opening-sender' ? 'Review first sender' : controlTargets.includes(target) ? 'Review generation controls' : target === 'website' ? 'Review company website' : 'Review scenario brief'} : {})});
     };
     const selectedSender = sender(request.controls?.initialSender);
     const selectedCount = count(request.controls?.expectedMessageCount);
     const expectedSender = [...new Set(issues.map(issue => sender(issue.expectedSender)).filter(Boolean))];
     const expectedCount = [...new Set(issues.map(issue => count(issue.expectedMessageCount)).filter(Boolean))];
     const has = candidate => issues.some(issue => issueCode(issue) === candidate);
-    if (has('sender_conflict')) add('sender', 'The opening-sender instructions conflict.', 'Make Generation controls → Opening sender agree with the first Company:/Customer: message and the written opening instruction, or correct the supplied dialogue order.', 'opening-sender');
+    if (has('sender_conflict')) add('sender', 'The opening-sender instructions conflict.', 'Make “Who sends the first message?” agree with the first Company:/Customer: message and the written opening instruction, or correct the supplied dialogue order.', 'opening-sender');
     if (has('count_conflict')) add('count', 'The requested message totals conflict.', 'Use the same total in Generation controls → Exact message total, the written brief, and any supplied dialogue. Clear the control to follow the brief, or correct the conflicting instruction.', 'message-total');
     for (const issue of issues) {
       const kind = issueCode(issue);
       if (kind === 'sender_mismatch' || kind === 'invalid_sender' && issue.origin !== 'user-input' && ['draft_invalid','invalid_draft'].includes(code)) {
         const choice = expectedSender.length === 1 ? expectedSender[0] : null;
         add('sender', selectedSender ? 'The AI did not follow your selected opening sender.' : 'The generated opening sender did not match the requested conversation.', selectedSender
-          ? `For this attempt, Generation controls → Opening sender was set to ${selectedSender === 'company' ? 'Company opens' : 'Customer opens'}. Review the current setting and keep that selection if it is still intended, then generate again; the AI needs to follow it.`
-          : `Open Generation controls → Opening sender, ${choice ? `choose ${choice === 'company' ? 'Company opens' : 'Customer opens'}` : 'choose Company opens or Customer opens to match your intended first message'}, then generate again.`, 'opening-sender');
-      } else if (kind === 'invalid_sender') add('sender', 'Choose a valid opening sender.', 'In Generation controls → Opening sender, select Follow the prompt, Company opens, or Customer opens.', 'opening-sender');
+          ? `For this attempt, “Who sends the first message?” was set to ${selectedSender === 'company' ? 'Company opens' : 'Customer opens'}. Review the current setting and keep that selection if it is still intended, then generate again; the AI needs to follow it.`
+          : `Under “Who sends the first message?”, ${choice ? `choose ${choice === 'company' ? 'Company opens' : 'Customer opens'}` : 'choose Company opens or Customer opens to match your intended first message'}, then generate again.`, 'opening-sender');
+      } else if (kind === 'invalid_sender') add('sender', 'Choose a valid opening sender.', 'Under “Who sends the first message?”, select Follow the prompt, Company opens, or Customer opens.', 'opening-sender');
       else if (kind === 'count_mismatch') add('count', selectedCount ? 'The AI did not follow your selected message total.' : 'The generated message total did not match the request.', selectedCount
         ? `For this attempt, Generation controls → Exact message total was set to ${selectedCount}. Review the current setting and keep that total if it is still intended, then generate again; the AI needs to follow it.`
         : `Open Generation controls → Exact message total and ${expectedCount.length === 1 ? `enter ${expectedCount[0]} to match the requested total` : 'enter the intended total (2–12), or leave it blank to follow the prompt'}. Keep any supplied dialogue and written total consistent.`, 'message-total');
@@ -90,8 +90,8 @@
         : 'Try the public company homepage or another relevant public page. For redirects, use the final public URL. Generation controls do not change website access.', 'website');
       else if (code === 'missing_required_fields') add('inputs', 'Some generation inputs are missing.', 'Enter a company website, describe the scenario, and select at least one channel before generating.', 'brief');
       else if (code === 'idempotency_conflict') add('changed', 'The inputs changed during a retry.', 'Choose Generate scenario drafts again to start a new request with your current entries.');
-      else if (code === 'conflicting_requirements') add('conflict', 'The generation requirements conflict.', 'Review the opening sender and exact message total in Generation controls alongside the written brief and any supplied dialogue. Make the instructions consistent before generating.', 'opening-sender');
-      else if (code === 'invalid_controls') add('controls', 'A generation-control setting is invalid.', 'Review Opening sender and Exact message total in Generation controls. Choose a listed sender and use a whole-number total from 2 to 12, or leave them blank to follow the prompt.', 'opening-sender');
+      else if (code === 'conflicting_requirements') add('conflict', 'The generation requirements conflict.', 'Review “Who sends the first message?” and Generation controls → Exact message total alongside the written brief and any supplied dialogue. Make the instructions consistent before generating.', 'opening-sender');
+      else if (code === 'invalid_controls') add('controls', 'A generation-control setting is invalid.', 'Review “Who sends the first message?” and Generation controls → Exact message total. Choose a listed sender and use a whole-number total from 2 to 12, or leave them blank to follow the prompt.', 'opening-sender');
       else add('generic', ['draft_invalid','invalid_draft'].includes(code) ? 'The generated scenario did not pass its content checks.' : 'The scenario could not be generated.', 'Generate again with the same inputs. If it repeats, share the request ID and Technical details with the tool owner, or use available branding recovery to build manually.');
     }
     const summary = summaries.length === 1 ? summaries[0] : 'The scenario did not meet several requested content checks. Review the next steps below.';

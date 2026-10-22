@@ -1,0 +1,69 @@
+/* Editor-only feedback surfaces. Native dialogs contain their own scrolling. */
+.app-topbar > div { flex-wrap: wrap; gap: .75rem; }
+.feedback-toolbar { display: flex; flex-wrap: wrap; min-width: 0; gap: .5rem; align-items: center; }
+.feedback-toolbar > button { min-height: 2.75rem; }
+#feedback-inbox-open[hidden], .feedback-dialog [hidden] { display: none !important; }
+.feedback-dialog {
+  box-sizing: border-box; width: min(42rem, calc(100vw - 2rem)); max-height: 90vh; max-height: 90dvh;
+  margin: auto; overflow: auto; overscroll-behavior: contain; padding: 0;
+  border: 1px solid #cbdaf2; border-radius: 1.25rem; color: #102b58; background: #fff;
+  box-shadow: 0 24px 90px #071c4938; font: 400 1rem/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.feedback-dialog::backdrop { background: #071b4e66; backdrop-filter: blur(4px); }
+.feedback-dialog[open] { animation: feedback-arrive .16s ease-out; }
+.feedback-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1.5rem 1.75rem; border-bottom: 1px solid #dce7f7; background: #f1f6ff; }
+.feedback-heading h2 { color: #102b58; font-size: 1.5rem; font-weight: 650; letter-spacing: -.025em; line-height: 1.25; margin: .2rem 0 0; }
+.feedback-eyebrow { font-size: .75rem; color: #49618b; margin: 0; }
+.feedback-heading > button { font-size: 1.7rem; line-height: 1; }
+.feedback-body { padding: 1.5rem 1.75rem; }
+.feedback-body h3 { color: #102b58; font-size: 1.25rem; font-weight: 650; margin: 1rem 0 .5rem; }
+.feedback-body label { display: block; font-size: .875rem; font-weight: 600; margin-bottom: .4rem; }
+.feedback-body input:not([type=file]), .feedback-body textarea, .feedback-body select {
+  box-sizing: border-box; width: 100%; min-height: 2.75rem; padding: .7rem .8rem;
+  border: 1px solid #bdcce5; border-radius: .65rem; background: #fff; color: #102b58; font: inherit; margin-bottom: 1.1rem;
+}
+.feedback-body textarea { resize: vertical; min-height: 8rem; line-height: 1.5; }
+.feedback-body input::placeholder, .feedback-body textarea::placeholder { color: #607291; opacity: 1; }
+.feedback-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.feedback-dialog button { box-sizing: border-box; min-height: 2.75rem; min-width: 2.75rem; border: 1px solid #bdcce5; border-radius: .65rem; background: #fff; color: #102b58; padding: .65rem 1rem; font: inherit; cursor: pointer; touch-action: manipulation; }
+.feedback-dialog button:hover { background: #edf4ff; }
+.feedback-dialog button:active { transform: scale(.98); }
+.feedback-dialog :focus-visible { outline: 3px solid #075dcc; outline-offset: 3px; }
+.feedback-dialog button:disabled { opacity: .55; cursor: default; }
+.feedback-dialog .feedback-primary { background: #075dcc; border-color: #075dcc; color: #fff; font-weight: 600; }
+.feedback-dialog .feedback-primary:hover { background: #064ba5; }
+.feedback-actions { display: flex; justify-content: flex-end; align-items: center; gap: .75rem; margin-top: 1.25rem; }
+.feedback-drop { padding: 1rem; border: 1px dashed #9cb7e4; border-radius: .8rem; background: #f7faff; }
+.feedback-drop.dragging { border-color: #075dcc; background: #e8f1ff; }
+.feedback-drop p { font-size: .8rem; color: #49618b; line-height: 1.5; margin: .3rem 0 .75rem; }
+.feedback-drop p:last-child { margin-bottom: 0; }
+.feedback-drop label span { font-weight: 400; color: #49618b; }
+.feedback-drop input[type=file] { max-width: 100%; min-height: 2.75rem; font-size: .875rem; }
+.feedback-drop input::file-selector-button { min-height: 2.75rem; padding: .5rem .7rem; border: 1px solid #bdcce5; border-radius: .5rem; background: #fff; color: #102b58; cursor: pointer; margin-right: .5rem; }
+.feedback-previews { display: flex; flex-wrap: wrap; gap: .75rem; list-style: none; padding: 0; margin: 1rem 0; }
+.feedback-previews li { max-width: 9rem; }
+.feedback-previews img { width: 9rem; height: 6rem; object-fit: cover; border-radius: .5rem; border: 1px solid #d5e0f1; }
+.feedback-previews button { font-size: .75rem; margin-top: .35rem; }
+.feedback-body [role=status] { font-size: .875rem; line-height: 1.5; overflow-wrap: anywhere; }
+.feedback-inbox { width: min(54rem, calc(100vw - 2rem)); }
+.feedback-row { display: block !important; text-align: left; width: 100%; margin: .6rem 0; padding: 1rem !important; }
+.feedback-row strong, .feedback-row span { display: block; overflow-wrap: anywhere; }
+.feedback-row span { font-size: .8rem; color: #49618b; margin-top: .35rem; }
+.feedback-detail-description { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; margin: 1rem 0; }
+.feedback-detail-image { display: block; max-width: 100%; height: auto; margin: 1rem 0; border: 1px solid #d5e0f1; border-radius: .75rem; }
+.feedback-detail-meta { white-space: pre-line; font-size: .875rem; line-height: 1.6; overflow-wrap: anywhere; }
+#feedback-delete { color: #a51f2f; border-color: #d69da4; }
+#feedback-delete:hover { background: #fff1f2; }
+#feedback-unread:empty { display: none; }
+#feedback-unread { background: #fff; color: #075dcc; border-radius: 1rem; padding: .1rem .4rem; margin-left: .3rem; font-weight: 700; }
+@keyframes feedback-arrive { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .feedback-dialog[open] { animation: none; } .feedback-dialog button:active { transform: none; } }
+@media (prefers-reduced-transparency: reduce) { .feedback-dialog::backdrop { backdrop-filter: none; } }
+@media (max-width: 540px) {
+  .feedback-heading, .feedback-body { padding: 1.25rem; }
+  .feedback-fields { grid-template-columns: 1fr; gap: 0; }
+  .feedback-actions { flex-wrap: wrap; }
+  .feedback-dialog { width: calc(100vw - 1rem); max-height: calc(100dvh - 1rem); }
+}
+@media (prefers-contrast: more) { .feedback-dialog, .feedback-dialog button, .feedback-body input, .feedback-body textarea, .feedback-body select { border-color: #102b58; } }
+@media (forced-colors: active) { .feedback-dialog, .feedback-heading { background: Canvas; color: CanvasText; } .feedback-dialog button { border-color: ButtonText; } }

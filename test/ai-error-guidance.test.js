@@ -15,9 +15,9 @@ test('EWC repeated channel failures become two next steps, retaining all origina
   const request = {companyName:'EWC', useCase:'Express Wash Concepts sends out message reminding a current customer that their membership is set to renew in 14 days. Customer responds with a question about what all the membership includes.'};
   const result = format(failure(issues), request);
   assert.equal(result.actions.length, 2);
-  assert.match(result.actions[0].text, /Opening sender, choose Company opens/);
+  assert.match(result.actions[0].text, /Who sends the first message.*choose Company opens/);
   assert.equal(result.controlTarget, 'opening-sender');
-  assert.equal(result.actions[0].label, 'Review generation controls');
+  assert.equal(result.actions[0].label, 'Review first sender');
   assert.doesNotMatch(visible(result), /Customer question supplied|sms dialogue|shared opening sender/);
   assert.deepEqual(result.details.issues, issues);
   assert.equal(result.details.requestId, 'request-123');
@@ -63,7 +63,7 @@ test('invalid sender and generic invalid controls target the actual disclosure',
   for (const code of ['invalid_sender','invalid_controls']) {
     const result = format({code});
     assert.equal(result.controlTarget, 'opening-sender');
-    assert.match(result.actions[0].label, /Review generation controls/);
+    assert.match(result.actions[0].label, /Review first sender/);
   }
   const generated = format(failure([{code:'invalid_sender',message:'Draft opening sender is required.'}]), {controls:{initialSender:'company'}});
   assert.match(generated.summary, /AI did not follow your selected opening sender/);
@@ -194,6 +194,11 @@ test('guidance focus resolves rehydrated controls at click time and never change
   assert.equal(field.focused, 1);
   assert.equal(field.value, 'customer');
   assert.equal(field.behavior, 'smooth');
+  field = makeField('company');
+  field.controls = null;
+  context.focusGuidance(root, 'opening-sender');
+  assert.equal(field.focused, 1);
+  assert.equal(field.value, 'company');
   context.focusGuidance(root, '[arbitrary-selector]');
-  assert.equal(hydrated, 2);
+  assert.equal(hydrated, 3);
 });

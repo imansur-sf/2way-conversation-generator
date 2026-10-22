@@ -1,0 +1,124 @@
+diff --git a/db/schema.sql b/db/schema.sql
+index 7136a4e..de79051 100644
+--- a/db/schema.sql
++++ b/db/schema.sql
+@@ -21,6 +21,10 @@ CREATE TABLE IF NOT EXISTS projects (
+   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+ );
+ 
++-- Register Studio projects without changing existing project ownership.
++ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_tool_check;
++ALTER TABLE projects ADD CONSTRAINT projects_tool_check CHECK (tool IN ('upg', 'lpg', 'icp', 'twoway'));
++
+ ALTER TABLE projects ADD COLUMN IF NOT EXISTS source_url TEXT;
+ ALTER TABLE projects ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+ ALTER TABLE projects ADD COLUMN IF NOT EXISTS idempotency_hash TEXT;
+@@ -125,3 +129,7 @@ END $$;
+ ALTER TABLE feedback_submissions DROP CONSTRAINT IF EXISTS feedback_submissions_idempotency_hash_key;
+ CREATE UNIQUE INDEX IF NOT EXISTS idx_feedback_tool_idempotency ON feedback_submissions (tool, idempotency_hash);
+ CREATE INDEX IF NOT EXISTS idx_feedback_tool_created ON feedback_submissions (tool, created_at DESC);
++
++-- Register Studio feedback without changing existing tool ownership.
++ALTER TABLE feedback_submissions DROP CONSTRAINT IF EXISTS feedback_submissions_tool_check;
++ALTER TABLE feedback_submissions ADD CONSTRAINT feedback_submissions_tool_check CHECK (tool IN ('lpg', 'upg', 'icp', 'twoway'));
+diff --git a/feedback.js b/feedback.js
+index 8f3dbd9..b152da9 100644
+--- a/feedback.js
++++ b/feedback.js
+@@ -2,8 +2,8 @@ const crypto = require('crypto');
+ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+ const CATEGORIES = ['bug', 'feature', 'general'];
+ const STATUSES = ['new', 'reviewing', 'completed'];
+-const TOOLS = ['lpg', 'upg', 'icp'];
+-const TOOL_NAMES = { lpg: 'Loyalty Portal Generator', upg: 'Unified Profile Generator', icp: 'Interactive Customer Presentations' };
++const TOOLS = ['lpg', 'upg', 'icp', 'twoway'];
++const TOOL_NAMES = { lpg: 'Loyalty Portal Generator', upg: 'Unified Profile Generator', icp: 'Interactive Customer Presentations', twoway: '2 Way Experience Studio' };
+ const MAX_BYTES = 1024 * 1024;
+ const fail = (status, error) => { throw Object.assign(new Error(error), { publicStatus: status, publicBody: { error } }); };
+ const hash = value => crypto.createHash('sha256').update(value).digest('hex');
+@@ -42,7 +42,7 @@ function summary(row) {
+ }
+ function installFeedback(app, { pool, requireAuth, endpoint, env = process.env }) {
+   const admins = new Set(String(env.FEEDBACK_ADMIN_EMAILS || 'imansur@salesforce.com').split(',').map(v => v.trim().toLowerCase()).filter(Boolean));
+-  const isAdmin = req => typeof req.email === 'string' && (req.feedbackTool === 'upg' ? req.email.toLowerCase() === 'imansur@salesforce.com' : admins.has(req.email.toLowerCase()));
++  const isAdmin = req => typeof req.email === 'string' && (['upg', 'twoway'].includes(req.feedbackTool) ? req.email.toLowerCase() === 'imansur@salesforce.com' : admins.has(req.email.toLowerCase()));
+   const optionalAuth = (req, res, next) => req.get('authorization') ? requireAuth(req, res, next) : next();
+   const admin = (req, res, next) => isAdmin(req) ? next() : res.status(403).json({ error: 'forbidden' });
+   app.use('/feedback', (req, res, next) => {
+diff --git a/server.js b/server.js
+index 7d12cf1..ec34cd0 100644
+--- a/server.js
++++ b/server.js
+@@ -22,6 +22,8 @@ const RATE_LIMIT_WINDOW_MS = 60000;
+ const RATE_LIMIT_MAX = 10;
+ const rateBuckets = new Map();
+ const TOOLS = ['upg', 'lpg', 'icp'];
++// Studio projects share accounts storage without enabling API-key integrations.
++const PROJECT_TOOLS = [...TOOLS, 'twoway'];
+ const MAGIC_PUBLISHABLE_KEY = String(process.env.MAGIC_PUBLISHABLE_KEY || '').trim();
+ const MAGIC_SECRET_KEY = String(process.env.MAGIC_SECRET_KEY || '').trim();
+ const AUTH_PROVIDER = String(process.env.AUTH_PROVIDER || (MAGIC_PUBLISHABLE_KEY && MAGIC_SECRET_KEY ? 'magic' : 'legacy')).trim().toLowerCase();
+@@ -308,7 +310,7 @@ async function insertProject(email, tool, name, payload, sourceUrl, idempotencyK
+ 
+ endpoint('get', '/projects', requireAuth, async (req, res) => {
+   const tool = req.query.tool;
+-  if (tool && !TOOLS.includes(tool)) return res.status(400).json({ error: 'invalid_tool' });
++  if (tool && !PROJECT_TOOLS.includes(tool)) return res.status(400).json({ error: 'invalid_tool' });
+   const { rows } = tool
+     ? await pool.query(
+         'SELECT id, tool, name, source_url, revision, created_at, updated_at FROM projects WHERE email = $1 AND tool = $2 ORDER BY updated_at DESC',
+@@ -333,7 +335,7 @@ endpoint('get', '/projects/:id', requireAuth, async (req, res) => {
+ endpoint('post', '/projects', requireAuth, async (req, res) => {
+   const { tool, name, payload, sourceUrl } = req.body || {};
+   const idempotencyKey = String(req.get('Idempotency-Key') || '').trim();
+-  if (!TOOLS.includes(tool)) return res.status(400).json({ error: 'invalid_tool' });
++  if (!PROJECT_TOOLS.includes(tool)) return res.status(400).json({ error: 'invalid_tool' });
+   if (!name || typeof name !== 'string') return res.status(400).json({ error: 'invalid_name' });
+   if (payload === undefined) return res.status(400).json({ error: 'missing_payload' });
+   if (idempotencyKey && !/^[A-Za-z0-9_-]{16,200}$/.test(idempotencyKey)) return res.status(400).json({ error: 'invalid_idempotency_key' });
+diff --git a/test/feedback.test.js b/test/feedback.test.js
+index 2af7cfd..5e2a102 100644
+--- a/test/feedback.test.js
++++ b/test/feedback.test.js
+@@ -183,3 +183,18 @@ test('UPG admin identity is strict even when LPG administrator overrides are con
+   await h.request('/feedback', { ...payload(), tool: 'upg', email: 'imansur@salesforce.com' });
+   assert.equal((await h.request('/feedback/inbox?tool=upg', null, token('other@salesforce.com'))).status, 403);
+ });
++
++
++test('Studio feedback is isolated and its inbox requires the verified imansur account', async t => {
++  const h = await serve(t, database(), { FEEDBACK_ADMIN_EMAILS: 'other@salesforce.com' });
++  const studio = await h.request('/feedback', {...payload(), tool:'twoway'}, undefined, 'studio_feedback_key_123');
++  assert.equal(studio.status, 201);
++  const id = (await studio.json()).id;
++  assert.equal((await (await h.request('/feedback/session?tool=twoway', null, token('other@salesforce.com'))).json()).admin, false);
++  assert.equal((await (await h.request('/feedback/session?tool=twoway', null, token('imansur@salesforce.com'))).json()).admin, true);
++  assert.equal((await h.request('/feedback/inbox?tool=twoway', null, token('other@salesforce.com'))).status, 403);
++  const inbox = await (await h.request('/feedback/inbox?tool=twoway', null, token('imansur@salesforce.com'))).json();
++  assert.equal(inbox.items.length, 1); assert.equal(inbox.items[0].tool, 'twoway');
++  assert.equal((await h.request('/feedback/inbox/' + id + '?tool=upg', null, token('imansur@salesforce.com'))).status, 404);
++  assert.equal((await h.request('/feedback/inbox/' + id + '?tool=lpg', null, token('other@salesforce.com'))).status, 404);
++});
+diff --git a/test/server.test.js b/test/server.test.js
+index cdb3cf7..d541a2e 100644
+--- a/test/server.test.js
++++ b/test/server.test.js
+@@ -415,3 +415,18 @@ test('Save as New can create another project with the same source URL', async t
+   assert.match(schema, /CREATE INDEX IF NOT EXISTS idx_projects_email_tool_source_url/);
+   assert.doesNotMatch(schema, /CREATE UNIQUE INDEX[^;]*source_url/);
+ });
++
++test('Two Way projects use their own namespace without enabling API keys', async t => {
++  const { request, calls } = await serve(t, async sql => ({ rows: sql.startsWith('INSERT INTO projects') ? [{ id: '8', tool: 'twoway', revision: '1', inserted: true }] : [] }));
++  assert.equal((await request('/projects', { method: 'POST', body: { tool: 'twoway', name: 'Studio', payload: { version: 1, scenarios: [] } } })).status, 201);
++  assert.equal(calls[0].values[1], 'twoway');
++  assert.equal(calls[0].values[0], 'owner@salesforce.com');
++  assert.equal((await request('/projects?tool=twoway')).status, 200);
++  assert.deepEqual(Array.from(calls[1].values), ['owner@salesforce.com', 'twoway']);
++  assert.equal((await request('/projects?tool=unregistered')).status, 400);
++  assert.equal((await request('/projects', { method: 'POST', body: { tool: 'unregistered', name: 'No', payload: {} } })).status, 400);
++  assert.equal((await request('/api-keys?tool=twoway')).status, 400);
++  const schema = fs.readFileSync(path.join(root, 'db/schema.sql'), 'utf8');
++  assert.match(schema, /ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_tool_check/);
++  assert.match(schema, /ALTER TABLE projects ADD CONSTRAINT projects_tool_check CHECK \(tool IN \('upg', 'lpg', 'icp', 'twoway'\)\)/);
++});

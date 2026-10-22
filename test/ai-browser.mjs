@@ -149,6 +149,24 @@ async function ewcPlayback(page,channel){
 try{
   browser=await chromium.launch(browserOptions);
   {
+    const {context,page,errors}=await fresh(request=>responseFor(request));
+    const sender=page.getByLabel('Who sends the first message?',{exact:true});
+    assert.equal(await sender.count(),1);
+    assert.equal(await sender.isVisible(),true);
+    assert.equal(await page.locator('.v2-generation-controls').getAttribute('open'),null);
+    assert.equal(await sender.evaluate(element=>Boolean(element.compareDocumentPosition(document.querySelector('#aiUseCase')) & Node.DOCUMENT_POSITION_FOLLOWING)),true);
+    for(const value of ['company','customer','']) {
+      await sender.selectOption(value);
+      assert.equal(await page.evaluate(()=>JSON.parse(sessionStorage.getItem('two-way-experience-studio-v2-generation-controls')).sender),value);
+    }
+    await sender.selectOption('company');
+    await page.reload({waitUntil:'domcontentloaded'});await page.evaluate(()=>window.__twoWayScenarioInitialization);
+    if(await page.locator('#chooseManual').isVisible())await (await editor(page, '#chooseManual')).click();
+    await selectView(page, 'ai');
+    await sender.waitFor();assert.equal(await sender.inputValue(),'company');assert.equal(await sender.count(),1);
+    assert.deepEqual(errors,[]);await context.close();console.log('PASS first sender is labelled, visible above the brief, and retained after reload');
+  }
+  {
     const {context,page,requests,errors}=await fresh(request=>{
       assert.deepEqual(request,ewc.request);const brief=contract.storyBrief(request);
       assert.equal(brief.initialSender,'company');const validated=contract.validateAndNormalizeDraft(ewc.rawDraft,request,{url:request.website,candidates:[]},brief);
@@ -278,7 +296,7 @@ try{
     assert.equal(await page.locator('.ai-failure-guidance img').count(),0,'Untrusted technical errors must remain text');
     const details=JSON.parse(await page.locator('.ai-failure-guidance pre').textContent());assert.deepEqual(details.issues,originalIssues);assert.ok(details.requestId);
     await (await editor(page, '[data-ai-guidance-target="opening-sender"]')).click();
-    assert.equal(await page.locator('.v2-generation-controls').getAttribute('open'),'');assert.equal(await page.locator('[data-v2-opening-sender]').inputValue(),'');
+    assert.equal(await page.locator('[data-v2-opening-sender]').isVisible(),true);assert.equal(await page.locator('[data-v2-opening-sender]').inputValue(),'');
     assert.equal(await page.evaluate(()=>document.activeElement?.hasAttribute('data-v2-opening-sender')),true);
     assert.equal(await page.locator('#aiUseCase').inputValue(),prompt);assert.deepEqual((await saved(page)).scenarios,baseline.scenarios);
     await (await editor(page, '.ai-failure-guidance details summary')).click();

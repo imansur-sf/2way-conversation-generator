@@ -59,4 +59,6 @@ Each scenario retains independent channel variants. A save includes those varian
 
 Private/incognito sessions, clearing site data, changing profiles/devices, and browser storage eviction can remove or hide local work. Editing the same workspace in multiple tabs is not a supported collaborative workflow; concurrent-writer conflict resolution is not yet implemented. Export JSON regularly for important work.
 
-Generation jobs are bounded, process-local and transient. Completed records expire after 15 minutes; a process restart loses job records. Adding multiple server processes requires shared job/idempotency storage. A cloud scenario library or multi-user collaboration would also need an explicitly approved database, object storage, access-control and retention design; this update does not provision those services.
+Optional sign-in adds explicit cloud project saves through the existing SaaSy Accounts provider and PostgreSQL database. Automatic local recovery continues for signed-in and signed-out users. See [cloud project behavior and rollout](docs/cloud-projects.md) for data boundaries, account changes, replacement backups, retries, and the required shared-service registration.
+
+Generation jobs are bounded, process-local and transient. Completed records expire after 15 minutes; a process restart loses job records. Adding multiple server processes requires shared job/idempotency storage. Cloud project revision checks protect explicit saves; live multi-user editing is not supported.

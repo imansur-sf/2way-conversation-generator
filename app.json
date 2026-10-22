@@ -6,7 +6,8 @@
     "APP_ENV": { "description": "Deployment environment label.", "value": "production" },
     "APP_VERSION": { "description": "Application release label.", "value": "1.1.0" },
     "GEMINI_API_KEY": { "description": "Server-only Gemini API key for this deployment. Configure separately per environment.", "required": true },
-    "GEMINI_MODEL": { "description": "Gemini model available to the configured key.", "value": "gemini-3.5-flash", "required": false }
+    "GEMINI_MODEL": { "description": "Gemini model available to the configured key.", "value": "gemini-3.5-flash", "required": false },
+    "SAASY_ACCOUNTS_URL": { "description": "Existing shared SaaSy Accounts service for optional sign-in and explicit cloud projects.", "value": "https://sassysolutions-accounts-8215113235cf.aster-virginia.herokuapp.com", "required": false }
   },
   "formation": { "web": { "quantity": 1, "size": "basic" } }
 }
