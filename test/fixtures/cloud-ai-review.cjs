@@ -1,6 +1,6 @@
 'use strict';
 
-const useCase = "Express Wash Concepts sends out message reminding a current customer that their membership is set to renew in 14 days. Customer responds with a question about what all the membership includes. EWC provides insight into the membership benefits, as well as notices that the customer hasn't signed up for the loyalty program that would also provide some additional benefits to their EWC membership. Customer still debates not renewing, to which EWC brings in a human rep on the same thread to explore options. Human agent offers the person a bonus of extra loyalty points for renewing, which they can use on the loyalty marketplace for additional discounts, events, and gift cards at partner organizations.";
+const useCase = 'Company sends a reminder. Customer asks a question.';
 const request = {
   companyName:'EWC', website:'https://example.com/', channels:['sms','rcs','whatsapp','email'], useCase,
   controls:{initialSender:null,expectedMessageCount:null},

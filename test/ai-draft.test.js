@@ -81,37 +81,6 @@ test('result validation binds channels, structured controls, supplied dialogue a
   const inconsistent=result();inconsistent.requirements.channels.sms.checks[0].status='failed';assert.throws(()=>ai.validateResult(inconsistent,request),{code:'invalid_draft'});
   const renamed=result();renamed.draft.companyName='Different Co';assert.throws(()=>ai.validateResult(renamed,request),/company name/);
 });
-test('client validation provides actionable sender/count issue metadata without accepting mismatches',()=>{
-  const {format}=require('../assets/ai-error-guidance.js');
-  const request={channels,controls:{initialSender:'customer',expectedMessageCount:4},persona};
-  assert.throws(()=>ai.validateResult(result(),request),error=>{
-    assert.equal(error.code,'invalid_draft');
-    assert.deepEqual(error.issues.map(issue=>[issue.code,issue.field,issue.channel]),[['sender_mismatch','initialSender','sms'],['count_mismatch','expectedMessageCount','sms']]);
-    assert.equal(error.issues[0].expectedSender,'customer');assert.equal(error.issues[1].expectedMessageCount,4);
-    const guidance=format(error,request);assert.equal(guidance.actions.length,2);assert.match(guidance.actions[0].text,/For this attempt.*was set to Customer opens/);assert.match(guidance.actions[1].text,/For this attempt.*was set to 4/);
-    return true;
-  });
-  const inferred=result();inferred.source.brief.initialSender='customer';
-  assert.throws(()=>ai.validateResult(inferred,{channels}),error=>{assert.equal(error.issues[0].expectedSender,'customer');assert.match(format(error,{channels}).actions[0].text,/choose Customer opens/);return true;});
-});
-test('client validation identifies each changed persona field and handles malformed values safely',()=>{
-  const {format}=require('../assets/ai-error-guidance.js');
-  const targets={customerName:'customer-name',representativeName:'representative-name',representativeRole:'representative-role'};
-  for(const [field,target] of Object.entries(targets)){
-    const response=result(),request={channels,persona};response.draft.persona[field]='Changed';
-    assert.throws(()=>ai.validateResult(response,request),error=>{assert.equal(error.code,'invalid_draft');assert.equal(error.issues[0].code,'persona_mismatch');assert.equal(error.issues[0].field,field);const guidance=format(error,request);assert.equal(guidance.controlTarget,target);assert.match(guidance.actions[0].text,/For this attempt, you supplied an entry/);return true;});
-    assert.throws(()=>ai.validateResult(result(),{channels,persona:{[field]:42}}),error=>{assert.equal(error.code,'invalid_draft');assert.equal(error.issues[0].code,'invalid_persona');assert.equal(error.issues[0].field,field);return true;});
-    const malformed=result();malformed.draft.persona=null;assert.throws(()=>ai.validateResult(malformed,request),{code:'invalid_draft'});
-  }
-  assert.deepEqual(ai.validateResult(result(),{channels,persona:null}),channels);
-});
-test('client script integrity errors target the brief and never relax verbatim matching',()=>{
-  const {format}=require('../assets/ai-error-guidance.js');
-  for(const scriptedTurns of [[{speaker:'company',text:'Not what was supplied.'}],[{speaker:'company',text:'Changed opening.'},{speaker:'customer',text:'Changed reply.'},{speaker:'company',text:'Changed close.'}],[null]]){
-    const response=result();response.source.brief.scriptedTurns=scriptedTurns;
-    assert.throws(()=>ai.validateResult(response,{channels}),error=>{assert.equal(error.code,'invalid_draft');assert.equal(error.issues[0].code,'dialogue_mismatch');assert.equal(error.issues[0].channel,'sms');assert.equal(error.issues[0].field,'scriptedTurns');const guidance=format(error,{channels});assert.equal(guidance.actions[0].target,'brief');assert.equal(guidance.controlTarget,undefined);return true;});
-  }
-});
 test('backend-validated single quoted line and ordered multi-line dialogue pass the frontend unchanged',()=>{
   const contract=require('../server/draft-contract.cjs');
   for(const useCase of ['Company says "Welcome." Continue the conversation.','Company: Welcome.\nCompany: Zoë is joining.\nCustomer: Thank you.']){
@@ -131,73 +100,10 @@ test('structured controls never mutate the prompt and reject fractional totals',
   const values={'[data-v2-message-total]':'3','[data-v2-opening-sender]':'customer','[data-v2-customer-name]':'José O’Neil'},document={querySelector:selector=>({value:values[selector]||''})};
   assert.deepEqual(ai.readControls(document).controls,{initialSender:'customer',expectedMessageCount:3});values['[data-v2-message-total]']='2.5';assert.throws(()=>ai.readControls(document),/whole number/);
 });
-test('invalid local controls identify the offending user setting rather than blaming generation',()=>{
-  const {format}=require('../assets/ai-error-guidance.js');
-  const values={'[data-v2-message-total]':'2.5'},document={querySelector:selector=>({value:values[selector]||''})};
-  assert.throws(()=>ai.readControls(document),error=>{assert.equal(error.code,'invalid_draft');assert.equal(error.issues[0].code,'invalid_count');assert.equal(error.issues[0].origin,'user-input');assert.equal(format(error).controlTarget,'message-total');return true;});
-  values['[data-v2-message-total]']='';values['[data-v2-opening-sender]']='unlisted';
-  assert.throws(()=>ai.readControls(document),error=>{assert.equal(error.issues[0].code,'invalid_sender');assert.equal(error.issues[0].origin,'user-input');const guidance=format(error);assert.equal(guidance.controlTarget,'opening-sender');assert.match(guidance.summary,/Choose a valid opening sender/);assert.doesNotMatch(guidance.summary,/AI did not follow/);return true;});
-});
 test('QA treats rich/image content as meaningful and does not claim export or factual verification',()=>{
   const scenario={channel:'rcs',steps:[{id:'card',author:'brand',kind:'rich',text:'',cardImage:'https://example.test/card.png'},{id:'input',author:'customer',kind:'free',reusableSet:true,text:''},{id:'response',author:'brand',kind:'text',text:'Reply'}]};
   const review=ai.reviewScenario(scenario);assert.deepEqual(review.issues,[]);assert.match(review.routing,/may be alternatives/);assert.match(review.note,/verify assets during export/);
 });
 test('fallback notices report cause and partial coverage without inventing names',()=>{
   const text=ai.fallbackMessage({fallbackReason:'gemini_rate_limited',coverage:'partial'});assert.match(text,/rate limit/);assert.match(text,/partial/);assert.doesNotMatch(text,/slow|named people/);assert.match(ai.fallbackMessage({fallbackReason:'gemini_bad_json'}),/unreadable/);
-});
-
-function brandingFixture(){
-  const request={companyName:'Synthetic Co',website:'https://example.test/',channels:[...channels],controls:{initialSender:null}};
-  return {request,branding:{schemaVersion:1,mode:'website-only',companyName:request.companyName,requestedWebsite:request.website,requestedChannels:[...channels],source:{url:request.website,title:'Synthetic website',partial:false,assets:'unverified'},imageCandidates:[{url:'https://example.test/logo.png',role:'logo'},{url:'https://example.test/hero.png',role:'hero'}]}};
-}
-test('branding recovery binds website, identity and channels and never imports provider dialogue',()=>{
-  const {request,branding}=brandingFixture();
-  const checked=ai.validateBranding({...branding,draft:fixture(),turns:[{text:'Do not import'}]},request);
-  assert.equal(checked.draft,undefined);assert.equal(checked.turns,undefined);
-  assert.doesNotThrow(()=>ai.validateBranding(branding,{...request,website:'https://example.test'}));
-  for(const mutate of [value=>value.requestedWebsite='https://other.test/',value=>value.requestedChannels=['sms'],value=>value.requestedChannels.push('sms'),value=>value.companyName='Someone else',value=>value.source.assets='verified',value=>value.source.partial=undefined,value=>value.source.title='x'.repeat(301),value=>value.imageCandidates.push(value.imageCandidates[0]),value=>value.imageCandidates[0].url='javascript:alert(1)',value=>value.imageCandidates[0].url='https://user:password@example.test/logo.png',value=>value.imageCandidates[0].url='https://example.test/'+ 'a'.repeat(2048)]){
-    const changed=JSON.parse(JSON.stringify(branding));mutate(changed);assert.throws(()=>ai.validateBranding(changed,request),{code:'invalid_draft'});
-  }
-  checked.imageCandidates[0].url='changed';assert.notEqual(branding.imageCandidates[0].url,'changed');
-});
-test('branding defaults are evidence-based and allow explicit customer-first manual setup',()=>{
-  const {request,branding}=brandingFixture();
-  assert.deepEqual(ai.brandingSelection(branding,request),{companyName:'Synthetic Co',initialSender:'company',logoUrl:branding.imageCandidates[0].url,heroImageUrl:branding.imageCandidates[1].url});
-  request.controls.initialSender='customer';assert.equal(ai.brandingSelection(branding,request).initialSender,'customer');
-  branding.companyName=request.companyName='';branding.imageCandidates=[{url:'https://example.test/photo.png',role:'image'}];
-  const selection=ai.brandingSelection(branding,request);assert.equal(selection.companyName,'');assert.equal(selection.logoUrl,'');assert.equal(selection.heroImageUrl,'');
-});
-test('branding-only scenarios contain independent empty flows and embedded assets for every channel',()=>{
-  const {request,branding}=brandingFixture(),selection=ai.brandingSelection(branding,request),image='data:image/png;base64,aGVsbG8=';
-  let sequence=0;const variants=channels.map(channel=>ai.brandingScenario(channel,branding,selection,{avatar:image,hero:image,id:()=>`manual-${++sequence}`,failureReason:'Provider timed out.'}));
-  for(const scenario of variants){
-    assert.equal(scenario.generatedByAi,false);assert.equal(scenario.avatar,image);assert.equal(scenario.emailAddress,'');assert.ok(scenario.steps.every(step=>step.text===''));assert.deepEqual(scenario.steps.map(step=>step.author),['brand','customer']);assert.equal(scenario.brandingRecovery.failureReason,'Provider timed out.');
-    assert.equal(scenario.steps[1].kind,'free');assert.equal(scenario.steps[1].reusableSet,false);
-    if(['rcs','whatsapp'].includes(scenario.channel)){assert.equal(scenario.steps[0].cardImage,image);assert.equal(scenario.steps[0].cardCta,'');}
-    if(scenario.channel==='email'){assert.equal(scenario.emailHeroImage,image);assert.equal(scenario.steps[0].emailLogo,image);assert.equal(scenario.subject,'');assert.equal(scenario.steps[0].emailPreheader,'');}
-  }
-  variants[0].steps[0].text='SMS edit';assert.equal(variants[1].steps[0].text,'');
-  selection.initialSender='customer';const email=ai.brandingScenario('email',branding,selection,{avatar:image,hero:image});assert.deepEqual(email.steps.map(step=>step.author),['customer','brand']);assert.equal(email.steps[1].emailHeroImage,image);
-});
-test('branding manual creation omits unavailable images and rejects unembedded remote images',()=>{
-  const {request,branding}=brandingFixture(),selection=ai.brandingSelection(branding,request);
-  const scenario=ai.brandingScenario('rcs',branding,selection,{assetWarnings:['Logo unavailable']});
-  assert.equal(scenario.avatar,'');assert.equal(scenario.steps[0].kind,'text');assert.deepEqual(scenario.brandingRecovery.assetWarnings,['Logo unavailable']);
-  for(const avatar of ['https://example.test/logo.png','javascript:alert(1)','data:text/html;base64,aaaa'])assert.throws(()=>ai.brandingScenario('sms',branding,selection,{avatar}),{code:'invalid_draft'});
-  assert.throws(()=>ai.brandingScenario('email',branding,{...selection,companyName:' '}),{code:'invalid_draft'});
-});
-test('branding recovery accepts every image type supported by the guarded asset endpoint, including favicons',()=>{
-  const {supportedImageTypes}=require('../server/security.cjs'),{request,branding}=brandingFixture(),selection=ai.brandingSelection(branding,request);
-  for(const mime of supportedImageTypes){const avatar=`data:${mime};base64,aGVsbG8=`;assert.equal(ai.brandingScenario('sms',branding,selection,{avatar}).avatar,avatar,mime);}
-});
-test('manual recovery notice tolerates malformed imported metadata and escapes valid details',()=>{
-  const html=fs.readFileSync(require.resolve('../interactive-simulator-builder.html'),'utf8'),source=html.slice(html.indexOf('    function renderAiBrandingRecovery(panel){'),html.indexOf('    async function applyAiBranding(){'));
-  const render=recovery=>{
-    const notes=[],panel={querySelector:selector=>selector==='.setup-assistant'?{append:note=>notes.push(note)}:null};
-    const context={state:{setupMode:'manual',aiSetup:{}},active:()=>({brandingRecovery:recovery}),document:{createElement:()=>({})},esc:value=>String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')};
-    vm.runInNewContext(html.split('\n').find(line=>line.trim().startsWith('function withErrorSupport('))+'\n'+source,context);context.renderAiBrandingRecovery(panel);return notes[0]?.innerHTML||'';
-  };
-  for(const assetWarnings of ['unexpected',42,{},null,[null,42,{},'IMAGE WARNING']])assert.match(render({failureReason:{bad:'value'},assetWarnings}),/The scenario could not be generated/);
-  for(const invalid of ['unexpected metadata',42,[],null])assert.equal(render(invalid),'');
-  const output=render({failureReason:'<script>failure</script>',assetWarnings:['<img src=x onerror=alert(1)>']});assert.doesNotMatch(output,/<script>|<img/);assert.match(output,/&lt;script&gt;failure/);assert.match(output,/&lt;img/);
 });

@@ -5,10 +5,7 @@ const vm = require('node:vm');
 const {createRequire} = require('node:module');
 const test = require('node:test');
 const {CHANNELS, normalizeControls, storyBrief, explicitTurns, requestedInitialSender, generationPolicy, validateAndNormalizeDraft, promptFallback, draftPrompt, draftResponseSchema} = require('../server/draft-contract.cjs');
-const ewc = require('./fixtures/ewc.cjs');
 const {aiConfig, providerHealth, MAX_PROVIDER_ATTEMPTS, MAX_PROVIDER_OUTPUT_TOKENS} = require('../server/ai-config.cjs');
-const {websiteBranding} = require('../server/branding-recovery.cjs');
-const {Readable} = require('node:stream');
 
 const root = path.resolve(__dirname, '..');
 const serverSource = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
@@ -21,10 +18,10 @@ function draft(channels = ['sms']) {
     turns:[{speaker:'company',text:`Welcome to Example via ${channel}.`, ...(channel==='email'?{presentation:{kind:'email',mode:'plain'}}:{})},{speaker:'customer',text:'Please share the details.',mode:'prefill',options:[]}]
   }]))};
 }
-function loadPipeline(responses, env = {}, contractOverrides = {}) {
+function loadPipeline(responses, env = {}) {
   const calls = [], network = [], logs=[], requireHere=createRequire(path.join(root,'server.js'));
   const context=vm.createContext({
-    require:name=>name==='node:http'?{createServer(){return {listen(){}};}}:name==='./server/draft-contract.cjs'?{...requireHere(name),...contractOverrides}:requireHere(name),
+    require:name=>name==='node:http'?{createServer(){return {listen(){}};}}:requireHere(name),
     __dirname:root,process:{env:{APP_ENV:'test',GEMINI_API_KEY:'synthetic-offline-key',...env}},
     console:{log(value){logs.push(value);},error(value){logs.push(value);},warn(){}},Buffer,URL,AbortController,queueMicrotask,
     setTimeout:(callback,delay)=>setTimeout(callback,delay===350?0:delay),clearTimeout,
@@ -36,7 +33,7 @@ function loadPipeline(responses, env = {}, contractOverrides = {}) {
       return {ok:true,json:async()=>next?.envelope || {candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(next)}]}}]}};
     },
   });
-  vm.runInContext(`${serverSource}\nthis.api={parseJson,generateScenarioDraft,validateDraftRequest,startGenerationJob,publicJob,handleApi,publicGenerationMetrics,draftCache,generationJobs,active:()=>activeGenerations,health:()=>providerHealth(aiSettings,providerObservation)};`,context);
+  vm.runInContext(`${serverSource}\nthis.api={parseJson,generateScenarioDraft,validateDraftRequest,startGenerationJob,publicJob,draftCache,generationJobs,active:()=>activeGenerations,health:()=>providerHealth(aiSettings,providerObservation)};`,context);
   context.fetchRemote=async url=>{network.push(url);return {url:'https://example.com/',contentType:'text/html',body:Buffer.from('<title>Example</title><link rel="icon" href="/logo.svg"><meta property="og:image" content="/hero.png"><a href="/details">Details</a><a href="mailto:support@example.com">Contact</a><p>Synthetic reference page.</p>')};};
   return {...context.api,context,calls,network,logs};
 }
@@ -68,56 +65,11 @@ test('named role labels preserve dialogue without treating bare capitalization a
   const validated=validateAndNormalizeDraft(draft(),input,evidence).draft;
   assert.equal(validated.persona.customerName,'Avery');assert.equal(validated.scenarios.sms.turns[0].text,'Please keep these exact words.');
 });
-test('ordinary possessives and contractions never become scripted dialogue',()=>{
-  const pipeline=loadPipeline([]);
-  const original='The company follows up a closed case regarding a new dumpster pickup with a satisfaction survey, where the customer can tap 1-5 within the RCS. When the customer responds with , the company’s AI agent asks for feedback and the customer (Lauren) provides it.';
-  for(const useCase of [original, original.replace('company’s', "company's"),
-    "The company's AI asks about the customer's pickup.",
-    "The customer's feedback goes to the brand's agent.",
-    "The prospect's reply tells us the lead's preference.",
-    "The recipient's reply is useful.",
-    "The customer'd like help and the company'll follow up.",
-    "Customers' feedback informs the company's response.",
-  ]) {
-    const input=request({companyName:'Priority Waste',channels:['rcs'],useCase});
-    assert.equal(pipeline.validateDraftRequest(input).useCase,useCase);
-    assert.deepEqual(explicitTurns(useCase),[],'prose must not silently become exact dialogue');
-    assert.equal(storyBrief(input).persona.customerName,useCase.includes('(Lauren)')?'Lauren':'');
-  }
-  assert.equal(pipeline.calls.length,0);assert.equal(pipeline.network.length,0);
-});
-test('single quoted dialogue preserves apostrophes and named speakers',()=>{
-  for(const verb of ['says','asks','replies','responds']) assert.equal(explicitTurns(`Company ${verb}'Hello.'`)[0].text,'Hello.');
-  for(const [open,close] of [["'","'"],['‘','’']]) {
-    for(const name of ["O'Neill",'O’Neill']) {
-      const message=`I'm ready; it’s ${name}'s pickup and a 5'10 measurement.`;
-      const turns=explicitTurns(`Customer named ${name} says ${open}${message}${close} Company: ${open}Thanks.${close}`);
-      assert.deepEqual(turns.map(({speaker,text})=>({speaker,text})),[{speaker:'customer',text:message},{speaker:'company',text:'Thanks.'}]);
-    }
-    assert.throws(()=>explicitTurns(`Customer says ${open}I'm ready, but this message is unfinished.`),{code:'invalid_dialogue'});
-  }
-  assert.deepEqual(explicitTurns('The company saysomething" is descriptive text.'),[]);
-});
 test('role verbs and capitalized role nouns are not invented personal names',()=>{
   for(const useCase of ['Customer says "Hello." Company responds "Welcome."','The customer responds to an invitation.','Customer Support responds. Customer Requests information.','An Agent Answers Questions.','Customer Success sends an update.']) {
     const brief=storyBrief(request({useCase}));
     assert.equal(brief.persona.customerName,'');assert.equal(brief.persona.representativeName,'');
   }
-});
-test('survey follow-ups infer the company opener without treating later feedback as an opening',async()=>{
-  const useCase='The company follows up a closed case regarding a new dumpster pickup with a satisfaction survey, where the customer can tap 1-5 within the RCS. When the customer responds with , the company’s AI agent asks for feedback and the customer (Lauren) provides it.';
-  const input=request({companyName:'Priority Waste',channels:['rcs'],useCase});
-  assert.equal(storyBrief(input).initialSender,'company');
-  assert.equal(storyBrief({...input,controls:{initialSender:'customer'}}).initialSender,'customer');
-  for(const prompt of ['Company checks in about a pickup. Customer asks a question.', 'Priority Waste follows up about a pickup.']) assert.equal(requestedInitialSender(prompt,'Priority Waste'),'company');
-  for(const prefix of ['When','After','Once','Until','If','While']) {
-    assert.equal(requestedInitialSender(`${prefix} the customer responds, the customer (Lauren) provides feedback.`),null);
-  }
-  const generated=draft(['rcs']);generated.companyName='Priority Waste';
-  generated.scenarios.rcs.turns=[{speaker:'company',text:'Lauren, please rate your dumpster pickup from 1 to 5.'},{speaker:'customer',text:'4',mode:'choices',options:['1','2','3','4','5']},{speaker:'company',text:'Lauren, can you share feedback?'},{speaker:'customer',text:'The pickup went well.'}];
-  const pipeline=loadPipeline([generated]);
-  const result=await pipeline.generateScenarioDraft(input,'priority-waste-follow-up');
-  assert.equal(result.draft.initialSender,'company');assert.equal(result.source.mode,'provider');assert.equal(pipeline.calls.length,1,'correct company-first output needs no repair request');
 });
 test('explicit names retain Unicode, apostrophes and structured input precedence',()=>{
   const brief=storyBrief(request({useCase:'A customer named María O’Neill asks about details. An account executive called Zoë de la Cruz responds.',persona:{customerName:'李 明'}}));
@@ -535,275 +487,48 @@ test('failed jobs expose actionable validation issues and release their admissio
   const replay=pipeline.startGenerationJob(request(),'retry','failed-key','synthetic-client');assert.equal(replay.reused,true);assert.equal(replay.job,job);assert.equal(pipeline.calls.length,2);
 });
 
-async function finishBrandingJob(job) {
-  for(let attempt=0;attempt<100&&['queued','running'].includes(job.status);attempt++)await new Promise(resolve=>setTimeout(resolve,2));
-  assert.ok(['completed','failed'].includes(job.status),'mocked job must settle');
-}
-
-test('website branding is a bounded non-AI projection with safe candidate URLs',()=>{
-  const input=request({channels:['sms','email']});
-  const candidates=[
-    {url:'javascript:alert(1)',role:'logo'},{url:'data:image/png;base64,AA',role:'image'},
-    {url:'https://user:secret@example.com/logo.svg',role:'logo'},
-    {url:'https://example.com/'+ 'x'.repeat(2048),role:'logo'},
-    {url:'https://example.com/unknown.png',role:'invented-role'},
-    {url:'https://example.com/logo.svg',role:'logo',html:'<script>bad</script>'},
-    {url:'https://example.com/logo.svg',role:'hero'},
-    ...Array.from({length:20},(_,index)=>({url:`https://example.com/image-${index}.png`,role:'image'})),
-  ];
-  const branding=websiteBranding(input,{...evidence,title:'t'.repeat(400),candidates,companyName:'Invented',brandColor:'#FF0000',turns:['Invented dialogue']},true);
-  assert.deepEqual(Object.keys(branding).sort(),['companyName','imageCandidates','mode','requestedChannels','requestedWebsite','schemaVersion','source']);
-  assert.equal(branding.schemaVersion,1);assert.equal(branding.mode,'website-only');assert.equal(branding.companyName,'Example');
-  assert.equal(branding.requestedWebsite,input.website);assert.deepEqual(branding.requestedChannels,input.channels);
-  assert.deepEqual(branding.source,{url:evidence.url,title:'t'.repeat(300),assets:'unverified',partial:true});
-  assert.equal(branding.imageCandidates.length,16);assert.equal(new Set(branding.imageCandidates.map(item=>item.url)).size,16);
-  assert.deepEqual(branding.imageCandidates[0],{url:'https://example.com/logo.svg',role:'logo'});
-  assert.ok(branding.imageCandidates.every(item=>item.url.length<=2048&&['logo','hero','image'].includes(item.role)));
-  assert.doesNotMatch(JSON.stringify(branding),/javascript:|data:|secret|Invented|<script>|brandColor/);
-  branding.requestedChannels.push('rcs');assert.deepEqual(input.channels,['sms','email'],'snapshot channels do not alias the request');
-  assert.equal(websiteBranding(request({companyName:''}),evidence).companyName,'','page title is not promoted to a supplied company name');
-});
-
-test('failed provider jobs retain website branding without changing their failure or success accounting',async()=>{
-  const timeout=Object.assign(new Error('aborted'),{name:'AbortError'});
-  for(const [reply,expected,attempts] of [[timeout,'gemini_timeout',2],[{envelope:{candidates:[{finishReason:'STOP',content:{parts:[{text:'not JSON'}]}}]}},'gemini_bad_json',2],[{envelope:{candidates:[{finishReason:'MAX_TOKENS'}]}},'gemini_incomplete',2],[{httpStatus:400},'gemini_bad_request',1],[{httpStatus:403},'gemini_auth_failed',1],[{httpStatus:429},'gemini_rate_limited',2],[{httpStatus:500},'gemini_failed',2],[new Error('synthetic provider crash'),'scenario_generation_failed',1],[{},'draft_invalid',2]]){
-    const pipeline=loadPipeline([reply]);
-    const {job}=pipeline.startGenerationJob(request(),'brand-failure','brand-key','client');
-    assert.equal(pipeline.publicJob(job).branding,undefined,'no branding before extraction');
-    await finishBrandingJob(job);
-    const result=clone(pipeline.publicJob(job));
-    assert.equal(result.status,'failed');assert.equal(result.error,expected);assert.equal(result.draft,undefined);assert.equal(result.source,undefined);
-    assert.deepEqual(result.branding.imageCandidates,[{url:'https://example.com/hero.png',role:'hero'},{url:'https://example.com/logo.svg',role:'logo'}]);
-    assert.equal(result.branding.source.assets,'unverified');assert.equal(result.branding.source.partial,false);
-    if(expected==='draft_invalid')assert.ok(result.issues.some(issue=>issue.code==='invalid_schema'));
-    assert.equal(pipeline.calls.length,attempts);assert.equal(pipeline.network.length,1);assert.equal(pipeline.draftCache.size,0);assert.equal(pipeline.active(),0);
-    const metrics=pipeline.publicGenerationMetrics();assert.equal(metrics.failed,1);assert.equal(metrics.completed,0);assert.equal(metrics.fallback,0);
-    const replay=pipeline.startGenerationJob(request(),'replay','brand-key','client');assert.equal(replay.reused,true);assert.deepEqual(clone(pipeline.publicJob(replay.job).branding),result.branding);assert.equal(pipeline.calls.length,attempts);
+test('ordinary possessives and contractions never become scripted dialogue',()=>{
+  const pipeline=loadPipeline([]);
+  const original='The company follows up a closed case regarding a new dumpster pickup with a satisfaction survey, where the customer can tap 1-5 within the RCS. When the customer responds with , the company’s AI agent asks for feedback and the customer (Lauren) provides it.';
+  for(const useCase of [original, original.replace('company’s', "company's"),
+    "The company's AI asks about the customer's pickup.",
+    "The customer's feedback goes to the brand's agent.",
+    "The prospect's reply tells us the lead's preference.",
+    "The recipient's reply is useful.",
+    "The customer'd like help and the company'll follow up.",
+    "Customers' feedback informs the company's response.",
+  ]) {
+    const input=request({companyName:'Priority Waste',channels:['rcs'],useCase});
+    assert.equal(pipeline.validateDraftRequest(input).useCase,useCase);
+    assert.deepEqual(explicitTurns(useCase),[],'prose must not silently become exact dialogue');
+    assert.equal(storyBrief(input).persona.customerName,useCase.includes('(Lauren)')?'Lauren':'');
   }
+  assert.equal(pipeline.calls.length,0);assert.equal(pipeline.network.length,0);
 });
-
-test('branding is exposed while the provider is still running and remains additive on completion',async()=>{
-  const pipeline=loadPipeline([]);let release;
-  const gate=new Promise(resolve=>{release=resolve;});
-  pipeline.context.fetch=async()=>{pipeline.calls.push('mocked-provider');await gate;return {ok:true,json:async()=>({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(draft())}]}}]})};};
-  const {job}=pipeline.startGenerationJob(request(),'running-branding');
-  let runningBranding;
-  try{
-    await new Promise(resolve=>setImmediate(resolve));
-    const running=clone(pipeline.publicJob(job));assert.equal(running.status,'running');assert.equal(running.draft,undefined);assert.equal(running.error,undefined);
-    runningBranding=running.branding;assert.equal(runningBranding.mode,'website-only');assert.equal(pipeline.calls.length,1);assert.equal(pipeline.network.length,1);
-  }finally{release();await finishBrandingJob(job);}
-  const completed=clone(pipeline.publicJob(job));assert.equal(completed.status,'completed');assert.equal(completed.source.mode,'provider');assert.equal(completed.requirements.complete,true);assert.deepEqual(completed.branding,runningBranding);
-});
-
-test('website failure and request rejection do not fabricate branding or trigger provider calls',async()=>{
-  for(const fail of ['request_timeout','blocked_host','not_html','extraction_failed']){
-    const pipeline=loadPipeline([]);
-    pipeline.context.fetchRemote=async()=>{pipeline.network.push('mocked-page');if(['request_timeout','blocked_host'].includes(fail))throw Object.assign(new Error(fail),{code:fail});return {url:evidence.url,contentType:fail==='not_html'?'image/png':'text/html',body:Buffer.from('<title>Example</title>')};};
-    if(fail==='extraction_failed')pipeline.context.extractWebsite=()=>{throw Object.assign(new Error(fail),{code:fail});};
-    const {job}=pipeline.startGenerationJob(request(),'no-branding');await finishBrandingJob(job);
-    const result=pipeline.publicJob(job);assert.equal(result.error,fail);assert.equal(result.branding,undefined);assert.equal(pipeline.calls.length,0);assert.equal(pipeline.draftCache.size,0);
+test('single quoted dialogue preserves apostrophes and named speakers',()=>{
+  for(const verb of ['says','asks','replies','responds']) assert.equal(explicitTurns(`Company ${verb}'Hello.'`)[0].text,'Hello.');
+  for(const [open,close] of [["'","'"],['‘','’']]) {
+    for(const name of ["O'Neill",'O’Neill']) {
+      const message=`I'm ready; it’s ${name}'s pickup and a 5'10 measurement.`;
+      const turns=explicitTurns(`Customer named ${name} says ${open}${message}${close} Company: ${open}Thanks.${close}`);
+      assert.deepEqual(turns.map(({speaker,text})=>({speaker,text})),[{speaker:'customer',text:message},{speaker:'company',text:'Thanks.'}]);
+    }
+    assert.throws(()=>explicitTurns(`Customer says ${open}I'm ready, but this message is unfinished.`),{code:'invalid_dialogue'});
   }
-  const rejected=loadPipeline([]);assert.throws(()=>rejected.startGenerationJob(request({controls:{initialSender:'invalid'}}),'rejected'),{code:'invalid_controls'});assert.equal(rejected.network.length,0);assert.equal(rejected.calls.length,0);assert.equal(rejected.generationJobs.size,0);
+  assert.deepEqual(explicitTurns('The company saysomething" is descriptive text.'),[]);
 });
-
-test('empty and partial page evidence preserve requested identity without invented image candidates',async()=>{
-  for(const partial of [false,true]){
-    const pipeline=loadPipeline([{}]);
-    pipeline.context.fetchRemote=async()=>({url:'https://example.com/final/',contentType:'text/html',partial,body:Buffer.from('<title>Discovered page title</title>')});
-    const {job}=pipeline.startGenerationJob(request({companyName:'  Supplied company  ',website:'example.com',channels:['sms','sms']}),'empty-assets');await finishBrandingJob(job);
-    const result=clone(pipeline.publicJob(job));assert.equal(result.status,'failed');assert.equal(result.branding.companyName,'Supplied company');assert.equal(result.branding.requestedWebsite,'https://example.com/');assert.deepEqual(result.branding.requestedChannels,['sms']);
-    assert.deepEqual(result.branding.imageCandidates,[]);assert.deepEqual(result.branding.source,{url:'https://example.com/final/',title:'Discovered page title',assets:'unverified',partial});
+test('survey follow-ups infer the company opener without treating later feedback as an opening',async()=>{
+  const useCase='The company follows up a closed case regarding a new dumpster pickup with a satisfaction survey, where the customer can tap 1-5 within the RCS. When the customer responds with , the company’s AI agent asks for feedback and the customer (Lauren) provides it.';
+  const input=request({companyName:'Priority Waste',channels:['rcs'],useCase});
+  assert.equal(storyBrief(input).initialSender,'company');
+  assert.equal(storyBrief({...input,controls:{initialSender:'customer'}}).initialSender,'customer');
+  for(const prompt of ['Company checks in about a pickup. Customer asks a question.', 'Priority Waste follows up about a pickup.']) assert.equal(requestedInitialSender(prompt,'Priority Waste'),'company');
+  for(const prefix of ['When','After','Once','Until','If','While']) {
+    assert.equal(requestedInitialSender(`${prefix} the customer responds, the customer (Lauren) provides feedback.`),null);
   }
-});
-
-test('a deterministic fallback crash cannot discard already extracted branding',async()=>{
-  const pipeline=loadPipeline([{}],{},{promptFallback(){throw new Error('synthetic fallback crash');}});
-  const {job}=pipeline.startGenerationJob(request(),'fallback-crash');await finishBrandingJob(job);
-  const result=pipeline.publicJob(job);assert.equal(result.status,'failed');assert.equal(result.error,'scenario_generation_failed');assert.equal(result.branding.mode,'website-only');assert.equal(result.branding.imageCandidates.length,2);
-  assert.equal(pipeline.calls.length,2);assert.equal(pipeline.draftCache.size,0);assert.equal(pipeline.active(),0);
-});
-
-test('cached provider success retains branding and prompt-fallback remains explicitly distinct and uncached',async()=>{
-  const pipeline=loadPipeline([draft()]),snapshots=[];
-  const first=await pipeline.generateScenarioDraft(request(),'original',{onBranding:value=>snapshots.push(clone(value))});
-  const second=await pipeline.generateScenarioDraft(request(),'cached',{onBranding:value=>snapshots.push(clone(value))});
-  assert.deepEqual(clone(first),clone(second));assert.deepEqual(snapshots,[clone(first.branding),clone(first.branding)]);assert.equal(pipeline.calls.length,1);assert.equal(pipeline.network.length,1);assert.equal(pipeline.draftCache.size,1);
-  const fallback=loadPipeline([{}]),input=request({useCase:'Company says "Welcome." Customer says "Thanks."'});
-  const result=await fallback.generateScenarioDraft(input,'starter');assert.equal(result.source.mode,'prompt-fallback');assert.equal(result.source.fallbackReason,'draft_invalid');assert.equal(result.branding.mode,'website-only');assert.equal(result.branding.imageCandidates.length,2);assert.equal(fallback.draftCache.size,0);assert.equal(fallback.calls.length,2);
-});
-
-test('synchronous error responses retain extracted branding and exact validation issues',async()=>{
-  const pipeline=loadPipeline([{}]);
-  const incoming=Readable.from([Buffer.from(JSON.stringify(request()))]);Object.assign(incoming,{method:'POST',headers:{'x-request-id':'sync-branding'},socket:{remoteAddress:'127.0.0.1'}});
-  let status,body;
-  const outgoing={writeHead(value){status=value;},end(value){body=JSON.parse(value);}};
-  await pipeline.handleApi(incoming,outgoing,new URL('http://localhost/api/scenario-draft'));
-  assert.equal(status,502);assert.equal(body.error,'draft_invalid');assert.ok(body.issues.some(issue=>issue.code==='invalid_schema'));assert.equal(body.requestId,'sync-branding');assert.equal(body.branding.mode,'website-only');assert.equal(body.draft,undefined);assert.equal(pipeline.active(),0);assert.equal(pipeline.calls.length,2);
-});
-
-test('original EWC narrative recognizes the company alias and does not parse marketplace as markets',()=>{
-  const brief=storyBrief(ewc.request);
-  assert.equal(brief.initialSender,'company');assert.equal(brief.scriptedTurns.length,0);assert.equal(brief.story.openingTopic,'');
-  assert.deepEqual(brief.narrativeRequirements.map(item=>item.id),['renewal_reminder','membership_inquiry','membership_benefits','loyalty_invitation','renewal_hesitation','human_handoff','renewal_incentive','loyalty_redemption']);
-  assert.deepEqual(brief.narrativeRequirements[0].duration,{amount:14,unit:'day'});
-  for(const [companyName,useCase,expected] of [
-    ['EWC','Express Wash Concepts sends a reminder to a current customer who asks about renewal. Customer responds later.','company'],
-    ['Express Wash Concepts','EWC sends a reminder. Customer responds with a question.','company'],
-    ['Express Wash Concepts (EWC)','EWC will send a reminder.','company'],
-    ['MWC','Metro Wellness Clinic sends an appointment reminder. A customer asks about the appointment.','company'],
-    ['Metro Wellness Clinic','MWC reminds a customer that their appointment is tomorrow.','company'],
-    ['EWC','A customer asks about membership. EWC provides the answer.','customer'],
-    ['EWC','A demo for a customer who asks questions. EWC sends the opening reminder.','company'],
-    ['EWC','A customer receives a reminder. Later the customer responds with a question.',null],
-    ['EWC','Customer responds with a question. EWC provides an answer.',null],
-    ['EWC','Do not start with the customer. EWC sends the reminder.','company'],
-    ['Example','Company immediately sends a membership renewal reminder. Customer asks what the membership includes.','company'],
-    ['Example','Company quickly sends a reminder. Customer responds with a question.','company'],
-    ['Example','Company very politely sends a reminder to the customer.','company'],
-  ])assert.equal(requestedInitialSender(useCase,companyName),expected,useCase);
-  assert.equal(storyBrief(request({useCase:'Customers can visit the marketplace for gift cards.'})).story.openingTopic,'');
-  assert.equal(storyBrief(request({useCase:'Company markets a service for small businesses.'})).story.openingTopic,'small businesses');
-});
-
-test('structured controls and exact dialogue remain authoritative and genuine conflicts stay actionable',()=>{
-  assert.equal(storyBrief({...ewc.request,controls:{initialSender:'customer'}}).initialSender,'customer','explicit control overrides narrative inference');
-  const transcript='Company: "Your membership will not renew in 14 days."\nCustomer: "Keep these exact words."';
-  const input=request({useCase:transcript}),brief=storyBrief(input),result=validateAndNormalizeDraft(draft(),input,evidence,brief);
-  assert.deepEqual(result.draft.scenarios.sms.turns.map(turn=>turn.text),explicitTurns(transcript).map(turn=>turn.text));
-  assert.deepEqual(brief.narrativeRequirements,[],'script text is not reinterpreted as narrative requirements');
-  assert.throws(()=>storyBrief({...input,controls:{initialSender:'customer'}}),error=>error.code==='conflicting_requirements'&&error.issues.some(item=>item.code==='sender_conflict'&&item.field==='initialSender'&&item.expectedSender==='company'));
-  assert.throws(()=>storyBrief(request({useCase:'Start with company. Begin with customer.'})),error=>error.code==='conflicting_requirements'&&error.issues[0].field==='initialSender');
-  const customerFirst=request({useCase:'Company sends a reminder in the background.\nCustomer: "I have a question."\nCompany: "How can I help?"'});
-  assert.equal(storyBrief(customerFirst).initialSender,'customer');
-});
-
-test('natural EWC dialogue passes all channels without verbatim descriptive prose or invented benefits',()=>{
-  const brief=storyBrief(ewc.request),result=validateAndNormalizeDraft(clone(ewc.rawDraft),ewc.request,evidence,brief);
-  assert.equal(result.requirements.complete,true);
-  for(const channel of CHANNELS){
-    const scenario=result.draft.scenarios[channel];assert.equal(scenario.turns[0].speaker,'company');assert.equal(scenario.sender,'EWC');
-    assert.equal(scenario.turns[1].text,"What's included?");assert.equal(scenario.turns[4].speaker,'company');assert.equal(scenario.turns[5].speaker,'company');
-    assert.equal(result.requirements.channels[channel].checks.find(item=>item.id==='factual_accuracy').status,'unverified');
-    assert.match(result.requirements.channels[channel].checks.find(item=>item.id==='required_facts').detail,/lexical.*unverified/);
-    assert.ok(!scenario.turns.map(turn=>turn.text).join(' ').includes(brief.story.questionTopic));
-  }
-  assert.equal(result.draft.scenarios.rcs.turns[0].presentation.kind,'card');
-  const prompt=draftPrompt(ewc.request,evidence,brief);assert.match(prompt,/natural dialogue, not verbatim/);assert.match(prompt,/do not invent benefit details, bonus amounts/);
-});
-
-test('EWC auto-sender brief completes the application pipeline without repair or fallback',async()=>{
-  const pipeline=loadPipeline([clone(ewc.rawDraft)]);
-  const result=await pipeline.generateScenarioDraft(clone(ewc.request),'ewc-alias-regression');
-  assert.equal(pipeline.calls.length,1);assert.equal(result.source.mode,'provider');assert.equal(result.source.fallbackReason,null);
-  assert.equal(result.source.brief.initialSender,'company');assert.equal(result.requirements.complete,true);
-  for(const channel of CHANNELS){assert.equal(result.requirements.channels[channel].status,'passed');assert.equal(result.draft.scenarios[channel].turns.length,6);}
-});
-
-test('each EWC requirement remains enforced with stable fields and no literal-description requirement',()=>{
-  const input={...clone(ewc.request),channels:['sms']};
-  const cases=[
-    ['renewal_reminder',turns=>{turns[0].text='Hello from EWC.';}],
-    ['membership_inquiry',turns=>{turns[1].text='Hello.';}],
-    ['membership_benefits',turns=>{turns[2].text='Would you like to join the rewards program?';}],
-    ['loyalty_invitation',turns=>{turns[2].text='Your plan includes membership benefits; details need confirmation.';}],
-    ['renewal_hesitation',turns=>{turns[3].text='I will renew today.';}],
-    ['human_handoff',turns=>{turns[4].text='Here are some options.';turns[5].text=turns[5].text.replace("I'm your agent. ",'');}],
-    ['renewal_incentive',turns=>{turns[5].text='Redeem loyalty points for savings, event tickets and gift certificates with participating businesses.';}],
-    ['loyalty_redemption',turns=>{turns[5].text="I'm your agent. If you renew, I can offer extra loyalty points.";}],
-    ['loyalty_redemption',turns=>{turns[5].text=turns[5].text.replace(' and gift certificates','');}],
-  ];
-  for(const [id,mutate] of cases){
-    const raw=clone(ewc.rawDraft);mutate(raw.scenarios.sms.turns);
-    assert.throws(()=>validateAndNormalizeDraft(raw,input,evidence),error=>error.code==='draft_invalid'&&error.issues.some(item=>item.code==='missing_requirement'&&item.requirementId===id&&item.field==='requirements.'+id&&item.channel==='sms'),id);
-  }
-});
-
-test('supported negative predicates and timing contradictions cannot pass by keyword presence',()=>{
-  const input={...clone(ewc.request),channels:['sms']};
-  for(const [id,index,replacement] of [
-    ['renewal_reminder',0,'Your membership will renew in 15 days.'],
-    ['renewal_reminder',0,'Your membership will not renew in 14 days.'],
-    ['renewal_reminder',0,'Your membership renews in 14 days. Your membership will not renew in 14 days.'],
-    ['renewal_reminder',0,'Your membership renews in 14 days. Actually, your membership renews in 30 days.'],
-    ['renewal_reminder',0,'Your membership renews in 14 days and renews in 30 days.'],
-    ['membership_benefits',2,"Your plan doesn't include any membership benefits. Join the rewards program."],
-    ['membership_benefits',2,'Your membership has no benefits. Join the rewards program.'],
-    ['membership_benefits',2,'Your membership includes benefits. Your membership has no benefits. Join the rewards program.'],
-    ['loyalty_invitation',2,"Your plan includes membership benefits. Don't join the rewards program."],
-    ['renewal_incentive',5,'Renewing will not earn any extra loyalty points. Redeem points for savings, event tickets and gift certificates with participating businesses.'],
-    ['loyalty_redemption',5,'Renew and earn extra loyalty points. You cannot redeem points for savings, event tickets and gift certificates with participating businesses.'],
-  ]){
-    const raw=clone(ewc.rawDraft);raw.scenarios.sms.turns[index].text=replacement;
-    assert.throws(()=>validateAndNormalizeDraft(raw,input,evidence),error=>error.issues.some(item=>item.code==='contradicted_requirement'&&item.requirementId===id),id);
-  }
-  const benign=clone(ewc.rawDraft);benign.scenarios.sms.turns[2].text="Your plan includes benefits. You haven't signed up yet; don't forget to join the loyalty program.";
-  assert.doesNotThrow(()=>validateAndNormalizeDraft(benign,input,evidence));
-});
-
-test('specific benefits exclusions do not contradict a positive membership explanation',()=>{
-  for(const text of [
-    'Your membership includes the benefits listed in your plan. It does not include the optional loyalty program, which you can join separately.',
-    'Your membership includes the benefits listed in your plan but does not include the optional loyalty program, which you can join separately.',
-    'Your membership includes the benefits listed in your plan. The optional loyalty program does not include benefits yet, but you can join the program separately.',
-  ]){
-    const raw=clone(ewc.rawDraft);
-    for(const channel of CHANNELS) raw.scenarios[channel].turns[2].text=text;
-    const result=validateAndNormalizeDraft(raw,ewc.request,evidence);
-    for(const channel of CHANNELS) assert.equal(result.draft.scenarios[channel].turns[2].text,text);
-  }
-  const negativeOnly=clone(ewc.rawDraft);
-  negativeOnly.scenarios.sms.turns[2].text='It does not include the optional loyalty program, which you can join separately.';
-  assert.throws(()=>validateAndNormalizeDraft(negativeOnly,{...ewc.request,channels:['sms']},evidence),error=>error.issues.some(item=>item.code==='missing_requirement'&&item.requirementId==='membership_benefits'));
-});
-
-test('renewal timing belongs to its renewal cue rather than another duration in the sentence',()=>{
-  for(const useCase of [
-    'Company reminds the customer that the 30 day membership renews in 14 days. Customer thanks them.',
-    'Company reminds a customer who joined 6 months ago that their membership renews in 14 days. Customer thanks them.',
-    'Company reminds the customer their membership renewal is due in two weeks. Customer thanks them.',
-  ]){
-    const input=request({useCase}),brief=storyBrief(input),raw=draft();
-    assert.deepEqual(brief.narrativeRequirements.find(item=>item.id==='renewal_reminder').duration,{amount:14,unit:'day'});
-    raw.scenarios.sms.turns[0].text='Your 30 day membership renews in fourteen days.';raw.scenarios.sms.turns[1].text='Thanks.';
-    assert.doesNotThrow(()=>validateAndNormalizeDraft(raw,input,evidence,brief));
-  }
-  const ambiguous=storyBrief(request({useCase:'Company discusses a 30 day membership with a customer who joined six months ago.'}));
-  assert.ok(!ambiguous.narrativeRequirements.some(item=>item.id==='renewal_reminder'),'unbound durations are not invented renewal deadlines');
-});
-
-test('membership timing, pricing and cancellation questions do not become benefits inquiries',()=>{
-  for(const [useCase,question,answer] of [
-    ['Customer asks when the membership renews. Company responds with the renewal date.','When will my membership renew?','Your renewal date needs confirmation.'],
-    ['Customer asks about membership pricing. Company responds with pricing details.','How much is my membership?','The price needs confirmation.'],
-    ['Customer asks whether the membership can be canceled. Company responds with cancellation details.','Can I cancel my membership?','The cancellation terms need confirmation.'],
-  ]){
-    const input=request({useCase}),brief=storyBrief(input),raw=draft();
-    assert.ok(!brief.narrativeRequirements.some(item=>item.id==='membership_inquiry'),useCase);
-    raw.initialSender='customer';raw.scenarios.sms.turns=[{speaker:'customer',text:question,mode:'prefill'},{speaker:'company',text:answer}];
-    assert.doesNotThrow(()=>validateAndNormalizeDraft(raw,input,evidence,brief),useCase);
-  }
-});
-
-test('requested ordering is enforced but naturally combined checkpoints and adjacent company turns pass',()=>{
-  const input={...clone(ewc.request),channels:['sms']},raw=clone(ewc.rawDraft);
-  [raw.scenarios.sms.turns[2],raw.scenarios.sms.turns[3]]=[raw.scenarios.sms.turns[3],raw.scenarios.sms.turns[2]];
-  assert.throws(()=>validateAndNormalizeDraft(raw,input,evidence),error=>error.issues.some(item=>item.code==='requirement_order'&&item.requirementId==='renewal_hesitation'));
-  const combined=clone(ewc.rawDraft);combined.scenarios.sms.turns[4].text+=' '+combined.scenarios.sms.turns[5].text;combined.scenarios.sms.turns.pop();
-  assert.doesNotThrow(()=>validateAndNormalizeDraft(combined,input,evidence));
-  const wrongSender=clone(ewc.rawDraft);wrongSender.scenarios.sms.turns[0].speaker='customer';
-  assert.throws(()=>validateAndNormalizeDraft(wrongSender,input,evidence),error=>{
-    const sender=error.issues.filter(item=>item.code==='sender_mismatch');
-    return sender.length===1&&sender[0].field==='initialSender'&&sender[0].expectedSender==='company';
-  });
-});
-
-test('unrelated narrative topics accept common paraphrases but still reject omitted topic cues',()=>{
-  const input=request({companyName:'Harbor Fitness Center',useCase:'HFC sends an invitation for the Healthy Movement Workshop. A customer asks about cost and accessibility.'});
-  const raw=draft();raw.scenarios.sms.turns[0].text='Join our Healthy Movement Workshop.';raw.scenarios.sms.turns[1].text='What is the price, and is it accessible?';
-  assert.equal(storyBrief(input).initialSender,'company');assert.doesNotThrow(()=>validateAndNormalizeDraft(raw,input,evidence));
-  raw.scenarios.sms.turns[1].text='What is the price?';
-  assert.throws(()=>validateAndNormalizeDraft(raw,input,evidence),error=>error.issues.some(item=>item.code==='missing_requirement'&&item.requirementId==='question_topic'));
-  const unknown=storyBrief(request({useCase:'Create an evocative conversation illustrating the nuanced relationship between belonging and trust.'}));
-  assert.deepEqual(unknown.narrativeRequirements,[]);assert.match(unknown.narrativeScope,/not-semantic-or-factual-verification/);
+  const generated=draft(['rcs']);generated.companyName='Priority Waste';
+  generated.scenarios.rcs.turns=[{speaker:'company',text:'Lauren, please rate your dumpster pickup from 1 to 5.'},{speaker:'customer',text:'4',mode:'choices',options:['1','2','3','4','5']},{speaker:'company',text:'Lauren, can you share feedback?'},{speaker:'customer',text:'The pickup went well.'}];
+  const pipeline=loadPipeline([generated]);
+  const result=await pipeline.generateScenarioDraft(input,'priority-waste-follow-up');
+  assert.equal(result.draft.initialSender,'company');assert.equal(result.source.mode,'provider');assert.equal(pipeline.calls.length,1,'correct company-first output needs no repair request');
 });

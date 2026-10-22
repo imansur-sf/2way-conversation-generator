@@ -6,7 +6,6 @@ const { createAccountsProxy } = require('./server/accounts-proxy.cjs');
 const accountsProxy = createAccountsProxy();
 const { clientIp:trustedClientIp, createRemoteFetcher, publicFilePath, supportedImageTypes, svgContentSecurityPolicy } = require('./server/security.cjs');
 const { aiConfig, providerHealth } = require('./server/ai-config.cjs');
-const { websiteBranding } = require('./server/branding-recovery.cjs');
 const { CHANNELS, normalizePersona, normalizeControls, storyBrief, generationPolicy, draftPrompt, draftResponseSchema, validateAndNormalizeDraft, promptFallback } = require('./server/draft-contract.cjs');
 
 const port = Number(process.env.PORT) || 3000;
@@ -210,23 +209,19 @@ function publicGenerationMetrics() {
     lastFailureAt:generationMetrics.lastFailureAt
   };
 }
-async function generateScenarioDraft(body, requestId, { onBranding } = {}) {
+async function generateScenarioDraft(body, requestId) {
   const request=validateDraftRequest(body),brief=storyBrief(request);
   const cacheKey=createHash('sha256').update(JSON.stringify(request)).digest('hex');
   const cached=draftCache.get(cacheKey);
   if (cached && cached.expiresAt>Date.now()) {
     console.log(JSON.stringify({event:'scenario_draft_cache_hit',requestId}));
-    const result=JSON.parse(JSON.stringify(cached.value));
-    if (result.branding) onBranding?.(result.branding);
-    return result;
+    return JSON.parse(JSON.stringify(cached.value));
   }
   const startedAt=Date.now();
   console.log(JSON.stringify({event:'scenario_draft_started',requestId,channels:request.channels,website:new URL(request.website).hostname}));
   const remote=await fetchRemote(request.website,scrapeLimitBytes,true);
   if (!/html|xml|text\//i.test(remote.contentType)) throw Object.assign(new Error('not_html'),{code:'not_html'});
   const evidence=extractWebsite(remote.body.toString('utf8'),remote.url);
-  const branding=websiteBranding(request,evidence,remote.partial);
-  onBranding?.(branding);
   const policy=generationPolicy(request,evidence,brief);
   let validated,failure,attempts=0;
   const retryable=new Set(['gemini_timeout','gemini_failed','gemini_bad_json','gemini_incomplete','gemini_rate_limited','draft_invalid']);
@@ -256,7 +251,7 @@ async function generateScenarioDraft(body, requestId, { onBranding } = {}) {
   requirements.scope='structure-and-explicit-constraints';
   if (fallbackReason) requirements.warnings.push('This is a deterministic prompt-guided starter, not a successful AI generation. Review it before applying.');
   console.log(JSON.stringify({event:'scenario_draft_completed',requestId,elapsedMs:Date.now()-startedAt,requirementsComplete:requirements.complete,fallbackReason,attempts}));
-  const result={draft,requirements,branding,source:{
+  const result={draft,requirements,source:{
     url:remote.url,title:evidence.title,imageCandidates:evidence.candidates,
     requestedChannels:[...request.channels],requestFingerprint:cacheKey,
     mode:fallbackReason?'prompt-fallback':'provider',fallbackReason,stage,coverage:'partial',
@@ -304,7 +299,7 @@ function startGenerationJob(body, requestId, idempotencyKey = '', requester = ''
   queueMicrotask(async () => {
     job.status='running'; job.startedAt=Date.now(); job.updatedAt=job.startedAt;
     try {
-      job.result = await generateScenarioDraft(normalizedBody,requestId,{onBranding(branding){job.branding=branding;job.updatedAt=Date.now();}});
+      job.result = await generateScenarioDraft(normalizedBody,requestId);
       job.status='completed';
       generationMetrics.completed += 1;
       generationMetrics.totalDurationMs += Date.now() - job.startedAt;
@@ -325,7 +320,6 @@ function startGenerationJob(body, requestId, idempotencyKey = '', requester = ''
 }
 function publicJob(job) {
   const response = { id:job.id, status:job.status, createdAt:job.createdAt, updatedAt:job.updatedAt, durationMs:job.startedAt ? Math.max(0, (job.completedAt || Date.now()) - job.startedAt) : 0 };
-  if (job.branding) response.branding=job.branding;
   if (job.status === 'completed') Object.assign(response,job.result);
   if (job.status === 'failed') {response.error=job.error;response.issues=job.issues || [];}
   return response;
@@ -405,13 +399,13 @@ async function handleApi(request,response,url) {
   }
   if (request.method === 'POST' && url.pathname === '/api/scenario-draft') {
     if (!withinRateLimit(request)) { sendJson(response,429,{ error:'rate_limited' },requestId); return true; }
-    let admitted=false,branding;
+    let admitted=false;
     try {
       const body=validateDraftRequest(await readJson(request));
       acquireGenerationSlot(); admitted=true;
-      const result = await generateScenarioDraft(body,requestId,{onBranding(value){branding=value;}});
+      const result = await generateScenarioDraft(body,requestId);
       sendJson(response,200,result,requestId);
-    } catch (error) { const code=error?.code || 'scenario_generation_failed'; console.error(JSON.stringify({ event:'scenario_draft_failed', requestId, code, status:error?.status || null, name:error?.name || null, message:String(error?.message || '').slice(0,240) })); sendJson(response,errorStatus(code),{ error:code, issues:error?.issues || [], ...(branding?{branding}:{}) },requestId); }
+    } catch (error) { const code=error?.code || 'scenario_generation_failed'; console.error(JSON.stringify({ event:'scenario_draft_failed', requestId, code, status:error?.status || null, name:error?.name || null, message:String(error?.message || '').slice(0,240) })); sendJson(response,errorStatus(code),{ error:code, issues:error?.issues || [] },requestId); }
     finally { if (admitted) activeGenerations -= 1; }
     return true;
   }
