@@ -208,6 +208,10 @@
       style.textContent = (await rewriteCss(css, 'Preview', new URL(path, base).href)).replace(/<\/style/gi, '<\\/style');
       node.replaceWith(style);
     }
+    for (const node of doc.querySelectorAll('link[rel~="icon"][href]')) {
+      const path = node.getAttribute('href');
+      node.setAttribute('href', runtimeAssets.get(path) || await getResource(path, 'Application favicon'));
+    }
     for (const node of doc.querySelectorAll('img[src]')) {
       const path = node.getAttribute('src');
       node.setAttribute('src', runtimeAssets.get(path) || await getResource(path, 'Preview image'));
