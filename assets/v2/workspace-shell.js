@@ -53,6 +53,10 @@
     rail.setAttribute('aria-label', 'Workspace');
     rail.innerHTML = `<div class="studio-rail-main">${views.slice(0,4).map(name => `<button type="button" data-studio-view="${name}" aria-label="${labels[name]}" title="${labels[name]}">${icon(name)}<span>${labels[name]}</span></button>`).join('')}</div><div class="studio-rail-bottom"><button type="button" data-studio-view="ai" aria-label="Build with AI" title="Build with AI">${icon('ai')}<span>Build with AI</span></button><p>Device-local workspace</p><button type="button" data-studio-backup aria-label="Export JSON for backup" title="Export JSON for backup">${icon('export')}<span>Export JSON for backup</span></button></div>`;
     studio.prepend(rail);
+    const scenarioAi = document.createElement('div');
+    scenarioAi.className = 'studio-scenario-ai';
+    scenarioAi.innerHTML = '<button type="button" class="primary" data-studio-start-ai>Build with AI</button>';
+    scenario.append(scenarioAi);
 
     const context = document.createElement('header');
     context.className = 'studio-context';
@@ -173,6 +177,7 @@
         if (qa.parentElement !== review) review.append(qa);
       }
     };
+    scenarioAi.querySelector('button').addEventListener('click', () => select('ai', true));
     rail.addEventListener('click', event => {
       const button = event.target.closest('[data-studio-view]');
       if (button) select(button.dataset.studioView, true);

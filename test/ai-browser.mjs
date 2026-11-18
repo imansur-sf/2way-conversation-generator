@@ -120,6 +120,7 @@ try{
     const {context,page,errors}=await fresh(request=>responseFor(request));
     const sender=page.getByLabel('Who sends the first message?',{exact:true});
     assert.equal(await sender.count(),1);
+    assert.deepEqual(await sender.locator('option').allTextContents(), ['Follow the prompt','Company/Brand opens','Customer/Recipient opens']);
     assert.equal(await sender.isVisible(),true);
     assert.equal(await page.locator('.v2-generation-controls').getAttribute('open'),null);
     assert.equal(await sender.evaluate(element=>Boolean(element.compareDocumentPosition(document.querySelector('#aiUseCase')) & Node.DOCUMENT_POSITION_FOLLOWING)),true);

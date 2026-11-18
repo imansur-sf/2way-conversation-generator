@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { chromium } from '@playwright/test';
@@ -65,9 +65,23 @@ try {
   assert.equal(await page.locator('.studio-scenario-title').textContent(), 'Workspace review');
   assert.equal(await page.locator('#scenarioName').count(), 1);
 
-  await selectView(page, 'ai');
+  await selectView(page, 'scenario');
+  const scenarioAi = page.locator('[data-studio-panel="scenario"] [data-studio-start-ai]');
+  await scenarioAi.scrollIntoViewIfNeeded();
+  const buttonBounds = await scenarioAi.boundingBox(), panelBounds = await page.locator('[data-studio-panel="scenario"]').boundingBox();
+  assert.ok(Math.abs(buttonBounds.x + buttonBounds.width/2 - panelBounds.x - panelBounds.width/2) < 2, 'Scenario AI action is centered');
+  await mkdir('test-results', {recursive:true});
+  await page.screenshot({path:'test-results/scenario-build-with-ai-desktop.png'});
+  await scenarioAi.focus(); await page.keyboard.press('Enter');
+  assert.equal(await page.locator('body').getAttribute('data-studio-active-view'), 'ai');
+  assert.equal(await page.evaluate(() => Boolean(document.activeElement.closest('[data-studio-panel="ai"]'))), true, 'AI action moves keyboard focus into its destination');
+  assert.equal(await page.locator('#scenarioName').inputValue(), 'Workspace review');
+  assert.equal(await message.inputValue(), 'A draft that must survive navigation.');
   await page.locator('#aiWebsite').fill('https://example.test');
   await page.locator('#aiUseCase').fill('Keep this unfinished AI brief while I edit the flow.');
+  await selectView(page, 'scenario');
+  await scenarioAi.click();
+  assert.equal(await page.locator('#aiUseCase').inputValue(), 'Keep this unfinished AI brief while I edit the flow.');
   await selectView(page, 'identity');
   assert.equal(await page.locator('[data-skey="smsAddress"]').inputValue(), 'Workspace team');
   await selectView(page, 'ai');
@@ -105,6 +119,11 @@ try {
     for (const view of ['scenario','identity','conversation','export','ai']) {
       await selectView(page, view);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${width}px ${view} horizontal overflow`);
+      if (view === 'scenario') {
+        await scenarioAi.scrollIntoViewIfNeeded();
+        assert.equal(await scenarioAi.isVisible(), true);
+        if (width === 390) await page.screenshot({path:'test-results/scenario-build-with-ai-mobile.png'});
+      }
     }
   }
   await page.evaluate(() => document.documentElement.style.fontSize = '200%');

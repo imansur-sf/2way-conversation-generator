@@ -447,3 +447,15 @@ body.studio-shell:not(.export):not(.presentation) .preview .stage { container-ty
   body.studio-shell:not(.export):not(.presentation) #stage .gmail.g-source-gmail { grid-template-columns: minmax(0,1fr); }
   body.studio-shell:not(.export):not(.presentation) #stage .g-source-gmail .g-main { grid-column: 1; }
 }
+
+body.studio-shell:not(.export):not(.presentation) .studio-scenario-ai {
+  display: flex;
+  justify-content: center;
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid #d6e3f0;
+}
+body.studio-shell:not(.export):not(.presentation) .studio-scenario-ai button {
+  min-height: 2.75rem;
+  padding-inline: 1.5rem;
+}

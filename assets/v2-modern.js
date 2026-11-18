@@ -85,7 +85,7 @@
     controls.className = 'v2-generation-controls';
     const sender = document.createElement('div');
     sender.className = 'v2-opening-sender';
-    sender.innerHTML = '<label class="label" for="aiOpeningSender">Who sends the first message?</label><select id="aiOpeningSender" data-v2-opening-sender aria-describedby="aiOpeningSenderHelp"><option value="">Follow the prompt</option><option value="company">Company opens</option><option value="customer">Customer opens</option></select><p id="aiOpeningSenderHelp" class="ai-note">Choose the first sender to make the opening explicit. This applies to all selected channels.</p>';
+    sender.innerHTML = '<label class="label" for="aiOpeningSender">Who sends the first message?</label><select id="aiOpeningSender" data-v2-opening-sender aria-describedby="aiOpeningSenderHelp"><option value="">Follow the prompt</option><option value="company">Company/Brand opens</option><option value="customer">Customer/Recipient opens</option></select><p id="aiOpeningSenderHelp" class="ai-note">Company/Brand is the business; Customer/Recipient is the person it is communicating with. Choose who begins the conversation for all selected channels.</p>';
     const brief = form.querySelector('#aiUseCase');
     const briefLabel = brief?.previousElementSibling;
     (briefLabel?.tagName === 'LABEL' ? briefLabel : brief)?.before(sender);
@@ -146,7 +146,7 @@
     const qa = document.createElement('section');
     qa.className = 'v2-scenario-qa';
     qa.dataset.signature = signature;
-    qa.innerHTML = `<div class="v2-scenario-qa__head"><div><strong>${issues.length ? 'Scenario review needed' : 'Basic content checks passed'}</strong><span>${review.total} messages · ${review.companyCount} company · ${review.customerCount} customer · starts with ${htmlEscape(review.initialSender)}</span></div><i data-state="${issues.length ? 'review' : 'ready'}">${issues.length ? 'Review' : 'Checked'}</i></div><p class="v2-scenario-qa__note">${htmlEscape(review.routing)}</p>${issues.length ? `<ul>${issues.map(issue=>`<li data-kind="${issue.kind}">${htmlEscape(issue.text)}${issue.stepId ? `<button type="button" data-v2-qa-target="${htmlEscape(issue.stepId)}">Fix</button>` : ''}</li>`).join('')}</ul>` : ''}<p class="v2-scenario-qa__note">${htmlEscape(review.note)}</p>`;
+    qa.innerHTML = `<div class="v2-scenario-qa__head"><div><strong>${issues.length ? 'Scenario review needed' : 'Basic content checks passed'}</strong><span>${review.total} messages · ${review.companyCount} Company/Brand · ${review.customerCount} Customer/Recipient · starts with ${htmlEscape(review.initialSender === 'company' ? 'Company/Brand' : 'Customer/Recipient')}</span></div><i data-state="${issues.length ? 'review' : 'ready'}">${issues.length ? 'Review' : 'Checked'}</i></div><p class="v2-scenario-qa__note">${htmlEscape(review.routing)}</p>${issues.length ? `<ul>${issues.map(issue=>`<li data-kind="${issue.kind}">${htmlEscape(issue.text)}${issue.stepId ? `<button type="button" data-v2-qa-target="${htmlEscape(issue.stepId)}">Fix</button>` : ''}</li>`).join('')}</ul>` : ''}<p class="v2-scenario-qa__note">${htmlEscape(review.note)}</p>`;
     (root.querySelector('.v2-flow-map') || steps).before(qa);
     qa.addEventListener('click', event => {
       const button = event.target.closest('[data-v2-qa-target]');
