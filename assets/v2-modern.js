@@ -81,21 +81,23 @@
   const hydrateGenerationControls = root => {
     const form = root.querySelector('#setupAssistant .ai-setup-form');
     if (!form || form.querySelector('.v2-generation-controls')) return;
-    const controls = document.createElement('details');
+    const controls = document.createElement('section');
     controls.className = 'v2-generation-controls';
     const sender = document.createElement('div');
     sender.className = 'v2-opening-sender';
-    sender.innerHTML = '<label class="label" for="aiOpeningSender">Who sends the first message?</label><select id="aiOpeningSender" data-v2-opening-sender aria-describedby="aiOpeningSenderHelp"><option value="">Follow the prompt</option><option value="company">Company/Brand opens</option><option value="customer">Customer/Recipient opens</option></select><p id="aiOpeningSenderHelp" class="ai-note">Company/Brand is the business; Customer/Recipient is the person it is communicating with. Choose who begins the conversation for all selected channels.</p>';
+    sender.innerHTML = '<label class="label" for="aiOpeningSender">Who sends the first message?</label><select id="aiOpeningSender" data-v2-opening-sender aria-describedby="aiOpeningSenderHelp"><option value="">Choose who starts</option><option value="company">Company/Brand opens</option><option value="customer">Customer/Recipient opens</option></select><p id="aiOpeningSenderHelp" class="ai-note">Company/Brand is the business; Customer/Recipient is the person it is communicating with. Choose who begins the conversation for all selected channels.</p>';
     const brief = form.querySelector('#aiUseCase');
     const briefLabel = brief?.previousElementSibling;
     (briefLabel?.tagName === 'LABEL' ? briefLabel : brief)?.before(sender);
-    controls.innerHTML = '<summary>Generation controls <span>Optional precision</span></summary><div class="v2-generation-controls__body"><label>Exact message total<input type="number" min="2" max="12" step="1" inputmode="numeric" placeholder="Follow the prompt" data-v2-message-total></label><label>Customer name<input data-v2-customer-name placeholder="Not specified"></label><label>Representative name<input data-v2-representative-name placeholder="Not specified"></label><label>Representative role<input data-v2-representative-role placeholder="Not specified"></label><p>Optional structured requirements. Your prompt is kept unchanged; conflicting dialogue must be resolved before generation.</p></div>';
-    form.querySelector('#generateAiDraft')?.before(controls);
+    controls.innerHTML = '<div class="v2-generation-controls__body"><label>Total messages<input type="number" min="2" max="12" step="1" inputmode="numeric" data-v2-message-total aria-describedby="aiMessageCountHelp"></label><p id="aiMessageCountHelp">2–12 messages. Each message from either side counts as one: 6 messages usually means 3 from each side.</p><label>Customer/Recipient name (optional)<input data-v2-customer-name autocomplete="off"></label><label>Company representative name (optional)<input data-v2-representative-name autocomplete="off"></label><label>Representative role (optional)<input data-v2-representative-role></label><p>Leave names blank to use unnamed participants. Without a representative, the company speaks as the brand.</p></div>';
+    sender.before(controls);
+    if (briefLabel?.tagName === 'LABEL') briefLabel.textContent = 'What happens in this conversation?';
+    if (brief) brief.placeholder = 'Example: Notify a candidate about a new nursing job. They ask about location and scheduling. Answer their questions and offer the next step to apply.';
     const storageKey = 'two-way-experience-studio-v2-generation-controls';
     let saved = {};
     try { saved = JSON.parse(sessionStorage.getItem(storageKey) || '{}'); } catch {}
     const fields = {sender:'[data-v2-opening-sender]',total:'[data-v2-message-total]',customerName:'[data-v2-customer-name]',representativeName:'[data-v2-representative-name]',representativeRole:'[data-v2-representative-role]'};
-    for (const [key,selector] of Object.entries(fields)) form.querySelector(selector).value = saved[key] || '';
+    for (const [key,selector] of Object.entries(fields)) form.querySelector(selector).value = saved[key] ?? (key === 'total' ? '6' : key === 'sender' ? 'company' : '');
     const save = () => { try { sessionStorage.setItem(storageKey, JSON.stringify(Object.fromEntries(Object.entries(fields).map(([key,selector]) => [key,form.querySelector(selector).value])))); } catch {} };
     controls.addEventListener('input', save);
     controls.addEventListener('change', save);

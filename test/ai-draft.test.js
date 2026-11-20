@@ -99,6 +99,8 @@ test('array choices survive saved-scenario normalization and legacy comma lists 
 test('structured controls never mutate the prompt and reject fractional totals',()=>{
   const values={'[data-v2-message-total]':'3','[data-v2-opening-sender]':'customer','[data-v2-customer-name]':'José O’Neil'},document={querySelector:selector=>({value:values[selector]||''})};
   assert.deepEqual(ai.readControls(document).controls,{initialSender:'customer',expectedMessageCount:3});values['[data-v2-message-total]']='2.5';assert.throws(()=>ai.readControls(document),/whole number/);
+  values['[data-v2-message-total]']='';assert.throws(()=>ai.readControls(document),/Enter a total/);
+  values['[data-v2-message-total]']='6';values['[data-v2-opening-sender]']='';assert.throws(()=>ai.readControls(document),/opening sender/);
 });
 test('QA treats rich/image content as meaningful and does not claim export or factual verification',()=>{
   const scenario={channel:'rcs',steps:[{id:'card',author:'brand',kind:'rich',text:'',cardImage:'https://example.test/card.png'},{id:'input',author:'customer',kind:'free',reusableSet:true,text:''},{id:'response',author:'brand',kind:'text',text:'Reply'}]};

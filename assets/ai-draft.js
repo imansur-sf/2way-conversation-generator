@@ -87,8 +87,9 @@
   function readControls(rootDocument) {
     const value = selector => rootDocument.querySelector(selector)?.value || '';
     const raw = value('[data-v2-message-total]'), total = raw === '' ? null : Number(raw), sender = value('[data-v2-opening-sender]');
+    if (raw === '') throw failure('Enter a total message count from 2 to 12.');
     if (total !== null && (!Number.isInteger(total) || total < 2 || total > 12)) throw failure('Exact message total must be a whole number from 2 to 12.');
-    if (sender && !['company','customer'].includes(sender)) throw failure('Choose a supported opening sender.');
+    if (!['company','customer'].includes(sender)) throw failure('Choose a supported opening sender.');
     return {controls:{initialSender:sender || null,expectedMessageCount:total},persona:{customerName:value('[data-v2-customer-name]'),representativeName:value('[data-v2-representative-name]'),representativeRole:value('[data-v2-representative-role]')}};
   }
   function validateResult(result, request) {

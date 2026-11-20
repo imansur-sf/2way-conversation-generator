@@ -532,3 +532,19 @@ test('survey follow-ups infer the company opener without treating later feedback
   const result=await pipeline.generateScenarioDraft(input,'priority-waste-follow-up');
   assert.equal(result.draft.initialSender,'company');assert.equal(result.source.mode,'provider');assert.equal(pipeline.calls.length,1,'correct company-first output needs no repair request');
 });
+
+test('descriptive job-alert instructions accept natural dialogue across channels without a repair',async()=>{
+  const input=request({channels:CHANNELS,useCase:'Company/brand sends alert for new job posting, and customer/customer responds with questions.',controls:{initialSender:'company',expectedMessageCount:2}});
+  const raw=draft(CHANNELS);
+  for(const config of Object.values(raw.scenarios)){
+    config.turns[0].text='A new job opportunity is available. Would you like to discuss it?';
+    config.turns[1].text='Where is the position, and what is the schedule?';
+  }
+  const pipeline=loadPipeline([raw]);
+  const result=await pipeline.generateScenarioDraft(input,'natural-job-alert');
+  assert.equal(pipeline.calls.length,1);
+  for(const channel of CHANNELS){
+    assert.equal(result.draft.scenarios[channel].turns.length,2);
+    assert.ok(result.requirements.channels[channel].checks.some(check=>check.id==='topic_relevance'&&check.status==='unverified'));
+  }
+});

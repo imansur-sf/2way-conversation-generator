@@ -60,7 +60,7 @@ async function fresh(makeResponse){
 async function requestDraft(page,selected,{named=true,prompt='Build three messages for each selected channel.'}={}){
   await (await editor(page, '#aiCompanyName')).fill('Synthetic Co');await (await editor(page, '#aiWebsite')).fill('https://example.test');await (await editor(page, '#aiUseCase')).fill(prompt);
   for(const channel of channels)await (await editor(page, `[data-ai-channel="${channel}"]`)).setChecked(selected.includes(channel));
-  await (await editor(page, '.v2-generation-controls summary')).click();await (await editor(page, '[data-v2-opening-sender]')).selectOption('company');await (await editor(page, '[data-v2-message-total]')).fill('3');
+  await (await editor(page, '[data-v2-opening-sender]')).selectOption('company');await (await editor(page, '[data-v2-message-total]')).fill('3');
   if(named){await (await editor(page, '[data-v2-customer-name]')).fill(persona.customerName);await (await editor(page, '[data-v2-representative-name]')).fill(persona.representativeName);await (await editor(page, '[data-v2-representative-role]')).fill(persona.representativeRole);}
   await (await editor(page, '#generateAiDraft')).click();
 }
@@ -120,9 +120,11 @@ try{
     const {context,page,errors}=await fresh(request=>responseFor(request));
     const sender=page.getByLabel('Who sends the first message?',{exact:true});
     assert.equal(await sender.count(),1);
-    assert.deepEqual(await sender.locator('option').allTextContents(), ['Follow the prompt','Company/Brand opens','Customer/Recipient opens']);
+    assert.deepEqual(await sender.locator('option').allTextContents(), ['Choose who starts','Company/Brand opens','Customer/Recipient opens']);
     assert.equal(await sender.isVisible(),true);
-    assert.equal(await page.locator('.v2-generation-controls').getAttribute('open'),null);
+    assert.equal(await page.locator('[data-v2-message-total]').isVisible(),true);
+    assert.equal(await page.locator('[data-v2-message-total]').inputValue(),'6');
+    assert.equal(await page.locator('[data-v2-customer-name]').isVisible(),true);
     assert.equal(await sender.evaluate(element=>Boolean(element.compareDocumentPosition(document.querySelector('#aiUseCase')) & Node.DOCUMENT_POSITION_FOLLOWING)),true);
     for(const value of ['company','customer','']) {
       await sender.selectOption(value);
