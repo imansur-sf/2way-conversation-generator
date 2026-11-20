@@ -29,6 +29,7 @@ function loadPipeline(responses, env = {}) {
       calls.push({url,headers:options.headers,body:JSON.parse(options.body)});
       const next=responses[Math.min(calls.length-1,responses.length-1)];
       if(next instanceof Error)throw next;
+      if(next?.bodyError)return {ok:true,json:async()=>{throw next.bodyError;}};
       if(next?.httpStatus)return new Response(next.errorBody===undefined?'':typeof next.errorBody==='string'?next.errorBody:JSON.stringify(next.errorBody),{status:next.httpStatus});
       return {ok:true,json:async()=>next?.envelope || {candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(next)}]}}]}};
     },
@@ -375,7 +376,7 @@ test('invalid final output gets one targeted repair and never a third provider a
 });
 test('all channel counts and repair attempts share the bounded reasoning-aware output allowance',async()=>{
   const config=aiConfig({});assert.equal(config.maxOutputTokens,8000);assert.equal(MAX_PROVIDER_OUTPUT_TOKENS,8000);
-  assert.equal(config.maxAttempts,2);assert.equal(config.timeoutMs,20000);assert.equal(config.model,'gemini-3.5-flash');
+  assert.equal(config.maxAttempts,2);assert.equal(config.timeoutMs,60000);assert.equal(config.model,'gemini-3.5-flash');
   for(const channels of [['email'],['sms','email'],['sms','rcs','email'],CHANNELS]){
     const pipeline=loadPipeline([{envelope:{candidates:[{finishReason:'MAX_TOKENS'}]}},draft(channels)]);
     const result=await pipeline.generateScenarioDraft(request({channels}),'output-allowance');
@@ -547,4 +548,15 @@ test('descriptive job-alert instructions accept natural dialogue across channels
     assert.equal(result.draft.scenarios[channel].turns.length,2);
     assert.ok(result.requirements.channels[channel].checks.some(check=>check.id==='topic_relevance'&&check.status==='unverified'));
   }
+});
+
+
+test('response-body aborts remain timeouts with bounded attempts and safe timing diagnostics',async()=>{
+  const pipeline=loadPipeline([{bodyError:Object.assign(new Error('PRIVATE_RESPONSE'),{name:'AbortError'})}]);
+  await assert.rejects(pipeline.generateScenarioDraft(request(),'body-abort'),{code:'gemini_timeout'});
+  assert.equal(pipeline.calls.length,2);
+  const timing=pipeline.logs.map(line=>JSON.parse(line)).filter(entry=>entry.event==='gemini_attempt_finished');
+  assert.equal(timing.length,2);
+  for(const entry of timing){assert.equal(entry.stage,'body');assert.equal(entry.outcome,'gemini_timeout');assert.equal(entry.timeoutMs,60000);assert.ok(entry.durationMs>=0);}
+  assert.ok(!pipeline.logs.join('').includes('PRIVATE_RESPONSE'));
 });

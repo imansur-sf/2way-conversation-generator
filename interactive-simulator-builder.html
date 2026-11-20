@@ -337,7 +337,7 @@ function renderPreview(){if(active().channel==='email')renderEmail();else render
         if(!response.ok)throw Object.assign(new Error(created.error||'scenario_generation_failed'),{issues:created.issues});
         const pollUrl=created.poll||`/api/scenario-jobs/${created.id}`;if(!pollUrl.startsWith('/api/scenario-jobs/')||pollUrl.startsWith('//'))throw new Error('invalid_draft');
         let completed;
-        for(let attempt=0;attempt<55&&current();attempt+=1){
+        for(let attempt=0;attempt<160&&current();attempt+=1){
           await waitForAiJob(Math.min(1000,450+attempt*35));if(!current())return;
           const poll=await fetch(pollUrl,{headers:{'X-Request-Id':requestId}}),payload=await poll.json().catch(()=>({error:'scenario_generation_failed'}));
           if(!current())return;

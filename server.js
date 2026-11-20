@@ -134,6 +134,7 @@ async function callGemini(prompt, channels, policy) {
   if (!geminiApiKey) throw Object.assign(new Error('llm_not_configured'),{code:'llm_not_configured'});
   const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),aiSettings.timeoutMs);
   const maxOutputTokens=aiSettings.maxOutputTokens;
+  const attemptStartedAt=Date.now();let stage='headers',outcome='failed';
   try {
     const upstream=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(geminiModel)}:generateContent`,{
       method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':geminiApiKey},signal:controller.signal,
@@ -146,8 +147,9 @@ async function callGemini(prompt, channels, policy) {
       const issues=upstream.status===400?[{code:`provider_${diagnostic.category}`,message:diagnostic.category==='schema_complexity'?'The provider rejected the response schema as too complex.':diagnostic.category==='schema_invalid'?'The provider rejected the response schema.':'The provider rejected the generation request; check the server diagnostic category and approved field paths.'}]:[];
       throw Object.assign(new Error(code),{code,status:upstream.status,issues});
     }
+    stage='body';
     let payload;
-    try {payload=await upstream.json();} catch {throw Object.assign(new Error('gemini_bad_json'),{code:'gemini_bad_json'});}
+    try {payload=await upstream.json();} catch(error) {if(controller.signal.aborted || error?.name==='AbortError') throw Object.assign(new Error('gemini_timeout'),{code:'gemini_timeout'});throw Object.assign(new Error('gemini_bad_json'),{code:'gemini_bad_json'});}
     const candidate=payload?.candidates?.[0],finish=candidate?.finishReason;
     if (payload?.promptFeedback?.blockReason || ['SAFETY','RECITATION','BLOCKLIST','PROHIBITED_CONTENT','SPII'].includes(finish)) throw Object.assign(new Error('gemini_blocked'),{code:'gemini_blocked'});
     if (finish && finish!=='STOP') {
@@ -159,12 +161,13 @@ async function callGemini(prompt, channels, policy) {
       throw Object.assign(new Error('gemini_incomplete'),{code:'gemini_incomplete',issues:[issue]});
     }
     const raw=candidate?.content?.parts?.filter(part=>!part.thought).map(part=>part.text || '').join('') || '';
-    return parseJson(raw);
+    const parsed=parseJson(raw);outcome='completed';return parsed;
   } catch (error) {
-    if (error?.name==='AbortError') throw Object.assign(new Error('gemini_timeout'),{code:'gemini_timeout'});
+    outcome=controller.signal.aborted || error?.name==='AbortError' || error?.code==='gemini_timeout' ? 'gemini_timeout' : error?.code || 'gemini_failed';
+    if (outcome==='gemini_timeout') throw Object.assign(new Error('gemini_timeout'),{code:'gemini_timeout'});
     if (!error?.code && error?.name==='TypeError') throw Object.assign(new Error('gemini_failed'),{code:'gemini_failed'});
     throw error;
-  } finally {clearTimeout(timeout);}
+  } finally {clearTimeout(timeout);console.log(JSON.stringify({event:'gemini_attempt_finished',stage,outcome,durationMs:Date.now()-attemptStartedAt,timeoutMs:aiSettings.timeoutMs}));}
 }
 function clean(value, fallback='') {return typeof value==='string'?value.trim().slice(0,1800):fallback;}
 function cleanPrompt(value) {return typeof value==='string'?value.trim():'';}

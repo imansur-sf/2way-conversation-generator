@@ -129,7 +129,7 @@ test('server and frontend share a bounded AI contract without splitting comma-co
   const {aiConfig} = require('../server/ai-config.cjs');
   const adapter = require('../assets/ai-draft.js');
   assert.equal(aiConfig({}).maxAttempts,2);
-  assert.equal(aiConfig({}).timeoutMs,20000);
+  assert.equal(aiConfig({}).timeoutMs,60000);
   assert.deepEqual(adapter.options(['Yes, please','No, thank you']),['Yes, please','No, thank you']);
   assert.deepEqual(adapter.options('Legacy yes, Legacy no'),['Legacy yes','Legacy no']);
 });

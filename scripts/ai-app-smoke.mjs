@@ -32,7 +32,7 @@ async function generate(sample){
   const response=await fetchBounded(new URL('/api/scenario-jobs',base),{method:'POST',headers:{'Content-Type':'application/json','X-Request-Id':id,'X-Idempotency-Key':id},body:JSON.stringify(body)});
   assert.equal(response.status,202,'Synthetic job must be admitted');
   const created=await response.json();assert.match(created.poll,/^\/api\/scenario-jobs\/[0-9a-f-]{36}$/i);
-  for(let attempt=0;attempt<70;attempt++){
+  for(let attempt=0;attempt<160;attempt++){
     await wait(900);
     const poll=await fetchBounded(new URL(created.poll,base));assert.equal(poll.status,200);
     const job=await poll.json();if(job.status==='failed')throw new Error('Synthetic job failed: '+job.error+'; '+JSON.stringify(job.issues||[]));
