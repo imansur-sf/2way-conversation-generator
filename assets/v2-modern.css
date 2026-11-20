@@ -192,7 +192,7 @@ body:not(.export) .builder {
 .v2-generation-controls__body { display:grid; grid-template-columns:1fr 1fr; gap:8px; padding:11px; }
 .v2-generation-controls label { display:grid; gap:4px; color:#466986; font-size:10px; font-weight:800; }
 .v2-generation-controls :is(select,input) { min-width:0; padding:7px 8px; border:1px solid #c7ddec; border-radius:8px; color:#193f68; background:#fff; font:700 11px inherit; }
-.v2-generation-controls p { grid-column:1/-1; margin:0; color:#66819a; font-size:10px; line-height:1.35; }
+.v2-generation-controls p { grid-column:1/-1; margin:0; color:#466986; font-size:10px; line-height:1.35; }
 
 .image-asset-control {
   border-radius: 12px;
