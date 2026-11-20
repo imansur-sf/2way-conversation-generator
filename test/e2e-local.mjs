@@ -577,7 +577,7 @@ try {
   await selectView(page, 'ai');
   await page.locator('[data-ai-channel="whatsapp"]').waitFor();
   await page.locator('.v2-generation-controls').waitFor();
-  await (await editor(page, '.v2-generation-controls summary')).click();
+  assert.equal(await page.locator('[data-v2-message-total]').isVisible(), true, 'Message count is directly visible');
   await (await editor(page, '[data-v2-opening-sender]')).selectOption('company');
   await (await editor(page, '[data-v2-message-total]')).fill('7');
   assert.equal(await page.locator('[data-v2-opening-sender]').inputValue(), 'company', 'Generation controls must allow an explicit opening sender');
